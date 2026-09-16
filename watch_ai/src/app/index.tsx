@@ -1,6 +1,8 @@
 import * as Device from 'expo-device';
 import { Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import supabase from '@/lib/supabase';
+import {useEffect} from 'react';
 
 import { AnimatedIcon } from '@/components/animated-icon';
 import { HintRow } from '@/components/hint-row';
@@ -9,9 +11,11 @@ import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 
+
+
 function getDevMenuHint() {
   if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
+    return <ThemedText type="small">use joram browser devtools</ThemedText>;
   }
   if (Device.isDevice) {
     return (
@@ -29,6 +33,25 @@ function getDevMenuHint() {
 }
 
 export default function HomeScreen() {
+
+useEffect(() => {
+
+const testConnection = async () => {
+  const result = await supabase.auth.getSession();
+
+  console.log('session result:', result);
+};
+
+  testConnection();
+
+}, []);
+
+
+
+
+
+
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
