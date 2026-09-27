@@ -1,23 +1,95 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
+  Alert,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import supabase from '../lib/supabase';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const handleLogin = () => {
-    console.log('Logging in with', email, password);
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim]);
+
+  const handleLogin = async () => {
+    const trimmedEmail = email.trim();
+    const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+
+    if (!trimmedEmail.includes('@')) {
+      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+
+    if (!password) {
+      Alert.alert('Invalid password', 'Please enter your password.');
+      return;
+    }
+
+    if (!apiUrl) {
+      Alert.alert('Login unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
+      return;
+    }
+
+    setIsLoggingIn(true);
+    try {
+      const response = await fetch(`${apiUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmedEmail, password }),
+      });
+      const result: {
+        message?: string | string[];
+        accessToken?: string;
+        refreshToken?: string;
+      } = await response.json();
+
+      if (!response.ok) {
+        const message = Array.isArray(result.message)
+          ? result.message.join('\n')
+          : result.message ?? 'Please check your credentials and try again.';
+        throw new Error(message);
+      }
+
+      if (!result.accessToken || !result.refreshToken) {
+        throw new Error('The server did not return a valid login session.');
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token: result.accessToken,
+        refresh_token: result.refreshToken,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      Alert.alert('Login successful', 'You are now signed in.');
+    } catch (error) {
+      Alert.alert(
+        'Login failed',
+        error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
+      );
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   return (
@@ -26,61 +98,73 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <View style={styles.cardWrap}>
-          <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
-          <LinearGradient
-            colors={['rgba(60,60,90,0.35)', 'rgba(150,150,170,0.25)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
+        <Animated.View
+          style={[
+            styles.animatedContainer,
+            {
+              opacity: fadeAnim,
+            },
+          ]}
+        >
+          <View style={styles.cardWrap}>
+            <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+            <LinearGradient
+              colors={['rgba(60,60,90,0.35)', 'rgba(150,150,170,0.25)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
 
-          <View style={styles.cardContent}>
-            <Text style={styles.title}>W.A.T.C.H.</Text>
+            <View style={styles.cardContent}>
+              <Text style={styles.title}>W.A.T.C.H.</Text>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter email"
-                placeholderTextColor="#5a5a65"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-            </View>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter email"
+                  placeholderTextColor="#5a5a65"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter password"
-                placeholderTextColor="#5a5a65"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-              <Text style={styles.forgotPasswordText} onPress={() => alert('Temporary: forgot password screen not ready yet')}>
-                Forgot password
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter password"
+                  placeholderTextColor="#5a5a65"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+                <Text style={styles.forgotPasswordText} onPress={() => alert('Temporary: forgot password screen not ready yet')}>
+                  Forgot password
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, isLoggingIn && styles.buttonDisabled]}
+                activeOpacity={0.85}
+                onPress={handleLogin}
+                disabled={isLoggingIn}
+              >
+                <Text style={styles.buttonText}>
+                  {isLoggingIn ? 'Logging in...' : 'Log-in'}
+                </Text>
+              </TouchableOpacity>
+
+              <Text style={styles.createAccountPrompt}>
+                <Text style={styles.createAccountText} onPress={() => router.push('/register')}>
+                  Create Account
+                </Text>
               </Text>
             </View>
-
-            <TouchableOpacity
-              style={styles.button}
-              activeOpacity={0.85}
-              onPress={handleLogin}
-            >
-              <Text style={styles.buttonText}>Log-in</Text>
-            </TouchableOpacity>
-
-            <Text style={styles.createAccountPrompt}>
-              <Text style={styles.createAccountText} onPress={() => router.push('/register')}>
-                Create Account
-              </Text>
-            </Text>
           </View>
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
@@ -94,6 +178,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 20,
+  },
+  animatedContainer: {
+    width: '100%',
   },
   cardWrap: {
     borderRadius: 28,
@@ -153,6 +240,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 5,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: '#f2f2f5',
