@@ -1,34 +1,96 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
+  Alert,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 
 export default function RegisterScreen() {
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
-  const handleRegister = () => {
-    if (!email.includes('@')) {
-      alert('Please enter a valid email address!');
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim]);
+
+  const handleRegister = async () => {
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim();
+    const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+
+    if (trimmedName.length < 3) {
+      Alert.alert('Invalid name', 'Please enter a name with at least 3 characters.');
+      return;
+    }
+
+    if (!trimmedEmail.includes('@')) {
+      Alert.alert('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Invalid password', 'Your password must be at least 6 characters.');
       return;
     }
 
     if (password !== confirmPassword) {
-      alert('Passwords do not match!');
+      Alert.alert('Passwords do not match', 'Please make sure both passwords are the same.');
       return;
     }
 
-    console.log('Registering with', email, password, confirmPassword);
+    if (!apiUrl) {
+      Alert.alert('Registration unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
+      return;
+    }
+
+    setIsRegistering(true);
+    try {
+      const response = await fetch(`${apiUrl}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: trimmedName,
+          email: trimmedEmail,
+          password,
+        }),
+      });
+      const result: { message?: string | string[] } = await response.json();
+
+      if (!response.ok) {
+        const message = Array.isArray(result.message)
+          ? result.message.join('\n')
+          : result.message ?? 'Please try again.';
+        throw new Error(message);
+      }
+
+      Alert.alert('Registration successful', 'You can now log in with your new account.', [
+        { text: 'OK', onPress: () => router.replace('/login') },
+      ]);
+    } catch (error) {
+      Alert.alert(
+        'Registration failed',
+        error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
+      );
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   return (
@@ -37,71 +99,96 @@ export default function RegisterScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <View style={styles.cardWrap}>
-          <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
-          <LinearGradient
-            colors={['rgba(60,60,90,0.35)', 'rgba(150,150,170,0.25)']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
+        <Animated.View
+          style={[
+            styles.animatedContainer,
+            {
+              opacity: fadeAnim,
+            },
+          ]}
+        >
+          <View style={styles.cardWrap}>
+            <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+            <LinearGradient
+              colors={['rgba(60,60,90,0.35)', 'rgba(150,150,170,0.25)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
 
-          <View style={styles.cardContent}>
-            <Text style={styles.title}>W.A.T.C.H.</Text>
+            <View style={styles.cardContent}>
+              <Text style={styles.title}>W.A.T.C.H.</Text>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter email"
-                placeholderTextColor="#5a5a65"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
-            </View>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your full name"
+                  placeholderTextColor="#5a5a65"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  autoCapitalize="words"
+                  autoComplete="name"
+                />
+              </View>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter password"
-                placeholderTextColor="#5a5a65"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-            </View>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter email"
+                  placeholderTextColor="#5a5a65"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Confirm Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Confirm password"
-                placeholderTextColor="#5a5a65"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-              />
-            </View>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter password"
+                  placeholderTextColor="#5a5a65"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+              </View>
 
-            <TouchableOpacity
-              style={styles.button}
-              activeOpacity={0.85}
-              onPress={handleRegister}
-            >
-              <Text style={styles.buttonText}>Register</Text>
-            </TouchableOpacity>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Confirm Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Confirm password"
+                  placeholderTextColor="#5a5a65"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry
+                />
+              </View>
 
-            <Text style={styles.loginPrompt}>
-              Already have an account?{' '}
-              <Text style={styles.loginLink} onPress={() => router.push('/login')}>
-                Log in
+              <TouchableOpacity
+                style={[styles.button, isRegistering && styles.buttonDisabled]}
+                activeOpacity={0.85}
+                onPress={handleRegister}
+                disabled={isRegistering}
+              >
+                <Text style={styles.buttonText}>
+                  {isRegistering ? 'Registering...' : 'Register'}
+                </Text>
+              </TouchableOpacity>
+
+              <Text style={styles.loginPrompt}>
+                Already have an account?{' '}
+                <Text style={styles.loginLink} onPress={() => router.push('/login')}>
+                  Log in
+                </Text>
               </Text>
-            </Text>
+            </View>
           </View>
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </LinearGradient>
   );
@@ -115,6 +202,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 20,
+  },
+  animatedContainer: {
+    width: '100%',
   },
   cardWrap: {
     borderRadius: 28,
@@ -174,6 +264,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 6,
     elevation: 5,
+  },
+  buttonDisabled: {
+    opacity: 0.65,
   },
   buttonText: {
     color: '#f2f2f5',
