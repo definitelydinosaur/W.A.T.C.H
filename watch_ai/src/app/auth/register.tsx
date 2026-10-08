@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,89 +8,88 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import supabase from '../lib/supabase';
+import LoadingAuth from '../../components/loading-auth';
 
-export default function LoginScreen() {
+const SLOW_LOADING_DELAY_MS = 600;
+
+export default function RegisterScreen() {
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
-
-  const handleLogin = async () => {
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [showSlowLoading, setShowSlowLoading] = useState(false);
+  const handleRegister = async () => {
+    const trimmedName = fullName.trim();
     const trimmedEmail = email.trim();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+
+    if (trimmedName.length < 3) {
+      Alert.alert('Invalid name', 'Please enter a name with at least 3 characters.');
+      return;
+    }
 
     if (!trimmedEmail.includes('@')) {
       Alert.alert('Invalid email', 'Please enter a valid email address.');
       return;
     }
 
-    if (!password) {
-      Alert.alert('Invalid password', 'Please enter your password.');
+    if (password.length < 6) {
+      Alert.alert('Invalid password', 'Your password must be at least 6 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Passwords do not match', 'Please make sure both passwords are the same.');
       return;
     }
 
     if (!apiUrl) {
-      Alert.alert('Login unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
+      Alert.alert('Registration unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
       return;
     }
 
-    setIsLoggingIn(true);
+    setIsRegistering(true);
+    const loadingTimeout = setTimeout(
+      () => setShowSlowLoading(true),
+      SLOW_LOADING_DELAY_MS,
+    );
     try {
-      const response = await fetch(`${apiUrl}/auth/login`, {
+      const response = await fetch(`${apiUrl}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: trimmedEmail, password }),
+        body: JSON.stringify({
+          fullName: trimmedName,
+          email: trimmedEmail,
+          password,
+        }),
       });
-      const result: {
-        message?: string | string[];
-        accessToken?: string;
-        refreshToken?: string;
-      } = await response.json();
+      const result: { message?: string | string[] } = await response.json();
 
       if (!response.ok) {
         const message = Array.isArray(result.message)
           ? result.message.join('\n')
-          : result.message ?? 'Please check your credentials and try again.';
+          : result.message ?? 'Please try again.';
         throw new Error(message);
       }
 
-      if (!result.accessToken || !result.refreshToken) {
-        throw new Error('The server did not return a valid login session.');
-      }
-
-      const { error } = await supabase.auth.setSession({
-        access_token: result.accessToken,
-        refresh_token: result.refreshToken,
+      router.replace({
+        pathname: '/auth/confirm-email',
+        params: { email: trimmedEmail },
       });
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      Alert.alert('Login successful', 'You are now signed in.', [
-        { text: 'OK', onPress: () => router.replace('/home') },
-      ]);
     } catch (error) {
       Alert.alert(
-        'Login failed',
+        'Registration failed',
         error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
       );
     } finally {
-      setIsLoggingIn(false);
+      clearTimeout(loadingTimeout);
+      setIsRegistering(false);
+      setShowSlowLoading(false);
     }
   };
 
@@ -100,14 +99,7 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <Animated.View
-          style={[
-            styles.animatedContainer,
-            {
-              opacity: fadeAnim,
-            },
-          ]}
-        >
+        <View>
           <View style={styles.cardWrap}>
             <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
             <LinearGradient
@@ -119,6 +111,19 @@ export default function LoginScreen() {
 
             <View style={styles.cardContent}>
               <Text style={styles.title}>W.A.T.C.H.</Text>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your full name"
+                  placeholderTextColor="#5a5a65"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  autoCapitalize="words"
+                  autoComplete="name"
+                />
+              </View>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Email</Text>
@@ -143,31 +148,46 @@ export default function LoginScreen() {
                   onChangeText={setPassword}
                   secureTextEntry
                 />
-                <Text style={styles.forgotPasswordText} onPress={() => alert('Temporary: forgot password screen not ready yet')}>
-                  Forgot password
-                </Text>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Confirm Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Confirm password"
+                  placeholderTextColor="#5a5a65"
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry
+                />
               </View>
 
               <TouchableOpacity
-                style={[styles.button, isLoggingIn && styles.buttonDisabled]}
+                style={[styles.button, isRegistering && styles.buttonDisabled]}
                 activeOpacity={0.85}
-                onPress={handleLogin}
-                disabled={isLoggingIn}
+                onPress={handleRegister}
+                disabled={isRegistering}
               >
                 <Text style={styles.buttonText}>
-                  {isLoggingIn ? 'Logging in...' : 'Log-in'}
+                  {isRegistering ? 'Registering...' : 'Register'}
                 </Text>
               </TouchableOpacity>
 
-              <Text style={styles.createAccountPrompt}>
-                <Text style={styles.createAccountText} onPress={() => router.push('/register')}>
-                  Create Account
+              <Text style={styles.loginPrompt}>
+                Already have an account?{' '}
+                <Text style={styles.loginLink} onPress={() => router.push('/auth/login')}>
+                  Log in
                 </Text>
               </Text>
             </View>
           </View>
-        </Animated.View>
+        </View>
       </KeyboardAvoidingView>
+      {showSlowLoading && (
+        <View style={StyleSheet.absoluteFill}>
+          <LoadingAuth />
+        </View>
+      )}
     </LinearGradient>
   );
 }
@@ -180,9 +200,6 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 20,
-  },
-  animatedContainer: {
-    width: '100%',
   },
   cardWrap: {
     borderRadius: 28,
@@ -244,28 +261,21 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   buttonDisabled: {
-    opacity: 0.6,
+    opacity: 0.65,
   },
   buttonText: {
     color: '#f2f2f5',
     fontSize: 18,
     fontWeight: '600',
   },
-  forgotPasswordText: {
-    color: '#f3f3f7',
-    fontSize: 12,
-    marginTop: 10,
-    marginLeft: 4,
-    textDecorationLine: 'underline',
-    alignSelf: 'flex-end',
-  },
-  createAccountPrompt: {
+  loginPrompt: {
     marginTop: 18,
     textAlign: 'center',
-  },
-  createAccountText: {
-    color: '#ffffff',
+    color: '#e5e5ea',
     fontSize: 14,
+  },
+  loginLink: {
+    color: '#ffffff',
     fontWeight: '600',
     textDecorationLine: 'underline',
   },

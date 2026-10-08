@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,88 +8,89 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  Animated,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import supabase from '../../lib/supabase';
+import LoadingAuth from '../../components/loading-auth';
 
-export default function RegisterScreen() {
-  const [fullName, setFullName] = useState('');
+const SLOW_LOADING_DELAY_MS = 600;
+
+export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showSlowLoading, setShowSlowLoading] = useState(false);
 
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
-
-  const handleRegister = async () => {
-    const trimmedName = fullName.trim();
+  const handleLogin = async () => {
     const trimmedEmail = email.trim();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-
-    if (trimmedName.length < 3) {
-      Alert.alert('Invalid name', 'Please enter a name with at least 3 characters.');
-      return;
-    }
 
     if (!trimmedEmail.includes('@')) {
       Alert.alert('Invalid email', 'Please enter a valid email address.');
       return;
     }
 
-    if (password.length < 6) {
-      Alert.alert('Invalid password', 'Your password must be at least 6 characters.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Passwords do not match', 'Please make sure both passwords are the same.');
+    if (!password) {
+      Alert.alert('Invalid password', 'Please enter your password.');
       return;
     }
 
     if (!apiUrl) {
-      Alert.alert('Registration unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
+      Alert.alert('Login unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
       return;
     }
 
-    setIsRegistering(true);
+    setIsLoggingIn(true);
+    const loadingTimeout = setTimeout(
+      () => setShowSlowLoading(true),
+      SLOW_LOADING_DELAY_MS,
+    );
     try {
-      const response = await fetch(`${apiUrl}/auth/register`, {
+      const response = await fetch(`${apiUrl}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fullName: trimmedName,
-          email: trimmedEmail,
-          password,
-        }),
+        body: JSON.stringify({ email: trimmedEmail, password }),
       });
-      const result: { message?: string | string[] } = await response.json();
+      const result: {
+        message?: string | string[];
+        accessToken?: string;
+        refreshToken?: string;
+      } = await response.json();
 
       if (!response.ok) {
         const message = Array.isArray(result.message)
           ? result.message.join('\n')
-          : result.message ?? 'Please try again.';
+          : result.message ?? 'Please check your credentials and try again.';
         throw new Error(message);
       }
 
-      Alert.alert('Registration successful', 'You can now log in with your new account.', [
-        { text: 'OK', onPress: () => router.replace('/login') },
+      if (!result.accessToken || !result.refreshToken) {
+        throw new Error('The server did not return a valid login session.');
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token: result.accessToken,
+        refresh_token: result.refreshToken,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      Alert.alert('Login successful', 'You are now signed in.', [
+        { text: 'OK', onPress: () => router.replace('/home') },
       ]);
     } catch (error) {
       Alert.alert(
-        'Registration failed',
+        'Login failed',
         error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
       );
     } finally {
-      setIsRegistering(false);
+      clearTimeout(loadingTimeout);
+      setIsLoggingIn(false);
+      setShowSlowLoading(false);
     }
   };
 
@@ -99,14 +100,7 @@ export default function RegisterScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <Animated.View
-          style={[
-            styles.animatedContainer,
-            {
-              opacity: fadeAnim,
-            },
-          ]}
-        >
+        <View style={styles.animatedContainer}>
           <View style={styles.cardWrap}>
             <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
             <LinearGradient
@@ -118,19 +112,6 @@ export default function RegisterScreen() {
 
             <View style={styles.cardContent}>
               <Text style={styles.title}>W.A.T.C.H.</Text>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your full name"
-                  placeholderTextColor="#5a5a65"
-                  value={fullName}
-                  onChangeText={setFullName}
-                  autoCapitalize="words"
-                  autoComplete="name"
-                />
-              </View>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Email</Text>
@@ -155,41 +136,36 @@ export default function RegisterScreen() {
                   onChangeText={setPassword}
                   secureTextEntry
                 />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Confirm password"
-                  placeholderTextColor="#5a5a65"
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry
-                />
+                <Text style={styles.forgotPasswordText} onPress={() => alert('Temporary: forgot password screen not ready yet')}>
+                  Forgot password
+                </Text>
               </View>
 
               <TouchableOpacity
-                style={[styles.button, isRegistering && styles.buttonDisabled]}
+                style={[styles.button, isLoggingIn && styles.buttonDisabled]}
                 activeOpacity={0.85}
-                onPress={handleRegister}
-                disabled={isRegistering}
+                onPress={handleLogin}
+                disabled={isLoggingIn}
               >
                 <Text style={styles.buttonText}>
-                  {isRegistering ? 'Registering...' : 'Register'}
+                  {isLoggingIn ? 'Logging in...' : 'Log-in'}
                 </Text>
               </TouchableOpacity>
 
-              <Text style={styles.loginPrompt}>
-                Already have an account?{' '}
-                <Text style={styles.loginLink} onPress={() => router.push('/login')}>
-                  Log in
+              <Text style={styles.createAccountPrompt}>
+                <Text style={styles.createAccountText} onPress={() => router.push('/auth/register')}>
+                  Create Account
                 </Text>
               </Text>
             </View>
           </View>
-        </Animated.View>
+        </View>
       </KeyboardAvoidingView>
+      {showSlowLoading && (
+        <View style={StyleSheet.absoluteFill}>
+          <LoadingAuth />
+        </View>
+      )}
     </LinearGradient>
   );
 }
@@ -266,21 +242,28 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   buttonDisabled: {
-    opacity: 0.65,
+    opacity: 0.6,
   },
   buttonText: {
     color: '#f2f2f5',
     fontSize: 18,
     fontWeight: '600',
   },
-  loginPrompt: {
+  forgotPasswordText: {
+    color: '#f3f3f7',
+    fontSize: 12,
+    marginTop: 10,
+    marginLeft: 4,
+    textDecorationLine: 'underline',
+    alignSelf: 'flex-end',
+  },
+  createAccountPrompt: {
     marginTop: 18,
     textAlign: 'center',
-    color: '#e5e5ea',
-    fontSize: 14,
   },
-  loginLink: {
+  createAccountText: {
     color: '#ffffff',
+    fontSize: 14,
     fontWeight: '600',
     textDecorationLine: 'underline',
   },

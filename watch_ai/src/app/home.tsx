@@ -587,9 +587,9 @@ export default function HomeScreen() {
     try {
       await supabase.auth.signOut();
       setMenuVisible(false);
-      router.replace('/login');
+      router.replace('/auth/login');
     } catch {
-      router.replace('/login');
+      router.replace('/auth/login');
     }
   };
 
