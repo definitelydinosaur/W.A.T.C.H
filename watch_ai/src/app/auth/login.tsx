@@ -79,7 +79,9 @@ export default function LoginScreen() {
         throw new Error(error.message);
       }
 
-      Alert.alert('Login successful', 'You are now signed in.');
+      Alert.alert('Login successful', 'You are now signed in.', [
+        { text: 'OK', onPress: () => router.replace('/home') },
+      ]);
     } catch (error) {
       Alert.alert(
         'Login failed',
