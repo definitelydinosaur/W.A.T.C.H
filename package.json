@@ -1,0 +1,25 @@
+{
+  "name": "w.a.t.c.h",
+  "version": "1.0.0",
+  "description": "**W.A.T.C.H.** is an **AI-powered weather and safety information system** designed to help students and community members stay informed about weather conditions, potential hazards, and important announcements based on their location.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+     "dev": "concurrently -k -n BACKEND,EXPO -c blue,green \"npm run start:dev --prefix backend-watch\" \"npm start --prefix watch_ai\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/definitelydinosaur/W.A.T.C.H.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/definitelydinosaur/W.A.T.C.H/issues"
+  },
+  "homepage": "https://github.com/definitelydinosaur/W.A.T.C.H#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
