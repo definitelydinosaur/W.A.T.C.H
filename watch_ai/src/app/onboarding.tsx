@@ -11,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -23,6 +24,10 @@ const PREFERENCES = [
 ];
 
 export default function OnboardingScreen() {
+  const { width, height } = useWindowDimensions();
+  const horizontalGutter = Math.min(22, width * 0.055);
+  const verticalGutter = Math.min(36, height * 0.05);
+  const compactLayout = height < 680 || width < 360;
   const [step, setStep] = useState(0);
   const [homeLocation, setHomeLocation] = useState('');
   const [institution, setInstitution] = useState('');
@@ -92,15 +97,28 @@ export default function OnboardingScreen() {
       style={styles.screen}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingHorizontal: horizontalGutter,
+            paddingVertical: verticalGutter,
+          },
+        ]}
       >
         <Animated.View
           style={[
             styles.card,
             (step === 0 || step === 5) && styles.welcomeCard,
             step === 5 && styles.completeCard,
+            compactLayout && styles.compactCard,
             {
+              width: Math.min(width - horizontalGutter * 2, 460),
+              minHeight: Math.min(
+                560,
+                Math.max(360, height - verticalGutter * 2),
+              ),
+              paddingHorizontal: Math.min(26, Math.max(16, width * 0.07)),
               opacity: pageOpacity,
               transform: [{ translateX: pageOffset }],
             },
@@ -131,7 +149,7 @@ export default function OnboardingScreen() {
             {(step === 0 || step === 5) && (
               <Image
                 source={require('../../utilities/Logo 1.png')}
-                style={styles.logo}
+                style={[styles.logo, compactLayout && styles.compactLogo]}
                 resizeMode="contain"
                 accessibilityLabel="W.A.T.C.H. weather logo"
               />
@@ -147,14 +165,14 @@ export default function OnboardingScreen() {
 
             {step === 1 && (
               <>
-                <Text style={styles.heading}>Enable precise location</Text>
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Enable precise location</Text>
                 <Image
                   source={require('../../utilities/pin icon.png')}
                   style={styles.locationIcon}
                   resizeMode="contain"
                   accessibilityLabel="Location pin"
                 />
-                <Text style={styles.description}>
+                <Text style={[styles.description, compactLayout && styles.compactDescription]}>
                   Your location will be used to show people near you relevant weather and safety alerts.
                 </Text>
                 <PrimaryButton label="Open Settings" onPress={openSettings} />
@@ -166,7 +184,7 @@ export default function OnboardingScreen() {
 
             {step === 2 && (
               <>
-                <Text style={styles.heading}>Add Home Location</Text>
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add Home Location</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="⌕   Enter location"
@@ -188,7 +206,7 @@ export default function OnboardingScreen() {
 
             {step === 3 && (
               <>
-                <Text style={styles.heading}>Add Institution</Text>
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add Institution</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="⌕   Enter institution name"
@@ -210,8 +228,8 @@ export default function OnboardingScreen() {
 
             {step === 4 && (
               <>
-                <Text style={styles.heading}>Preferences</Text>
-                <Text style={styles.description}>
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Preferences</Text>
+                <Text style={[styles.description, compactLayout && styles.compactDescription]}>
                   Choose the updates you would like to receive.
                 </Text>
                 <View style={styles.preferenceList}>
@@ -284,8 +302,6 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 22,
-    paddingVertical: 36,
   },
   card: {
     width: '100%',
@@ -304,6 +320,11 @@ const styles = StyleSheet.create({
   welcomeCard: {
     justifyContent: 'center',
   },
+  compactCard: {
+    paddingTop: 22,
+    paddingBottom: 20,
+    borderRadius: 22,
+  },
   completeCard: {
     backgroundColor: '#F5F6FC',
     borderColor: 'rgba(43, 29, 70, 0.08)',
@@ -317,6 +338,11 @@ const styles = StyleSheet.create({
     height: 76,
     marginBottom: 34,
     borderRadius: 18,
+  },
+  compactLogo: {
+    width: 64,
+    height: 64,
+    marginBottom: 24,
   },
   scriptTitle: {
     color: '#F8F3FF',
@@ -352,6 +378,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
     marginBottom: 24,
+  },
+  compactHeading: {
+    fontSize: 18,
+    marginBottom: 16,
+  },
+  compactDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 18,
   },
   description: {
     color: '#E4D9EF',

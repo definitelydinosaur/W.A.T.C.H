@@ -10,6 +10,8 @@ export default function RootLayout() {
       <Stack.Screen name="auth/loading_auth" options={{ animation: 'fade' }} />
       <Stack.Screen name="auth/confirm-email" options={{ animation: 'fade' }} />
       <Stack.Screen name="home" />
+      <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
+      <Stack.Screen name="map-overview" options={{ animation: 'fade' }} />
     </Stack>
   );
 }

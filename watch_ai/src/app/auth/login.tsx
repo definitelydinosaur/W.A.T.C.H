@@ -80,7 +80,7 @@ export default function LoginScreen() {
       }
 
       Alert.alert('Login successful', 'You are now signed in.', [
-        { text: 'OK', onPress: () => router.replace('/home') },
+        { text: 'OK', onPress: () => router.replace('/weather-watch/index') },
       ]);
     } catch (error) {
       Alert.alert(

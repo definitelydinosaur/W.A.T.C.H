@@ -29,6 +29,14 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    the file. The backend has its own `.env` and needs `SUPABASE_URL` plus
    `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`.
 
+## Weather Watch and Map Overview
+
+After login, Weather Watch loads the live Cebu forecast from the NestJS
+backend and refreshes it every ten minutes. Pull down to refresh sooner.
+Map Overview uses Leaflet with OpenStreetMap tiles on web; native builds link
+to the selected OpenStreetMap location. Search uses the backend geocoder.
+Set `EXPO_PUBLIC_API_URL` to the reachable backend URL for both screens.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)
