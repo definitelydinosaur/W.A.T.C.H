@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   Image,
   Linking,
   Platform,
@@ -30,9 +31,32 @@ export default function OnboardingScreen() {
     'safety',
     'school',
   ]);
+  const pageOpacity = useRef(new Animated.Value(0)).current;
+  const pageOffset = useRef(new Animated.Value(18)).current;
 
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 5));
   const finishOnboarding = () => router.replace('/auth/register');
+
+  useEffect(() => {
+    pageOpacity.setValue(0);
+    pageOffset.setValue(18);
+
+    const transition = Animated.parallel([
+      Animated.timing(pageOpacity, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: true,
+      }),
+      Animated.timing(pageOffset, {
+        toValue: 0,
+        duration: 320,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    transition.start();
+    return () => transition.stop();
+  }, [pageOffset, pageOpacity, step]);
 
   const openSettings = async () => {
     try {
@@ -59,7 +83,11 @@ export default function OnboardingScreen() {
 
   return (
     <LinearGradient
-      colors={step === 1 ? ['#511079', '#311044', '#17152D'] : ['#351356', '#511079', '#17152D']}
+      colors={
+        step === 5
+          ? ['#F5F6FC', '#F5F6FC']
+          : ['#351356', '#511079', '#17152D']
+      }
       locations={[0, 0.48, 1]}
       style={styles.screen}
     >
@@ -67,8 +95,18 @@ export default function OnboardingScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={[styles.card, step === 0 && styles.welcomeCard]}>
-          {step > 2 && (
+        <Animated.View
+          style={[
+            styles.card,
+            (step === 0 || step === 5) && styles.welcomeCard,
+            step === 5 && styles.completeCard,
+            {
+              opacity: pageOpacity,
+              transform: [{ translateX: pageOffset }],
+            },
+          ]}
+        >
+          {step >= 2 && step <= 4 && (
             <View style={styles.progressRow}>
               {STEPS.map((label, index) => {
                 const active = step - 2 >= index;
@@ -90,12 +128,14 @@ export default function OnboardingScreen() {
           )}
 
           <View style={styles.mainContent}>
-            <Image
-              source={require('../../utilities/Logo 1.png')}
-              style={styles.logo}
-              resizeMode="contain"
-              accessibilityLabel="W.A.T.C.H. weather logo"
-            />
+            {(step === 0 || step === 5) && (
+              <Image
+                source={require('../../utilities/Logo 1.png')}
+                style={styles.logo}
+                resizeMode="contain"
+                accessibilityLabel="W.A.T.C.H. weather logo"
+              />
+            )}
 
             {step === 0 && (
               <>
@@ -106,14 +146,6 @@ export default function OnboardingScreen() {
             )}
 
             {step === 1 && (
-              <>
-                <Text style={styles.scriptTitle}>Welcome to</Text>
-                <Text style={styles.brand}>W.A.T.C.H.</Text>
-                <PrimaryButton label="Continue" onPress={continueOnboarding} />
-              </>
-            )}
-
-            {step === 2 && (
               <>
                 <Text style={styles.heading}>Enable precise location</Text>
                 <Image
@@ -132,7 +164,7 @@ export default function OnboardingScreen() {
               </>
             )}
 
-            {step === 3 && (
+            {step === 2 && (
               <>
                 <Text style={styles.heading}>Add Home Location</Text>
                 <TextInput
@@ -154,7 +186,7 @@ export default function OnboardingScreen() {
               </>
             )}
 
-            {step === 4 && (
+            {step === 3 && (
               <>
                 <Text style={styles.heading}>Add Institution</Text>
                 <TextInput
@@ -176,7 +208,7 @@ export default function OnboardingScreen() {
               </>
             )}
 
-            {step === 5 && (
+            {step === 4 && (
               <>
                 <Text style={styles.heading}>Preferences</Text>
                 <Text style={styles.description}>
@@ -206,18 +238,28 @@ export default function OnboardingScreen() {
                 </View>
               </>
             )}
+
+            {step === 5 && (
+              <>
+                <Text style={styles.completeScriptTitle}>Welcome to</Text>
+                <Text style={styles.completeBrand}>W.A.T.C.H.</Text>
+              </>
+            )}
           </View>
 
+          {step === 2 && (
+            <PrimaryButton label="Continue" onPress={continueOnboarding} />
+          )}
           {step === 3 && (
             <PrimaryButton label="Continue" onPress={continueOnboarding} />
           )}
           {step === 4 && (
-            <PrimaryButton label="Continue" onPress={continueOnboarding} />
+            <PrimaryButton label="Continue onboarding" onPress={continueOnboarding} />
           )}
           {step === 5 && (
-            <PrimaryButton label="Continue to registration" onPress={finishOnboarding} />
+            <PrimaryButton label="Continue" onPress={finishOnboarding} />
           )}
-        </View>
+        </Animated.View>
       </ScrollView>
     </LinearGradient>
   );
@@ -262,6 +304,10 @@ const styles = StyleSheet.create({
   welcomeCard: {
     justifyContent: 'center',
   },
+  completeCard: {
+    backgroundColor: '#F5F6FC',
+    borderColor: 'rgba(43, 29, 70, 0.08)',
+  },
   mainContent: {
     alignItems: 'center',
     width: '100%',
@@ -282,6 +328,20 @@ const styles = StyleSheet.create({
   brand: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 26,
+  },
+  completeScriptTitle: {
+    color: '#15121B',
+    fontFamily: Platform.select({ ios: 'Snell Roundhand', android: 'cursive', default: 'cursive' }),
+    fontSize: 28,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  completeBrand: {
+    color: '#111111',
+    fontSize: 17,
     fontWeight: '800',
     textAlign: 'center',
     marginBottom: 26,
