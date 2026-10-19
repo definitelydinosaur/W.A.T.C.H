@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -382,16 +382,16 @@ export default function HomeScreen() {
     selectedHourId === '2' ? selectedCity.condition : activeHour.desc;
 
   // ANIMATIONS
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const cloudDriftAnim = useRef(new Animated.Value(0)).current;
-  const imageFadeAnim = useRef(new Animated.Value(1)).current;
-  const shimmerAnim = useRef(new Animated.Value(-SCREEN_WIDTH)).current;
-  const pulseAnim = useRef(new Animated.Value(0)).current;
-  const windSwayAnim = useRef(new Animated.Value(0)).current;
-  const radarSweepAnim = useRef(new Animated.Value(0)).current;
-  const sunFloatAnim = useRef(new Animated.Value(0)).current;
-  const expandAnim = useRef(new Animated.Value(1)).current;
-  const dragRubberBandAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useMemo(() => new Animated.Value(0), []);
+  const cloudDriftAnim = useMemo(() => new Animated.Value(0), []);
+  const imageFadeAnim = useMemo(() => new Animated.Value(1), []);
+  const shimmerAnim = useMemo(() => new Animated.Value(-SCREEN_WIDTH), []);
+  const pulseAnim = useMemo(() => new Animated.Value(0), []);
+  const windSwayAnim = useMemo(() => new Animated.Value(0), []);
+  const radarSweepAnim = useMemo(() => new Animated.Value(0), []);
+  const sunFloatAnim = useMemo(() => new Animated.Value(0), []);
+  const expandAnim = useMemo(() => new Animated.Value(1), []);
+  const dragRubberBandAnim = useMemo(() => new Animated.Value(0), []);
 
   // Live ticking clock (updates every second for real-time responsiveness)
   useEffect(() => {
@@ -522,7 +522,7 @@ export default function HomeScreen() {
   ]);
 
   // Expand / Collapse with smooth Spring Animation
-  const expandDashboard = () => {
+  const expandDashboard = useCallback(() => {
     Animated.spring(expandAnim, {
       toValue: 1,
       friction: 8,
@@ -530,9 +530,9 @@ export default function HomeScreen() {
       useNativeDriver: false,
     }).start();
     setIsDashboardExpanded(true);
-  };
+  }, [expandAnim]);
 
-  const collapseDashboard = () => {
+  const collapseDashboard = useCallback(() => {
     Animated.spring(expandAnim, {
       toValue: 0,
       friction: 8,
@@ -540,48 +540,50 @@ export default function HomeScreen() {
       useNativeDriver: false,
     }).start();
     setIsDashboardExpanded(false);
-  };
+  }, [expandAnim]);
 
-  const toggleDashboard = () => {
+  const toggleDashboard = useCallback(() => {
     if (isDashboardExpanded) {
       collapseDashboard();
     } else {
       expandDashboard();
     }
-  };
+  }, [collapseDashboard, expandDashboard, isDashboardExpanded]);
 
   // PAN RESPONDER: Supports BOTH TAP and SWIPE (Up to expand, Down to collapse)
-  const sheetPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
-      onPanResponderMove: (_, gestureState) => {
-        // Rubber-band drag feedback
-        dragRubberBandAnim.setValue(gestureState.dy * 0.35);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        // Reset rubber-band
-        Animated.spring(dragRubberBandAnim, {
-          toValue: 0,
-          friction: 6,
-          useNativeDriver: true,
-        }).start();
+  const sheetPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
+        onPanResponderMove: (_, gestureState) => {
+          // Rubber-band drag feedback
+          dragRubberBandAnim.setValue(gestureState.dy * 0.35);
+        },
+        onPanResponderRelease: (_, gestureState) => {
+          // Reset rubber-band
+          Animated.spring(dragRubberBandAnim, {
+            toValue: 0,
+            friction: 6,
+            useNativeDriver: false,
+          }).start();
 
-        // 1. SWIPE DOWN -> Collapse
-        if (gestureState.dy > 20) {
-          collapseDashboard();
-        }
-        // 2. SWIPE UP -> Expand
-        else if (gestureState.dy < -20) {
-          expandDashboard();
-        }
-        // 3. TAP (Small movement) -> Toggle
-        else if (Math.abs(gestureState.dy) < 15 && Math.abs(gestureState.dx) < 15) {
-          toggleDashboard();
-        }
-      },
-    })
-  ).current;
+          // 1. SWIPE DOWN -> Collapse
+          if (gestureState.dy > 20) {
+            collapseDashboard();
+          }
+          // 2. SWIPE UP -> Expand
+          else if (gestureState.dy < -20) {
+            expandDashboard();
+          }
+          // 3. TAP (Small movement) -> Toggle
+          else if (Math.abs(gestureState.dy) < 15 && Math.abs(gestureState.dx) < 15) {
+            toggleDashboard();
+          }
+        },
+      }),
+    [dragRubberBandAnim, collapseDashboard, expandDashboard, toggleDashboard]
+  );
 
   const handleSignOut = async () => {
     try {
