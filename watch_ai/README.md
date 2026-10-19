@@ -16,6 +16,19 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+3. Configure frontend environment variables in `watch_ai/.env` (not
+   `backend-watch/.env`):
+
+   ```env
+   EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+   EXPO_PUBLIC_API_URL=https://your-backend-url
+   ```
+
+   Use plain values, without Markdown link syntax. Restart Expo after changing
+   the file. The backend has its own `.env` and needs `SUPABASE_URL` plus
+   `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)

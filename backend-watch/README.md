@@ -31,6 +31,12 @@
 $ npm install
 ```
 
+## Environment variables
+
+Create a `.env` file in `backend-watch` with `SUPABASE_URL` and either
+`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`. The backend loads this
+file from its own directory, including when started from the repository root.
+
 ## Compile and run the project
 
 ```bash
