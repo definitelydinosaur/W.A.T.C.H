@@ -17,12 +17,17 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
-import supabase from '../lib/supabase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const COLLAPSED_ENCLOSURE_HEIGHT = Platform.OS === 'ios' ? 122 : 114;
 const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.76, 640);
+
+const HOME_MENU_ITEMS = [
+  { label: 'Home', image: require('../../assets/images/homepage/home.png') },
+  { label: 'Alerts', image: require('../../assets/images/homepage/alert.png') },
+  { label: 'Settings', image: require('../../assets/images/homepage/settings.png') },
+  { label: 'Profile', image: require('../../assets/images/homepage/profile.png') },
+];
 
 type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 
@@ -359,7 +364,7 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
   const [selectedCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [selectedHourId, setSelectedHourId] = useState('2');
-  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
 
   // Dashboard Collapse / Expand State
@@ -392,6 +397,16 @@ export default function HomeScreen() {
   const sunFloatAnim = useMemo(() => new Animated.Value(0), []);
   const expandAnim = useMemo(() => new Animated.Value(1), []);
   const dragRubberBandAnim = useMemo(() => new Animated.Value(0), []);
+  const menuAnim = useMemo(() => new Animated.Value(0), []);
+
+  useEffect(() => {
+    Animated.spring(menuAnim, {
+      toValue: menuExpanded ? 1 : 0,
+      friction: 8,
+      tension: 65,
+      useNativeDriver: false,
+    }).start();
+  }, [menuAnim, menuExpanded]);
 
   // Live ticking clock (updates every second for real-time responsiveness)
   useEffect(() => {
@@ -584,16 +599,6 @@ export default function HomeScreen() {
       }),
     [dragRubberBandAnim, collapseDashboard, expandDashboard, toggleDashboard]
   );
-
-  const handleSignOut = async () => {
-    try {
-      await supabase.auth.signOut();
-      setMenuVisible(false);
-      router.replace('/auth/login');
-    } catch {
-      router.replace('/auth/login');
-    }
-  };
 
   // Interpolations for wind compass rotation
   const windRotate = windSwayAnim.interpolate({
@@ -1147,23 +1152,130 @@ export default function HomeScreen() {
                   </LinearGradient>
                 </TouchableOpacity>
               </View>
-
-              {/* Right Menu Button */}
-              <TouchableOpacity
-                style={styles.dockButton}
-                activeOpacity={0.7}
-                onPress={() => setMenuVisible(true)}
-              >
-                <View style={styles.menuIcon}>
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                </View>
-              </TouchableOpacity>
+              <View style={styles.dockButtonSpacer} />
             </View>
           </View>
         </LiquidGlassCard>
       </Animated.View>
+
+      <View style={styles.homeMenu} pointerEvents="box-none">
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
+            styles.homeMenuPill,
+            {
+              height: menuAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [52, 208],
+              }),
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={['#6738C7', '#382493']}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.9, y: 1 }}
+            style={styles.homeMenuPillGradient}
+          >
+            <TouchableOpacity
+              style={styles.homeMenuItem}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={menuExpanded ? 'Home' : 'Open menu'}
+              accessibilityState={{ expanded: menuExpanded }}
+              onPress={() => setMenuExpanded((expanded) => !expanded)}
+            >
+              <Animated.View
+                style={[
+                  styles.homeMenuTopIcon,
+                  {
+                    opacity: menuAnim,
+                    transform: [
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.75, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Image
+                  source={HOME_MENU_ITEMS[0].image}
+                  style={styles.homeMenuItemIcon}
+                  contentFit="contain"
+                />
+              </Animated.View>
+              <Animated.View
+                style={[
+                  styles.homeMenuTopIcon,
+                  {
+                    opacity: menuAnim.interpolate({
+                      inputRange: [0, 0.6, 1],
+                      outputRange: [1, 0, 0],
+                    }),
+                    transform: [
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 0.75],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Image
+                  source={require('../../assets/images/homepage/3dots.png')}
+                  style={styles.homeMenuDots}
+                  contentFit="contain"
+                />
+              </Animated.View>
+            </TouchableOpacity>
+            {HOME_MENU_ITEMS.slice(1).map((item, index) => (
+              <Animated.View
+                key={item.label}
+                pointerEvents={menuExpanded ? 'auto' : 'none'}
+                style={[
+                  styles.homeMenuAnimatedItem,
+                  {
+                    opacity: menuAnim,
+                    transform: [
+                      {
+                        translateY: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-10 - index * 2, 0],
+                        }),
+                      },
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.8, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={styles.homeMenuItem}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
+                  onPress={() => setMenuExpanded(false)}
+                >
+                  <Image
+                    source={item.image}
+                    style={styles.homeMenuItemIcon}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+            ))}
+          </LinearGradient>
+        </Animated.View>
+      </View>
 
       {/* Interactive Liquid Glass City Selector Modal */}
       <Modal visible={citySelectorVisible} transparent animationType="fade">
@@ -1207,60 +1319,6 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Options / Settings Menu Modal */}
-      <Modal visible={menuVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <LiquidGlassCard style={styles.modalGlassCard} intensity={85} shimmerAnim={shimmerAnim}>
-            <Text style={styles.modalTitle}>W.A.T.C.H. Weather</Text>
-            <Text style={styles.modalSubtitle}>
-              Current Station: {selectedCity.name}, {selectedCity.country}
-            </Text>
-
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={toggleDashboard}
-            >
-              <Text style={styles.modalOptionText}>
-                {isDashboardExpanded ? '▲ Collapse Dashboard Sheet' : '▼ Expand Dashboard Sheet'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => {
-                setMenuVisible(false);
-                Alert.alert('Refreshed', 'Real-time Doppler and atmospheric readings updated.');
-              }}
-            >
-              <Text style={styles.modalOptionText}>🔄 Refresh Sensor Telemetry</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => {
-                setMenuVisible(false);
-                setCitySelectorVisible(true);
-              }}
-            >
-              <Text style={styles.modalOptionText}>🌍 Switch City / Radar</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.modalOption, { backgroundColor: 'rgba(235, 75, 75, 0.22)' }]}
-              onPress={handleSignOut}
-            >
-              <Text style={[styles.modalOptionText, { color: '#FF7B7B' }]}>Log Out</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setMenuVisible(false)}
-            >
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
-          </LiquidGlassCard>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -1816,6 +1874,9 @@ const styles = StyleSheet.create({
   dockButton: {
     padding: 12,
   },
+  dockButtonSpacer: {
+    width: 50,
+  },
   mapIcon: {
     width: 26,
     height: 30,
@@ -1831,16 +1892,55 @@ const styles = StyleSheet.create({
     borderRadius: 3.5,
     backgroundColor: '#FFFFFF',
   },
-  menuIcon: {
-    width: 24,
-    height: 20,
-    justifyContent: 'space-between',
+  homeMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 44,
+    right: 18,
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 20,
   },
-  menuLine: {
-    width: '100%',
-    height: 2.6,
-    borderRadius: 1.5,
-    backgroundColor: '#FFFFFF',
+  homeMenuPill: {
+    width: 68,
+    borderRadius: 34,
+    overflow: 'hidden',
+    shadowColor: '#21105F',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.35,
+    shadowRadius: 7,
+    elevation: 8,
+  },
+  homeMenuPillGradient: {
+    flex: 1,
+    borderRadius: 34,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.26)',
+  },
+  homeMenuTopIcon: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuDots: {
+    width: 22,
+    height: 22,
+  },
+  homeMenuItem: {
+    width: 68,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuAnimatedItem: {
+    width: 68,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuItemIcon: {
+    width: 30,
+    height: 30,
   },
   fabWrapper: {
     top: 5,
