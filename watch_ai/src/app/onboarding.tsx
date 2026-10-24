@@ -1,5 +1,6 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Image,
   Linking,
@@ -17,11 +18,17 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const PREFERENCES = [
   { id: 'weather', title: 'Severe weather alerts', description: 'Warnings for dangerous weather near you' },
   { id: 'safety', title: 'Community safety updates', description: 'Important hazards and local announcements' },
   { id: 'school', title: 'School announcements', description: 'Closures and updates from your institution' },
 ];
+
+interface LocationSuggestion {
+  name: string;
+  detail: string;
+}
 
 export default function OnboardingScreen() {
   const { width, height } = useWindowDimensions();
@@ -29,8 +36,16 @@ export default function OnboardingScreen() {
   const verticalGutter = Math.min(36, Math.max(24, height * 0.045));
   const compactLayout = height < 680 || width < 360;
   const [step, setStep] = useState(0);
-  const [homeLocation, setHomeLocation] = useState('');
-  const [institution, setInstitution] = useState('');
+  const [locationQuery, setLocationQuery] = useState('');
+  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
+  const [filteredLocations, setFilteredLocations] = useState<LocationSuggestion[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsError, setLocationsError] = useState('');
+  const [institutionQuery, setInstitutionQuery] = useState('');
+  const [showInstitutionSuggestions, setShowInstitutionSuggestions] = useState(false);
+  const [filteredInstitutions, setFilteredInstitutions] = useState<LocationSuggestion[]>([]);
+  const [institutionsLoading, setInstitutionsLoading] = useState(false);
+  const [institutionsError, setInstitutionsError] = useState('');
   const [selectedPreferences, setSelectedPreferences] = useState<string[]>([
     'weather',
     'safety',
@@ -38,7 +53,13 @@ export default function OnboardingScreen() {
   ]);
   const [pageOffset] = useState(() => new Animated.Value(0));
 
-  const continueOnboarding = () => setStep((current) => Math.min(current + 1, 5));
+  const continueOnboarding = () => {
+    setShowLocationSuggestions(false);
+    setShowInstitutionSuggestions(false);
+    setLocationsLoading(false);
+    setInstitutionsLoading(false);
+    setStep((current) => Math.min(current + 1, 5));
+  };
   const finishOnboarding = () => router.replace('/auth/register');
 
   useLayoutEffect(() => {
@@ -52,6 +73,72 @@ export default function OnboardingScreen() {
     transition.start();
     return () => transition.stop();
   }, [pageOffset, step]);
+
+  useEffect(() => {
+    const query = locationQuery.trim();
+    if (step !== 2 || !showLocationSuggestions || query.length < 2) {
+      return;
+    }
+    if (!API_URL) return;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      setLocationsLoading(true);
+      try {
+        const response = await fetch(
+          `${API_URL}/map/suggest?kind=location&query=${encodeURIComponent(query)}`,
+          { signal: controller.signal },
+        );
+        const result = (await response.json()) as LocationSuggestion[] & { message?: string };
+        if (!response.ok) throw new Error(result.message ?? 'Location search failed.');
+        setFilteredLocations(result);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLocationsError(error instanceof Error ? error.message : 'Location search failed.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLocationsLoading(false);
+      }
+    }, 650);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [locationQuery, showLocationSuggestions, step]);
+
+  useEffect(() => {
+    const query = institutionQuery.trim();
+    if (step !== 3 || !showInstitutionSuggestions || query.length < 2) {
+      return;
+    }
+    if (!API_URL) return;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      setInstitutionsLoading(true);
+      try {
+        const response = await fetch(
+          `${API_URL}/map/suggest?kind=institution&query=${encodeURIComponent(query)}`,
+          { signal: controller.signal },
+        );
+        const result = (await response.json()) as LocationSuggestion[] & { message?: string };
+        if (!response.ok) throw new Error(result.message ?? 'Institution search failed.');
+        setFilteredInstitutions(result);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setInstitutionsError(error instanceof Error ? error.message : 'Institution search failed.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setInstitutionsLoading(false);
+      }
+    }, 650);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [institutionQuery, showInstitutionSuggestions, step]);
 
   const openSettings = async () => {
     try {
@@ -100,6 +187,7 @@ export default function OnboardingScreen() {
           style={[
             styles.card,
             (step === 0 || step === 5) && styles.welcomeCard,
+            step === 1 && styles.locationPermissionCard,
             step === 5 && styles.completeCard,
             compactLayout && styles.compactCard,
             {
@@ -177,12 +265,51 @@ export default function OnboardingScreen() {
                   style={styles.input}
                   placeholder="⌕   Enter location"
                   placeholderTextColor="#82798E"
-                  value={homeLocation}
-                  onChangeText={setHomeLocation}
+                  value={locationQuery}
+                  onChangeText={(value) => {
+                    setLocationQuery(value);
+                    setFilteredLocations([]);
+                    setLocationsError('');
+                    setLocationsLoading(false);
+                    setShowLocationSuggestions(value.trim().length >= 2);
+                  }}
                   autoCapitalize="words"
-                  returnKeyType="next"
+                  returnKeyType="search"
+                  onSubmitEditing={() => {
+                    if (filteredLocations[0]) {
+                      setLocationQuery(filteredLocations[0].name);
+                      setShowLocationSuggestions(false);
+                      setLocationsLoading(false);
+                    } else if (locationQuery.trim()) {
+                      setLocationQuery(locationQuery.trim());
+                      setShowLocationSuggestions(false);
+                      setLocationsLoading(false);
+                    }
+                  }}
                   accessibilityLabel="Home location"
                 />
+                {showLocationSuggestions && locationQuery.trim().length >= 2 && (
+                  <SuggestionList
+                    suggestions={filteredLocations}
+                    query={locationQuery}
+                    loading={locationsLoading}
+                    error={
+                      locationsError ||
+                      (!API_URL ? 'Location search is unavailable. Check the backend URL.' : '')
+                    }
+                    emptyLabel="No matching places found."
+                    onSelect={(suggestion) => {
+                      setLocationQuery(suggestion.name);
+                      setShowLocationSuggestions(false);
+                      setLocationsLoading(false);
+                    }}
+                    onCustomSelect={(query) => {
+                      setLocationQuery(query);
+                      setShowLocationSuggestions(false);
+                      setLocationsLoading(false);
+                    }}
+                  />
+                )}
                 <Text style={styles.helperText}>
                   Add a city or neighborhood to get local alerts.
                 </Text>
@@ -199,12 +326,51 @@ export default function OnboardingScreen() {
                   style={styles.input}
                   placeholder="⌕   Enter institution name"
                   placeholderTextColor="#82798E"
-                  value={institution}
-                  onChangeText={setInstitution}
+                  value={institutionQuery}
+                  onChangeText={(value) => {
+                    setInstitutionQuery(value);
+                    setFilteredInstitutions([]);
+                    setInstitutionsError('');
+                    setInstitutionsLoading(false);
+                    setShowInstitutionSuggestions(value.trim().length >= 2);
+                  }}
                   autoCapitalize="words"
-                  returnKeyType="done"
+                  returnKeyType="search"
+                  onSubmitEditing={() => {
+                    if (filteredInstitutions[0]) {
+                      setInstitutionQuery(filteredInstitutions[0].name);
+                      setShowInstitutionSuggestions(false);
+                      setInstitutionsLoading(false);
+                    } else if (institutionQuery.trim()) {
+                      setInstitutionQuery(institutionQuery.trim());
+                      setShowInstitutionSuggestions(false);
+                      setInstitutionsLoading(false);
+                    }
+                  }}
                   accessibilityLabel="Institution name"
                 />
+                {showInstitutionSuggestions && institutionQuery.trim().length >= 2 && (
+                  <SuggestionList
+                    suggestions={filteredInstitutions}
+                    query={institutionQuery}
+                    loading={institutionsLoading}
+                    error={
+                      institutionsError ||
+                      (!API_URL ? 'Institution search is unavailable. Check the backend URL.' : '')
+                    }
+                    emptyLabel="No matching institutions found."
+                    onSelect={(suggestion) => {
+                      setInstitutionQuery(suggestion.name);
+                      setShowInstitutionSuggestions(false);
+                      setInstitutionsLoading(false);
+                    }}
+                    onCustomSelect={(query) => {
+                      setInstitutionQuery(query);
+                      setShowInstitutionSuggestions(false);
+                      setInstitutionsLoading(false);
+                    }}
+                  />
+                )}
                 <Text style={styles.helperText}>
                   Add your school or institution for relevant announcements.
                 </Text>
@@ -283,6 +449,89 @@ function PrimaryButton({ label, onPress }: { label: string; onPress: () => void 
   );
 }
 
+function SuggestionList({
+  suggestions,
+  query,
+  loading,
+  error,
+  emptyLabel,
+  onSelect,
+  onCustomSelect,
+}: {
+  suggestions: LocationSuggestion[];
+  query: string;
+  loading: boolean;
+  error: string;
+  emptyLabel: string;
+  onSelect: (suggestion: LocationSuggestion) => void;
+  onCustomSelect: (query: string) => void;
+}) {
+  return (
+    <View style={styles.suggestionList}>
+      <ScrollView
+        style={styles.suggestionResults}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        {loading && (
+          <View style={styles.suggestionStatus}>
+            <ActivityIndicator size="small" color="#7000B8" />
+            <Text style={styles.suggestionStatusText}>Searching…</Text>
+          </View>
+        )}
+        {!loading && error !== '' && (
+          <Text style={styles.suggestionStatusText}>{error}</Text>
+        )}
+        {!loading && error === '' && suggestions.length === 0 && (
+          <Text style={styles.suggestionStatusText}>{emptyLabel}</Text>
+        )}
+        {suggestions.map((suggestion, index) => (
+          <Pressable
+            key={`${suggestion.name}-${suggestion.detail}-${index}`}
+            style={({ pressed, hovered }) => [
+              styles.suggestionRow,
+              (pressed || hovered) && styles.suggestionRowPressed,
+            ]}
+            onPress={() => onSelect(suggestion)}
+            accessibilityRole="button"
+          >
+            <Image
+              source={require('../../utilities/pin icon.png')}
+              style={styles.suggestionPin}
+              resizeMode="contain"
+              accessibilityLabel="Location pin"
+            />
+            <View style={styles.suggestionText}>
+              <Text style={styles.suggestionName} numberOfLines={1}>
+                {suggestion.name}
+              </Text>
+              {suggestion.detail !== '' && (
+                <Text style={styles.suggestionDetail} numberOfLines={1}>
+                  {suggestion.detail}
+                </Text>
+              )}
+            </View>
+          </Pressable>
+        ))}
+        {!loading && query.trim() !== '' && (
+          <Pressable
+            style={({ pressed, hovered }) => [
+              styles.customSuggestion,
+              (pressed || hovered) && styles.suggestionRowPressed,
+            ]}
+            onPress={() => onCustomSelect(query.trim())}
+            accessibilityRole="button"
+          >
+            <Text style={styles.customSuggestionText}>
+              Can’t find it? Add custom: {query.trim()}
+            </Text>
+          </Pressable>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -304,8 +553,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(28, 13, 48, 0.38)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
+    overflow: 'visible',
   },
   welcomeCard: {
+    justifyContent: 'center',
+  },
+  locationPermissionCard: {
     justifyContent: 'center',
   },
   compactCard: {
@@ -432,6 +685,73 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     color: '#221632',
     fontSize: 14,
+  },
+  suggestionList: {
+    width: '100%',
+    marginTop: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(112,0,184,0.16)',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+    zIndex: 2,
+    elevation: 4,
+  },
+  suggestionResults: {
+    maxHeight: 220,
+  },
+  suggestionRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E9E3EF',
+  },
+  suggestionRowPressed: {
+    backgroundColor: '#F1E7FA',
+  },
+  suggestionPin: {
+    width: 18,
+    height: 18,
+  },
+  suggestionText: {
+    flex: 1,
+  },
+  suggestionName: {
+    color: '#221632',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  suggestionDetail: {
+    color: '#82798E',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  suggestionStatus: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  suggestionStatusText: {
+    color: '#82798E',
+    fontSize: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  customSuggestion: {
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: '#F8F3FC',
+  },
+  customSuggestionText: {
+    color: '#7000B8',
+    fontSize: 11,
+    fontWeight: '600',
   },
   helperText: {
     width: '100%',

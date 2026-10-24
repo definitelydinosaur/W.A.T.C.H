@@ -60,13 +60,16 @@ administrator supplies the server-side `ANNOUNCEMENT_ADMIN_TOKEN` using the
 `x-announcement-admin-token` header. Never accept client-submitted boolean
 verification flags. AI requests are limited to ten per client IP per minute.
 
-The map geocoder uses OpenStreetMap Nominatim. Search is rate-limited to one
-request per second and map tiles include OpenStreetMap attribution.
+The map geocoder uses OpenStreetMap Nominatim, and onboarding suggestions use
+OpenStreetMap Photon scoped to the Philippines. Provider requests share a
+one-request-per-second rate limit. Map tiles include OpenStreetMap attribution.
 
 Available endpoints:
 
 - `GET /weather?latitude=10.3157&longitude=123.8854`
 - `GET /map/geocode?query=Cebu%20City`
+- `GET /map/suggest?kind=location&query=Cebu`
+- `GET /map/suggest?kind=institution&query=University`
 - `POST /ai/hazard-guidance`
 - `POST /ai/announcement-summary`
 
