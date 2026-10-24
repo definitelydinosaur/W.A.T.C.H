@@ -199,24 +199,7 @@ export default function OnboardingScreen() {
           ]}
         >
           {step >= 2 && step <= 4 && (
-            <View style={styles.progressRow}>
-              {STEPS.map((label, index) => {
-                const active = step - 2 >= index;
-                return (
-                  <React.Fragment key={label}>
-                    <View style={[styles.progressDot, active && styles.progressDotActive]} />
-                    {index < STEPS.length - 1 && (
-                      <View
-                        style={[
-                          styles.progressTrack,
-                          step - 2 > index && styles.progressTrackActive,
-                        ]}
-                      />
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </View>
+            <ProgressIndicator currentStep={step - 1} />
           )}
 
           <View style={styles.mainContent}>
@@ -314,7 +297,7 @@ export default function OnboardingScreen() {
                   Add a city or neighborhood to get local alerts.
                 </Text>
                 <Text style={styles.notice}>
-                  W.A.T.C.H. will only use your location to show alerts near you.
+                  {privacyNoteForStep(1)}
                 </Text>
               </>
             )}
@@ -375,7 +358,7 @@ export default function OnboardingScreen() {
                   Add your school or institution for relevant announcements.
                 </Text>
                 <Text style={styles.notice}>
-                  W.A.T.C.H. will only use your institution to show relevant alerts.
+                  {privacyNoteForStep(2)}
                 </Text>
               </>
             )}
@@ -447,6 +430,43 @@ function PrimaryButton({ label, onPress }: { label: string; onPress: () => void 
       <Text style={styles.buttonText}>{label}</Text>
     </Pressable>
   );
+}
+
+function ProgressIndicator({ currentStep }: { currentStep: 1 | 2 | 3 }) {
+  return (
+    <View style={styles.progressRow} accessibilityLabel={`Step ${currentStep} of 3`}>
+      {STEPS.map((label, index) => {
+        const stepNumber = index + 1;
+        const active = currentStep === stepNumber;
+        return (
+          <React.Fragment key={label}>
+            <View
+              style={[
+                styles.progressDot,
+                active && styles.progressDotActive,
+              ]}
+              accessibilityLabel={`${label}${active ? ', current step' : ''}`}
+            />
+            {index < STEPS.length - 1 && (
+              <View
+                style={[
+                  styles.progressTrack,
+                  currentStep > stepNumber && styles.progressTrackActive,
+                ]}
+              />
+            )}
+          </React.Fragment>
+        );
+      })}
+    </View>
+  );
+}
+
+function privacyNoteForStep(stepNumber: 1 | 2) {
+  if (stepNumber === 1) {
+    return 'W.A.T.C.H. will only use your location to show alerts near you.';
+  }
+  return 'W.A.T.C.H. will only use your institution information to show alerts near you.';
 }
 
 function SuggestionList({
