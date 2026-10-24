@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useLayoutEffect, useState } from 'react';
 import {
   Animated,
   Image,
@@ -25,8 +25,8 @@ const PREFERENCES = [
 
 export default function OnboardingScreen() {
   const { width, height } = useWindowDimensions();
-  const horizontalGutter = Math.min(22, width * 0.055);
-  const verticalGutter = Math.min(36, height * 0.05);
+  const horizontalGutter = Math.min(24, Math.max(16, width * 0.055));
+  const verticalGutter = Math.min(36, Math.max(24, height * 0.045));
   const compactLayout = height < 680 || width < 360;
   const [step, setStep] = useState(0);
   const [homeLocation, setHomeLocation] = useState('');
@@ -36,32 +36,22 @@ export default function OnboardingScreen() {
     'safety',
     'school',
   ]);
-  const pageOpacity = useRef(new Animated.Value(0)).current;
-  const pageOffset = useRef(new Animated.Value(18)).current;
+  const [pageOffset] = useState(() => new Animated.Value(0));
 
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 5));
   const finishOnboarding = () => router.replace('/auth/register');
 
-  useEffect(() => {
-    pageOpacity.setValue(0);
-    pageOffset.setValue(18);
-
-    const transition = Animated.parallel([
-      Animated.timing(pageOpacity, {
-        toValue: 1,
-        duration: 280,
-        useNativeDriver: true,
-      }),
-      Animated.timing(pageOffset, {
-        toValue: 0,
-        duration: 320,
-        useNativeDriver: true,
-      }),
-    ]);
+  useLayoutEffect(() => {
+    pageOffset.setValue(12);
+    const transition = Animated.timing(pageOffset, {
+      toValue: 0,
+      duration: 240,
+      useNativeDriver: true,
+    });
 
     transition.start();
     return () => transition.stop();
-  }, [pageOffset, pageOpacity, step]);
+  }, [pageOffset, step]);
 
   const openSettings = async () => {
     try {
@@ -114,12 +104,8 @@ export default function OnboardingScreen() {
             compactLayout && styles.compactCard,
             {
               width: Math.min(width - horizontalGutter * 2, 460),
-              minHeight: Math.min(
-                560,
-                Math.max(360, height - verticalGutter * 2),
-              ),
+              minHeight: Math.max(0, height - verticalGutter * 2),
               paddingHorizontal: Math.min(26, Math.max(16, width * 0.07)),
-              opacity: pageOpacity,
               transform: [{ translateX: pageOffset }],
             },
           ]}
@@ -166,12 +152,14 @@ export default function OnboardingScreen() {
             {step === 1 && (
               <>
                 <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Enable precise location</Text>
-                <Image
-                  source={require('../../utilities/pin icon.png')}
-                  style={styles.locationIcon}
-                  resizeMode="contain"
-                  accessibilityLabel="Location pin"
-                />
+                <View style={styles.locationIconCircle}>
+                  <Image
+                    source={require('../../utilities/pin icon.png')}
+                    style={styles.locationIcon}
+                    resizeMode="contain"
+                    accessibilityLabel="Location pin"
+                  />
+                </View>
                 <Text style={[styles.description, compactLayout && styles.compactDescription]}>
                   Your location will be used to show people near you relevant weather and safety alerts.
                 </Text>
@@ -396,9 +384,17 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   locationIcon: {
-    width: 64,
-    height: 64,
-    marginVertical: 24,
+    width: 38,
+    height: 38,
+  },
+  locationIconCircle: {
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 36,
+    backgroundColor: '#FFFFFF',
+    marginVertical: 20,
   },
   button: {
     minHeight: 48,
