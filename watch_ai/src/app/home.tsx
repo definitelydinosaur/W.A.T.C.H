@@ -17,6 +17,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import supabase from '../lib/supabase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const COLLAPSED_ENCLOSURE_HEIGHT = Platform.OS === 'ios' ? 122 : 114;
@@ -361,11 +363,18 @@ function WeatherIcon({
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { welcomeName: routeWelcomeName } = useLocalSearchParams<{
+    welcomeName?: string | string[];
+  }>();
+  const welcomeName = typeof routeWelcomeName === 'string' ? routeWelcomeName.trim() : '';
   const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
   const [selectedCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [selectedHourId, setSelectedHourId] = useState('2');
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
+  const [profilePictureLoadFailed, setProfilePictureLoadFailed] = useState(false);
 
   // Dashboard Collapse / Expand State
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
@@ -398,6 +407,64 @@ export default function HomeScreen() {
   const expandAnim = useMemo(() => new Animated.Value(1), []);
   const dragRubberBandAnim = useMemo(() => new Animated.Value(0), []);
   const menuAnim = useMemo(() => new Animated.Value(0), []);
+  const welcomeAnim = useMemo(() => new Animated.Value(0), []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadProfilePicture = async () => {
+      const { data: sessionData, error: sessionError } =
+        await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session) return;
+
+      const { data, error } = await supabase
+        .from('user_info')
+        .select('profile_pic')
+        .eq('id', sessionData.session.user.id)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (isActive) setProfilePictureUrl(data?.profile_pic ?? null);
+    };
+
+    loadProfilePicture().catch((error: unknown) => {
+      if (isActive) {
+        Alert.alert(
+          'Profile picture unavailable',
+          error instanceof Error
+            ? error.message
+            : 'Unable to load your profile picture.',
+        );
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!welcomeName) return;
+    welcomeAnim.setValue(0);
+    const animation = Animated.sequence([
+      Animated.timing(welcomeAnim, {
+        toValue: 1,
+        duration: 550,
+        useNativeDriver: true,
+      }),
+      Animated.delay(2400),
+      Animated.timing(welcomeAnim, {
+        toValue: 0,
+        duration: 350,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    animation.start();
+
+    return () => animation.stop();
+  }, [welcomeAnim, welcomeName]);
 
   useEffect(() => {
     Animated.spring(menuAnim, {
@@ -1226,11 +1293,22 @@ export default function HomeScreen() {
                   },
                 ]}
               >
-                <Image
-                  source={require('../../assets/images/homepage/3dots.png')}
-                  style={styles.homeMenuDots}
-                  contentFit="contain"
-                />
+                <View style={styles.homeMenuAvatar}>
+                  {profilePictureUrl && !profilePictureLoadFailed ? (
+                    <Image
+                      source={{ uri: profilePictureUrl }}
+                      style={styles.homeMenuAvatarImage}
+                      contentFit="cover"
+                      onError={() => setProfilePictureLoadFailed(true)}
+                      accessibilityLabel="Profile picture"
+                    />
+                  ) : (
+                    <View style={styles.homeMenuAvatarPlaceholder}>
+                      <View style={styles.homeMenuAvatarHead} />
+                      <View style={styles.homeMenuAvatarBody} />
+                    </View>
+                  )}
+                </View>
               </Animated.View>
             </TouchableOpacity>
             {HOME_MENU_ITEMS.slice(1).map((item, index) => (
@@ -1263,7 +1341,15 @@ export default function HomeScreen() {
                   activeOpacity={0.7}
                   accessibilityRole="button"
                   accessibilityLabel={item.label}
-                  onPress={() => setMenuExpanded(false)}
+                  onPress={() => {
+                    setMenuExpanded(false);
+                    if (item.label === 'Settings') {
+                      router.push({
+                        pathname: '/settings_page/settings',
+                        params: { profilePictureUrl: profilePictureUrl ?? '' },
+                      });
+                    }
+                  }}
                 >
                   <Image
                     source={item.image}
@@ -1319,6 +1405,28 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
+      {welcomeName && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.welcomeToast,
+            {
+              opacity: welcomeAnim,
+              transform: [
+                {
+                  translateY: welcomeAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-90, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.welcomeToastText}>Welcome {welcomeName}!</Text>
+        </Animated.View>
+      )}
+
     </View>
   );
 }
@@ -1328,6 +1436,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0D0C1D',
     overflow: 'hidden',
+  },
+  welcomeToast: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : 42,
+    alignSelf: 'center',
+    zIndex: 20,
+    width: '88%',
+    maxWidth: 420,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.24)',
+    backgroundColor: 'rgba(36, 27, 73, 0.92)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  welcomeToastText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   fullScreenCloudWrapper: {
     position: 'absolute',
@@ -1922,9 +2055,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  homeMenuDots: {
-    width: 22,
-    height: 22,
+  homeMenuAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuAvatarImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  homeMenuAvatarPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E7E1F3',
+  },
+  homeMenuAvatarHead: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 3,
+    backgroundColor: '#6738C7',
+  },
+  homeMenuAvatarBody: {
+    width: 21,
+    height: 12,
+    marginTop: 2,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    backgroundColor: '#6738C7',
   },
   homeMenuItem: {
     width: 68,
