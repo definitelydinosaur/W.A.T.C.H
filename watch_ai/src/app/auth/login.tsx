@@ -60,6 +60,7 @@ export default function LoginScreen() {
         message?: string | string[];
         accessToken?: string;
         refreshToken?: string;
+        user?: { name?: string };
       } = await response.json();
 
       if (!response.ok) {
@@ -82,9 +83,8 @@ export default function LoginScreen() {
         throw new Error(error.message);
       }
 
-      Alert.alert('Login successful', 'You are now signed in.', [
-        { text: 'OK', onPress: () => router.replace('/home') },
-      ]);
+      const welcomeName = result.user?.name?.trim() || trimmedEmail.split('@')[0];
+      router.replace({ pathname: '/home', params: { welcomeName } });
     } catch (error) {
       Alert.alert(
         'Login failed',
