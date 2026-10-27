@@ -79,4 +79,23 @@ export class ProfileService {
     profile_pic: updatedProfile.profile_pic,
   };
 }
+
+async getProfilePicture(userId: string) {
+  const { data, error } = await this.supabase
+    .from('user_info')
+    .select('profile_pic')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new InternalServerErrorException(
+      `Failed to fetch profile picture: ${error.message}`,
+    );
+  }
+
+  return {
+    profile_pic: data?.profile_pic ?? null,
+  };
+}
+
 }
