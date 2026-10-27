@@ -90,6 +90,7 @@ async uploadProfilePicture(
 }
 
 
+
 async getProfilePicture(userId: string) {
   const { data, error } = await this.supabase
     .from('user_info')
@@ -103,9 +104,27 @@ async getProfilePicture(userId: string) {
     );
   }
 
+  const filePath = data?.profile_pic;
+
+  if (!filePath) {
+    return { profile_pic: null };
+  }
+
+  const { data: signedData, error: signedError } =
+    await this.supabase.storage
+      .from('watch_storage')
+      .createSignedUrl(filePath, 60 * 60 * 24 * 365);
+
+  if (signedError) {
+    throw new InternalServerErrorException(
+      `Failed to generate signed URL: ${signedError.message}`,
+    );
+  }
+
   return {
-    profile_pic: data?.profile_pic ?? null,
+    profile_pic: signedData.signedUrl,
   };
 }
+
 
 }
