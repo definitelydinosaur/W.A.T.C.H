@@ -14,7 +14,8 @@ export class ProfileService {
     private readonly supabase: SupabaseClient,
   ) {}
 
-  async uploadProfilePicture(
+  
+async uploadProfilePicture(
   userId: string,
   file: Express.Multer.File,
 ) {
@@ -46,17 +47,11 @@ export class ProfileService {
     );
   }
 
-  // 2. Get the public image URL
-  const { data } = this.supabase.storage
-    .from('watch_storage')
-    .getPublicUrl(filePath);
-
-  const imageUrl = data.publicUrl;
-
+  // 2. Save the storage path in the database
   const { data: updatedProfile, error: updateError } =
     await this.supabase
       .from('user_info')
-      .update({ profile_pic: imageUrl })
+      .update({ profile_pic: filePath })
       .eq('id', userId)
       .select('id, profile_pic')
       .maybeSingle();
@@ -69,16 +64,31 @@ export class ProfileService {
 
   if (!updatedProfile) {
     throw new InternalServerErrorException(
-      `Image uploaded, but no user_info row matched ID: ${userId}. Check the user ID and table schema.`,
+      `Image uploaded, but no user_info row matched ID: ${userId}.`,
     );
   }
 
-  // 4. Return the saved URL
+  // 3. Generate a signed URL valid for one year
+  const expiresIn = 60 * 60 * 24 * 365;
+
+  const { data: signedData, error: signedError } =
+    await this.supabase.storage
+      .from('watch_storage')
+      .createSignedUrl(filePath, expiresIn);
+
+  if (signedError) {
+    throw new InternalServerErrorException(
+      `Failed to generate signed URL: ${signedError.message}`,
+    );
+  }
+
+  // 4. Return the signed URL for the frontend
   return {
     message: 'Profile picture updated successfully.',
-    profile_pic: updatedProfile.profile_pic,
+    profile_pic: signedData.signedUrl,
   };
 }
+
 
 async getProfilePicture(userId: string) {
   const { data, error } = await this.supabase
