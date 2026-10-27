@@ -2,6 +2,7 @@
 import {
   Controller,
   Post,
+  Get,
   UploadedFile,
   UseInterceptors,
   UseGuards,
@@ -53,4 +54,12 @@ export class ProfileController {
       file,
     );
   }
+
+  @Get('picture')
+async getProfilePicture(
+  @Req() req: Request & { user: { id: string } },
+) {
+  return this.profileService.getProfilePicture(req.user.id);
+}
+  
 }

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { useProfilePicture } from '../hooks/loadprofilepicture';
 import {
   View,
   Text,
@@ -8,20 +9,24 @@ import {
   Dimensions,
   Animated,
   Platform,
-  StatusBar,
   Modal,
   Alert,
   Easing,
   PanResponder,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import supabase from '../lib/supabase';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const COLLAPSED_ENCLOSURE_HEIGHT = Platform.OS === 'ios' ? 122 : 114;
+const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
+const TAB_BAR_HEIGHT = TAB_BAR_WIDTH * (345 / 1170);
+const COLLAPSED_ENCLOSURE_HEIGHT = Math.max(
+  Platform.OS === 'ios' ? 122 : 114,
+  Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72)
+);
 const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.76, 640);
 
 const HOME_MENU_ITEMS = [
@@ -373,8 +378,7 @@ export default function HomeScreen() {
   const [selectedHourId, setSelectedHourId] = useState('2');
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
-  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(null);
-  const [profilePictureLoadFailed, setProfilePictureLoadFailed] = useState(false);
+  const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
 
   // Dashboard Collapse / Expand State
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
@@ -409,40 +413,12 @@ export default function HomeScreen() {
   const menuAnim = useMemo(() => new Animated.Value(0), []);
   const welcomeAnim = useMemo(() => new Animated.Value(0), []);
 
-  useEffect(() => {
-    let isActive = true;
+  useFocusEffect(
+    useCallback(() => {
+      void loadProfilePicture();
+    }, [loadProfilePicture]),
+  );
 
-    const loadProfilePicture = async () => {
-      const { data: sessionData, error: sessionError } =
-        await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!sessionData.session) return;
-
-      const { data, error } = await supabase
-        .from('user_info')
-        .select('profile_pic')
-        .eq('id', sessionData.session.user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (isActive) setProfilePictureUrl(data?.profile_pic ?? null);
-    };
-
-    loadProfilePicture().catch((error: unknown) => {
-      if (isActive) {
-        Alert.alert(
-          'Profile picture unavailable',
-          error instanceof Error
-            ? error.message
-            : 'Unable to load your profile picture.',
-        );
-      }
-    });
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!welcomeName) return;
@@ -485,7 +461,7 @@ export default function HomeScreen() {
     return () => clearInterval(clockInterval);
   }, []);
 
-  // Animate transition on time phase changes
+
   useEffect(() => {
     imageFadeAnim.setValue(0.2);
     Animated.timing(imageFadeAnim, {
@@ -495,7 +471,7 @@ export default function HomeScreen() {
     }).start();
   }, [effectiveTimeOfDay, imageFadeAnim]);
 
-  // Entrance and continuous fluid animations
+
   useEffect(() => {
     // 1. Entrance Fade
     Animated.timing(fadeAnim, {
@@ -632,12 +608,15 @@ export default function HomeScreen() {
     }
   }, [collapseDashboard, expandDashboard, isDashboardExpanded]);
 
-  // PAN RESPONDER: Supports BOTH TAP and SWIPE (Up to expand, Down to collapse)
+
   const sheetPanResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => Math.abs(gestureState.dy) > 6,
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
+        onPanResponderTerminationRequest: () => false,
         onPanResponderMove: (_, gestureState) => {
           // Rubber-band drag feedback
           dragRubberBandAnim.setValue(gestureState.dy * 0.35);
@@ -681,7 +660,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <StatusBar style="light" />
 
       {/* 1. Underlying Sky Gradient */}
       <LinearGradient
@@ -1182,48 +1161,44 @@ export default function HomeScreen() {
             </Animated.View>
           )}
 
-          {/* Enclosed Liquid Glass Navigation Bar (Docked at Base of Enclosure) */}
-          <View style={styles.enclosedNavbar}>
-            {isDashboardExpanded && <View style={styles.navbarSeparator} />}
-            <View style={styles.dockBar}>
-              {/* Left Map / Radar Pin Button */}
-              <TouchableOpacity
-                style={styles.dockButton}
-                activeOpacity={0.7}
-                onPress={() =>
-                  Alert.alert(
-                    'Live Weather Radar',
-                    `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`
-                  )
-                }
-              >
-                <View style={styles.mapIcon}>
-                  <View style={styles.mapPinDot} />
-                </View>
-              </TouchableOpacity>
-
-              {/* Center Elevated (+) FAB with Metallic Radial Shimmer */}
-              <View style={styles.fabWrapper}>
-                <TouchableOpacity
-                  style={styles.fabButton}
-                  activeOpacity={0.85}
-                  onPress={() => setCitySelectorVisible(true)}
-                >
-                  <LinearGradient
-                    colors={['#FFFFFF', '#DADFE7', '#B4B9C4']}
-                    start={{ x: 0.2, y: 0.2 }}
-                    end={{ x: 0.8, y: 0.8 }}
-                    style={styles.fabGradient}
-                  >
-                    <Text style={styles.fabPlusText}>+</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.dockButtonSpacer} />
-            </View>
-          </View>
         </LiquidGlassCard>
       </Animated.View>
+
+      <View style={styles.fixedTabBar} pointerEvents="box-none">
+        <Image
+          source={require('../../assets/images/homepage/TabBar.png')}
+          style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
+          contentFit="fill"
+          pointerEvents="none"
+        />
+        <TouchableOpacity
+          style={styles.tabBarRadarButton}
+          activeOpacity={0.65}
+          accessibilityRole="button"
+          accessibilityLabel="Open live weather radar"
+          onPress={() =>
+            Alert.alert(
+              'Live Weather Radar',
+              `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`
+            )
+          }
+        />
+        <TouchableOpacity
+          style={styles.tabBarLocationButton}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Select location"
+          onPress={() => setCitySelectorVisible(true)}
+        />
+        <TouchableOpacity
+          style={styles.tabBarMenuButton}
+          activeOpacity={0.65}
+          accessibilityRole="button"
+          accessibilityLabel={menuExpanded ? 'Close menu' : 'Open menu'}
+          accessibilityState={{ expanded: menuExpanded }}
+          onPress={() => setMenuExpanded((expanded) => !expanded)}
+        />
+      </View>
 
       <View style={styles.homeMenu} pointerEvents="box-none">
         <Animated.View
@@ -1294,12 +1269,12 @@ export default function HomeScreen() {
                 ]}
               >
                 <View style={styles.homeMenuAvatar}>
-                  {profilePictureUrl && !profilePictureLoadFailed ? (
+                  {profilePictureUrl ? (
                     <Image
                       source={{ uri: profilePictureUrl }}
                       style={styles.homeMenuAvatarImage}
                       contentFit="cover"
-                      onError={() => setProfilePictureLoadFailed(true)}
+                      onError={(error) => console.error('Profile picture image failed to load:', error)}
                       accessibilityLabel="Profile picture"
                     />
                   ) : (
@@ -1641,7 +1616,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.3,
   },
-  // Bottom Dashboard Enclosure (Enclosed with Navbar)
+  // Dashboard enclosure
   bottomDashboardEnclosure: {
     position: 'absolute',
     bottom: 0,
@@ -1665,11 +1640,14 @@ const styles = StyleSheet.create({
     elevation: 16,
   },
   collapseToggleHeader: {
+    width: '100%',
+    minHeight: 64,
     alignItems: 'center',
+    justifyContent: 'flex-start',
     paddingTop: 12,
     paddingBottom: 8,
-    paddingHorizontal: 16,
     cursor: 'pointer',
+    zIndex: 1,
   },
   dragHandle: {
     width: 48,
@@ -1986,44 +1964,35 @@ const styles = StyleSheet.create({
   sunIconAnimated: {
     fontSize: 18,
   },
-  enclosedNavbar: {
-    width: '100%',
-    paddingBottom: Platform.OS === 'ios' ? 22 : 14,
+  fixedTabBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: '50%',
+    width: TAB_BAR_WIDTH,
+    height: TAB_BAR_HEIGHT,
+    marginLeft: -TAB_BAR_WIDTH / 2,
+    zIndex: 110,
   },
-  navbarSeparator: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    marginHorizontal: 20,
-    marginBottom: 6,
+  tabBarRadarButton: {
+    position: 'absolute',
+    left: '9%',
+    top: '40%',
+    width: '22%',
+    height: '40%',
   },
-  dockBar: {
-    width: '100%',
-    height: 80,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 30,
+  tabBarLocationButton: {
+    position: 'absolute',
+    left: '35%',
+    top: '40%',
+    width: '30%',
+    height: '30%',
   },
-  dockButton: {
-    padding: 12,
-  },
-  dockButtonSpacer: {
-    width: 50,
-  },
-  mapIcon: {
-    width: 26,
-    height: 30,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mapPinDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#FFFFFF',
+  tabBarMenuButton: {
+    position: 'absolute',
+    right: '9%',
+    top: '40%',
+    width: '22%',
+    height: '40%',
   },
   homeMenu: {
     position: 'absolute',
@@ -2107,36 +2076,6 @@ const styles = StyleSheet.create({
   homeMenuItemIcon: {
     width: 30,
     height: 30,
-  },
-  fabWrapper: {
-    top: 5,
-  },
-  fabButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    shadowColor: '#FFF',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  fabGradient: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 21,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-  },
-  fabPlusText: {
-    color: '#2E335A',
-    fontSize: 21,
-    fontWeight: '400',
-    lineHeight: 22,
-    textAlign: 'center',
-    marginTop: -1,
   },
   // Icons styling
   iconBox: {

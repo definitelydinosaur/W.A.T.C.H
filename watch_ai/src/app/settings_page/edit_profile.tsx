@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -8,18 +8,19 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import { useProfilePicture } from '../../hooks/loadprofilepicture';
 import supabase from '../../lib/supabase';
 
 type PickerField = 'Date of Birth' | 'Country/Region';
@@ -38,6 +39,7 @@ export default function EditProfileScreen() {
     typeof routeProfilePictureUrl === 'string' && routeProfilePictureUrl
       ? routeProfilePictureUrl
       : null;
+  const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,42 +52,11 @@ export default function EditProfileScreen() {
   const [localProfilePicture, setLocalProfilePicture] = useState<string | null>(null);
   const [isUploadingPicture, setIsUploadingPicture] = useState(false);
 
-  useEffect(() => {
-    let isActive = true;
-
-    const loadProfilePicture = async () => {
-      const { data: sessionData, error: sessionError } =
-        await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      if (!sessionData.session) return;
-
-      const { data, error } = await supabase
-        .from('user_info')
-        .select('profile_pic')
-        .eq('id', sessionData.session.user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (isActive) {
-        setProfilePicture(data?.profile_pic ?? null);
-      }
-    };
-
-    loadProfilePicture().catch((error: unknown) => {
-      if (isActive) {
-        Alert.alert(
-          'Profile picture unavailable',
-          error instanceof Error
-            ? error.message
-            : 'Unable to load your profile picture.',
-        );
-      }
-    });
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      void loadProfilePicture();
+    }, [loadProfilePicture]),
+  );
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -245,9 +216,15 @@ const changeProfilePicture = async () => {
     setActivePicker(null);
   };
 
+  const displayedProfilePicture =
+    localProfilePicture ??
+    profilePictureUrl ??
+    profilePicture ??
+    initialProfilePictureUrl;
+
   return (
     <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
-      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      <StatusBar style="dark" />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
           style={styles.keyboardAvoidingView}
@@ -283,10 +260,12 @@ const changeProfilePicture = async () => {
 
               <View style={styles.avatarSection}>
                 <View style={styles.avatar}>
-                  {profilePicture && (
+                  {displayedProfilePicture && (
                     <Image
                       accessibilityLabel="Selected profile picture"
-                      source={{ uri: profilePicture }}
+                      source={{
+                        uri: displayedProfilePicture,
+                      }}
                       style={styles.avatarImage}
                       resizeMode="cover"
                       onError={() => {
