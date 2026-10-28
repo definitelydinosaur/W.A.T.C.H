@@ -31,6 +31,48 @@
 $ npm install
 ```
 
+## Environment variables
+
+Create a `.env` file in `backend-watch` with `SUPABASE_URL` and either
+`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`. The backend loads this
+file from its own directory, including when started from the repository root.
+For Gemini AI, also set `GEMINI_API_KEY` and optionally `GEMINI_MODEL`
+(defaults to `gemini-2.5-flash`). Never put the Gemini or Supabase service key
+in the Expo app's `EXPO_PUBLIC_*` variables. See `.env.example` for the full
+set of backend settings.
+
+## Weather, map, and AI setup
+
+Apply `supabase/migrations/202610200001_weather_ai_cache.sql` to the project's
+Supabase database before using the live weather or AI endpoints. The backend
+uses Open-Meteo for forecasts, caches them for ten minutes, and classifies
+weather risk using fixed thresholds before any AI explanation is requested.
+Risk thresholds are advisory application rules: rain rate 15/30/50 mm per
+hour, wind 39/62/88 km/h, and computed heat index 33/42/52 °C. These are not
+official PAGASA alerts and do not replace government advisories.
+Gemini requests are cached by prompt and retried with backoff; static safety
+guidance is returned when Gemini is not configured or is unavailable. Do not
+send personal data in AI requests; the backend redacts email addresses and
+phone-like numbers from announcement text before sending it to Gemini. Names
+and other identifying details should be removed at the source. School suspension summaries remain
+unverified unless the URL matches `TRUSTED_ANNOUNCEMENT_DOMAINS` or an
+administrator supplies the server-side `ANNOUNCEMENT_ADMIN_TOKEN` using the
+`x-announcement-admin-token` header. Never accept client-submitted boolean
+verification flags. AI requests are limited to ten per client IP per minute.
+
+The map geocoder uses OpenStreetMap Nominatim, and onboarding suggestions use
+OpenStreetMap Photon scoped to the Philippines. Provider requests share a
+one-request-per-second rate limit. Map tiles include OpenStreetMap attribution.
+
+Available endpoints:
+
+- `GET /weather?latitude=10.3157&longitude=123.8854`
+- `GET /map/geocode?query=Cebu%20City`
+- `GET /map/suggest?kind=location&query=Cebu`
+- `GET /map/suggest?kind=institution&query=University`
+- `POST /ai/hazard-guidance`
+- `POST /ai/announcement-summary`
+
 ## Compile and run the project
 
 ```bash
