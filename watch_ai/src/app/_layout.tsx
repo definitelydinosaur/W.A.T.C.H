@@ -1,8 +1,12 @@
 import { Stack } from 'expo-router';
 
+export const unstable_settings = {
+  anchor: 'onboarding',
+};
+
 export default function RootLayout() {
   return (
-    <Stack initialRouteName="onboarding" screenOptions={{ headerShown: false }}>
+    <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
       <Stack.Screen name="auth/login" options={{ animation: 'fade' }} />

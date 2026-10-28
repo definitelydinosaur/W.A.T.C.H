@@ -180,7 +180,7 @@ export default function WeatherWatchScreen() {
             <Text style={styles.eyebrow}>WEATHER WATCH</Text>
             <Text style={styles.city}>Cebu City</Text>
           </View>
-          <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview/index')}>
+          <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
             <Text style={styles.mapButtonText}>Map overview</Text>
           </Pressable>
         </View>

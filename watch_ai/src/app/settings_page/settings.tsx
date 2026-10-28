@@ -198,7 +198,7 @@ export default function SettingsScreen() {
 
   return (
     <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
-      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
           <View style={styles.header}>
