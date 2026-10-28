@@ -199,7 +199,7 @@ export default function OnboardingScreen() {
           ]}
         >
           {step >= 2 && step <= 4 && (
-            <ProgressIndicator currentStep={step - 1} />
+            <ProgressIndicator currentStep={step === 2 ? 1 : step === 3 ? 2 : 3} />
           )}
 
           <View style={styles.mainContent}>

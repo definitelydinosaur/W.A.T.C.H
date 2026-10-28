@@ -1,9 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function LoadingAuth() {
-	const rotation = useRef(new Animated.Value(0)).current;
+	const [rotation] = useState(() => new Animated.Value(0));
 
 	useEffect(() => {
 		const animation = Animated.loop(

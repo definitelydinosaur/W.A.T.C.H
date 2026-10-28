@@ -83,7 +83,7 @@ export default function MapOverviewScreen() {
           label={location.name}
         />
         <View style={styles.searchRow}>
-          <Pressable style={styles.homeButton} onPress={() => router.replace('/weather-watch/index')}>
+          <Pressable style={styles.homeButton} onPress={() => router.replace('/weather-watch')}>
             <Text style={styles.homeIcon}>⌂</Text>
           </Pressable>
           <TextInput
