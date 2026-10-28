@@ -8,15 +8,17 @@ import Constants from 'expo-constants';
 import supabase from '../lib/supabase';
 import { profileApi } from '../lib/profile-api';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 
 export const unstable_settings = {
   anchor: 'onboarding',
@@ -90,13 +92,21 @@ export default function RootLayout() {
       }
     };
     const responseListener =
-      Notifications.addNotificationResponseReceivedListener(openFromNotification);
-    void Notifications.getLastNotificationResponseAsync().then(openFromNotification);
+      Platform.OS === 'web'
+        ? null
+        : Notifications.addNotificationResponseReceivedListener(
+            openFromNotification,
+          );
+    if (Platform.OS !== 'web') {
+      void Notifications.getLastNotificationResponseAsync().then(
+        openFromNotification,
+      );
+    }
 
     return () => {
       active = false;
       authListener.data.subscription.unsubscribe();
-      responseListener.remove();
+      responseListener?.remove();
     };
   }, [router]);
 

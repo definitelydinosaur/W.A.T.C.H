@@ -29,6 +29,28 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    the file. The backend has its own `.env` and needs `SUPABASE_URL` plus
    `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`.
 
+## Starting Expo Go over a tunnel
+
+The project includes `@expo/ngrok` as a local development dependency. From
+`watch_ai`, run:
+
+```powershell
+npm run start:tunnel
+```
+
+If port 8081 is already occupied, choose another port at the prompt or provide
+one explicitly:
+
+```powershell
+npm run start:tunnel -- --port 8083
+```
+
+Scan the QR code printed by that running server with Expo Go. If Expo Go still
+shows a remote-update download error, confirm the tunnel reports **Tunnel
+ready**, scan the newest QR code (not one from a previous server), and verify
+the phone can access the internet. On a shared Wi-Fi network, `npx expo start
+--lan` may be faster; phone and computer must be on the same network.
+
 ## Weather Watch and Map Overview
 
 After login, Weather Watch loads the live Cebu forecast from the NestJS
