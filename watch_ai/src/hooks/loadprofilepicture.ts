@@ -18,7 +18,7 @@ export function useProfilePicture() {
         error: sessionError,
       } = await supabase.auth.getSession();
 
-   console.log('Access Token:', session?.access_token); // Log the access token for debugging
+      console.log('access token:', session?.access_token);
 
       if (sessionError) throw sessionError;
 

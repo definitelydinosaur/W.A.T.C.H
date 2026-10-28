@@ -1,4 +1,5 @@
 import { useCallback, useState, type ReactNode } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   ActivityIndicator,
   Alert,
@@ -23,14 +24,38 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useProfilePicture } from '../../hooks/loadprofilepicture';
 import supabase from '../../lib/supabase';
 
-type PickerField = 'Date of Birth' | 'Country/Region';
+type PickerField = 'Country/Region';
 
 const PICKER_OPTIONS: Record<PickerField, string[]> = {
-  'Date of Birth': ['23/05/1995', '15/08/1998', '01/01/2000', '10/10/2002'],
   'Country/Region': ['Philippines', 'United States', 'Canada', 'Japan', 'Australia'],
 };
 
+function parseBirthdate(value: string | null): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day] = match;
+  const parsedDate = new Date(Number(year), Number(month) - 1, Number(day));
+
+  if (
+    parsedDate.getFullYear() !== Number(year) ||
+    parsedDate.getMonth() !== Number(month) - 1 ||
+    parsedDate.getDate() !== Number(day)
+  ) {
+    return null;
+  }
+
+  return parsedDate;
+}
+
 export default function EditProfileScreen() {
+  const [isSaving, setIsSaving] = useState(false);
   const router = useRouter();
   const { profilePictureUrl: routeProfilePictureUrl } = useLocalSearchParams<{
     profilePictureUrl?: string | string[];
@@ -41,9 +66,11 @@ export default function EditProfileScreen() {
       : null;
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const email = '';
   const [password, setPassword] = useState('');
-  const [dateOfBirth, setDateOfBirth] = useState('23/05/1995');
+  const [dateOfBirth, setDateOfBirth] = useState(new Date(1995, 4, 23));
+  const [datePickerDraft, setDatePickerDraft] = useState(dateOfBirth);
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [country, setCountry] = useState('Philippines');
   const [activePicker, setActivePicker] = useState<PickerField | null>(null);
   const [profilePicture, setProfilePicture] = useState<string | null>(
@@ -52,11 +79,59 @@ export default function EditProfileScreen() {
   const [localProfilePicture, setLocalProfilePicture] = useState<string | null>(null);
   const [isUploadingPicture, setIsUploadingPicture] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadProfilePicture();
-    }, [loadProfilePicture]),
-  );
+
+const loadProfile = useCallback(async () => {
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+
+    if (!user) {
+      Alert.alert('Session expired', 'Please log in again.');
+      return;
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from('user_info')
+      .select('name, birthdate, country')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    if (!profile) {
+      throw new Error('No profile was found for the signed-in user.');
+    }
+
+    setName(profile.name ?? '');
+    setCountry(profile.country ?? 'Philippines');
+
+    const birthdate = parseBirthdate(profile.birthdate);
+    if (birthdate) {
+      setDateOfBirth(birthdate);
+      setDatePickerDraft(birthdate);
+    }
+  } catch (error) {
+    console.error('Load profile error:', error);
+    Alert.alert(
+      'Error',
+      error instanceof Error ? error.message : 'Failed to load profile.',
+    );
+  }
+}, []);
+
+
+useFocusEffect(
+  useCallback(() => {
+    void loadProfile();
+    void loadProfilePicture();
+  }, [loadProfile, loadProfilePicture]),
+);
+
+
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -66,12 +141,55 @@ export default function EditProfileScreen() {
     }
   };
 
-  const saveChanges = () => {
+const saveChanges = async () => {
+  setIsSaving(true);
+
+  try {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+
+    if (!user) {
+      Alert.alert('Session expired', 'Please log in again.');
+      return;
+    }
+
+    const year = dateOfBirth.getFullYear();
+    const month = String(dateOfBirth.getMonth() + 1).padStart(2, '0');
+    const day = String(dateOfBirth.getDate()).padStart(2, '0');
+    const birthdate = `${year}-${month}-${day}`;
+
+    const { data: updatedProfile, error: updateError } = await supabase
+      .from('user_info')
+      .update({
+        name: name.trim(),
+        birthdate,
+        country: country.trim(),
+      })
+      .eq('id', user.id)
+      .select('id')
+      .maybeSingle();
+
+    if (updateError) throw updateError;
+
+    if (!updatedProfile) {
+      throw new Error('No profile was found for the signed-in user.');
+    }
+
+    Alert.alert('Success', 'Your profile has been updated.');
+  } catch (error) {
+    console.error('Update profile error:', error);
     Alert.alert(
-      'Not connected yet',
-      'Profile changes are not saved because profile editing is not connected to a backend yet.',
+      'Update failed',
+      error instanceof Error ? error.message : 'Something went wrong.',
     );
-  };
+  } finally {
+    setIsSaving(false);
+  }
+};
 
 const changeProfilePicture = async () => {
   try {
@@ -211,10 +329,34 @@ const changeProfilePicture = async () => {
 
 
   const selectOption = (option: string) => {
-    if (activePicker === 'Date of Birth') setDateOfBirth(option);
     if (activePicker === 'Country/Region') setCountry(option);
     setActivePicker(null);
   };
+
+  const openDatePicker = () => {
+    setDatePickerDraft(dateOfBirth);
+    setShowDatePicker(true);
+  };
+
+  const handleDateChange = (
+    event: { type: string },
+    selectedDate?: Date,
+  ) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+      if (event.type === 'set' && selectedDate) {
+        setDateOfBirth(selectedDate);
+      }
+      return;
+    }
+
+    if (selectedDate) {
+      setDatePickerDraft(selectedDate);
+    }
+  };
+
+  const formatDate = (date: Date) =>
+    `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
 
   const displayedProfilePicture =
     localProfilePicture ??
@@ -323,13 +465,11 @@ const changeProfilePicture = async () => {
                 <ProfileField label="Email">
                   <TextInput
                     accessibilityLabel="Email"
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    onChangeText={setEmail}
+                    editable={false}
                     placeholder="watch@gmail.com"
                     placeholderTextColor="#55515A"
-                    returnKeyType="next"
-                    style={styles.input}
+                    selectTextOnFocus={false}
+                    style={[styles.input, styles.readOnlyInput]}
                     value={email}
                   />
                 </ProfileField>
@@ -351,8 +491,8 @@ const changeProfilePicture = async () => {
                 <ProfileField label="Date of Birth">
                   <PickerButton
                     accessibilityLabel="Select date of birth"
-                    onPress={() => setActivePicker('Date of Birth')}
-                    value={dateOfBirth}
+                    onPress={openDatePicker}
+                    value={formatDate(dateOfBirth)}
                   />
                 </ProfileField>
 
@@ -367,13 +507,17 @@ const changeProfilePicture = async () => {
 
               <Pressable
                 accessibilityRole="button"
+                disabled={isSaving}
                 onPress={saveChanges}
                 style={({ pressed }) => [
                   styles.saveButton,
+                  isSaving && styles.saveButtonPressed,
                   pressed && styles.saveButtonPressed,
                 ]}
               >
-                <Text style={styles.saveButtonText}>Save changes</Text>
+                <Text style={styles.saveButtonText}>
+                  {isSaving ? 'Saving...' : 'Save changes'}
+                </Text>
               </Pressable>
             </ScrollView>
           </View>
@@ -383,7 +527,7 @@ const changeProfilePicture = async () => {
       <Modal
         animationType="fade"
         transparent
-        visible={activePicker !== null}
+        visible={activePicker === 'Country/Region'}
         onRequestClose={() => setActivePicker(null)}
       >
         <View style={styles.pickerOverlay}>
@@ -412,6 +556,60 @@ const changeProfilePicture = async () => {
           </View>
         </View>
       </Modal>
+
+      {showDatePicker &&
+        (Platform.OS === 'ios' ? (
+          <Modal
+            animationType="fade"
+            transparent
+            visible
+            onRequestClose={() => setShowDatePicker(false)}
+          >
+            <View style={styles.pickerOverlay}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close date picker"
+                onPress={() => setShowDatePicker(false)}
+                style={styles.pickerBackdrop}
+              />
+              <View style={styles.pickerCard}>
+                <Text style={styles.pickerTitle}>Date of Birth</Text>
+                <DateTimePicker
+                  maximumDate={new Date()}
+                  mode="date"
+                  onChange={handleDateChange}
+                  value={datePickerDraft}
+                />
+                <View style={styles.datePickerActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setShowDatePicker(false)}
+                    style={styles.datePickerAction}
+                  >
+                    <Text style={styles.datePickerActionText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setDateOfBirth(datePickerDraft);
+                      setShowDatePicker(false);
+                    }}
+                    style={styles.datePickerAction}
+                  >
+                    <Text style={styles.datePickerActionText}>Done</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        ) : (
+          <DateTimePicker
+            maximumDate={new Date()}
+            mode="date"
+            onChange={handleDateChange}
+            value={dateOfBirth}
+          />
+        ))}
     </LinearGradient>
   );
 }
@@ -548,6 +746,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.18)',
   },
+  readOnlyInput: {
+    opacity: 0.7,
+  },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -618,5 +819,22 @@ const styles = StyleSheet.create({
   pickerOptionText: {
     color: '#342C46',
     fontSize: 14,
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: '#E8E4EF',
+  },
+  datePickerAction: {
+    minWidth: 72,
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  datePickerActionText: {
+    color: '#342448',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

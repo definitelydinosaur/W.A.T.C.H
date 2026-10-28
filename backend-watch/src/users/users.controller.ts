@@ -6,23 +6,24 @@ import {
   UploadedFile,
   UseInterceptors,
   UseGuards,
+  Patch,
+  Body,
   Req,
-  UsePipes,
-  ValidationPipe,
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { ProfileService } from './users.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
-
-import {SupabaseAuthGuard} from '../auth/supabase-auth.guard';   
+import { SupabaseAuthGuard } from '../auth/supabase-auth.guard';
 
 @Controller('profile')
 @UseGuards(SupabaseAuthGuard)
 export class ProfileController {
   constructor(private readonly profileService: ProfileService) {}
 
+  // Upload profile picture
   @Post('picture')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -55,11 +56,32 @@ export class ProfileController {
     );
   }
 
+  // Fetch profile picture
   @Get('picture')
-async getProfilePicture(
+  async getProfilePicture(
+    @Req() req: Request & { user: { id: string } },
+  ) {
+    return this.profileService.getProfilePicture(req.user.id);
+  }
+
+  
+@Get()
+async getProfile(
   @Req() req: Request & { user: { id: string } },
 ) {
-  return this.profileService.getProfilePicture(req.user.id);
+  return this.profileService.getProfile(req.user.id);
 }
+
+
   
+  @Patch()
+  async updateProfile(
+    @Body() updates: UpdateProfileDto,
+    @Req() req: Request & { user: { id: string } },
+  ) {
+    return this.profileService.updateProfile(
+      req.user.id,
+      updates,
+    );
+  }
 }

@@ -127,4 +127,113 @@ async getProfilePicture(userId: string) {
 }
 
 
+async updateProfile(
+  userId: string,
+  updates: {
+    name?: string;
+    birthdate?: string;
+    country?: string;
+  },
+) {
+  console.log('Authenticated user ID:', userId);
+  const allowedFields = ['name', 'birthdate', 'country'];
+  const submittedFields = Object.keys(updates);
+
+  if (
+    submittedFields.length === 0 ||
+    submittedFields.some((field) => !allowedFields.includes(field))
+  ) {
+    throw new BadRequestException(
+      'Provide at least one valid profile field to update.',
+    );
+  }
+
+  const updateData: {
+    name?: string;
+    birthdate?: string;
+    country?: string;
+  } = {};
+
+  if (updates.name !== undefined) {
+    updateData.name = updates.name.trim();
+  }
+
+  if (updates.birthdate !== undefined) {
+    updateData.birthdate = updates.birthdate;
+  }
+
+  if (updates.country !== undefined) {
+    updateData.country = updates.country.trim();
+  }
+
+  if (
+    updateData.name !== undefined &&
+    updateData.name.length === 0
+  ) {
+    throw new BadRequestException('Name cannot be empty.');
+  }
+
+  if (
+    updateData.country !== undefined &&
+    updateData.country.length === 0
+  ) {
+    throw new BadRequestException('Country cannot be empty.');
+  }
+
+  const { data, error } = await this.supabase
+    .from('user_info')
+    .update(updateData)
+    .eq('id', userId)
+    .select('id, name, birthdate, country')
+    .maybeSingle();
+
+
+console.log('Supabase update data:', data);
+console.log('Supabase update error:', error);
+console.log('Authenticated user ID:', userId);
+
+  if (error) {
+    throw new InternalServerErrorException(
+      `Failed to update profile: ${error.message}`,
+    );
+  }
+
+  if (!data) {
+    throw new BadRequestException(
+      'No profile was found for the authenticated user.',
+    );
+  }
+
+  return {
+    message: 'Profile updated successfully.',
+    profile: data,
+  };
+}
+
+
+async getProfile(userId: string) {
+  const { data, error } = await this.supabase
+    .from('user_info')
+    .select('id, name, birthdate, country')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new InternalServerErrorException(
+      `Failed to fetch profile: ${error.message}`,
+    );
+  }
+
+  if (!data) {
+    throw new BadRequestException(
+      'No profile was found for the authenticated user.',
+    );
+  }
+
+  return { profile: data };
+}
+
+
+
+
 }
