@@ -1323,6 +1323,8 @@ export default function HomeScreen() {
                         pathname: '/settings_page/settings',
                         params: { profilePictureUrl: profilePictureUrl ?? '' },
                       });
+                    } else if (item.label === 'Profile') {
+                      router.push('/Profile_page/profile');
                     }
                   }}
                 >
