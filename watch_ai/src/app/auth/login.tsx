@@ -15,7 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import supabase from '../../lib/supabase';
 import LoadingAuth from '../../components/loading-auth';
-import useAuthCardFlip from '../../hooks/use-auth-card-flip';
+import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 
 const SLOW_LOADING_DELAY_MS = 600;
 
@@ -24,7 +24,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
-  const { AnimatedView, animatedStyle, flipTo, isFlipping } = useAuthCardFlip();
+  const { AnimatedView, animatedStyle, isTransitioning } = useAuthCardTransition();
 
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
@@ -98,13 +98,17 @@ export default function LoginScreen() {
   };
 
   return (
-    <LinearGradient colors={['#1a1a2e', '#16213e']} style={styles.screen}>
+    <LinearGradient
+      colors={['#351356', '#511079', '#17152D']}
+      locations={[0, 0.48, 1]}
+      style={styles.screen}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
         <AnimatedView
-          pointerEvents={isFlipping ? 'none' : 'auto'}
+          pointerEvents={isTransitioning ? 'none' : 'auto'}
           style={[styles.animatedContainer, animatedStyle]}
         >
           <View style={styles.cardWrap}>
@@ -185,7 +189,12 @@ export default function LoginScreen() {
                 New to W.A.T.C.H.?{' '}
                 <Text
                   style={styles.createAccountText}
-                  onPress={() => flipTo('/auth/register')}
+                  onPress={() =>
+                    router.replace({
+                      pathname: '/onboarding',
+                      params: { startRegistration: 'true' },
+                    })
+                  }
                 >
                   Create Account
                 </Text>

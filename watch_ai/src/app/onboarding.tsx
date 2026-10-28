@@ -15,7 +15,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
@@ -31,11 +31,12 @@ interface LocationSuggestion {
 }
 
 export default function OnboardingScreen() {
+  const { startRegistration } = useLocalSearchParams<{ startRegistration?: string }>();
   const { width, height } = useWindowDimensions();
   const horizontalGutter = Math.min(24, Math.max(16, width * 0.055));
   const verticalGutter = Math.min(36, Math.max(24, height * 0.045));
   const compactLayout = height < 680 || width < 360;
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(startRegistration === 'true' ? 1 : 0);
   const [locationQuery, setLocationQuery] = useState('');
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
   const [filteredLocations, setFilteredLocations] = useState<LocationSuggestion[]>([]);
@@ -58,8 +59,10 @@ export default function OnboardingScreen() {
     setShowInstitutionSuggestions(false);
     setLocationsLoading(false);
     setInstitutionsLoading(false);
-    setStep((current) => Math.min(current + 1, 5));
+    setStep((current) => Math.min(current + 1, 4));
   };
+  const chooseRegistration = () => setStep(1);
+  const chooseLogin = () => router.replace('/auth/login');
   const finishOnboarding = () => router.replace('/auth/register');
 
   useLayoutEffect(() => {
@@ -165,11 +168,7 @@ export default function OnboardingScreen() {
 
   return (
     <LinearGradient
-      colors={
-        step === 5
-          ? ['#F5F6FC', '#F5F6FC']
-          : ['#351356', '#511079', '#17152D']
-      }
+      colors={['#351356', '#511079', '#17152D']}
       locations={[0, 0.48, 1]}
       style={styles.screen}
     >
@@ -186,9 +185,8 @@ export default function OnboardingScreen() {
         <Animated.View
           style={[
             styles.card,
-            (step === 0 || step === 5) && styles.welcomeCard,
+            (step === 0 || step === 6) && styles.welcomeCard,
             step === 1 && styles.locationPermissionCard,
-            step === 5 && styles.completeCard,
             compactLayout && styles.compactCard,
             {
               width: Math.min(width - horizontalGutter * 2, 460),
@@ -203,7 +201,7 @@ export default function OnboardingScreen() {
           )}
 
           <View style={styles.mainContent}>
-            {(step === 0 || step === 5) && (
+            {(step === 0 || step === 6) && (
               <Image
                 source={require('../../utilities/Logo 1.png')}
                 style={[styles.logo, compactLayout && styles.compactLogo]}
@@ -216,7 +214,20 @@ export default function OnboardingScreen() {
               <>
                 <Text style={styles.scriptTitle}>Welcome aboard</Text>
                 <Text style={styles.brand}>W.A.T.C.H.</Text>
-                <PrimaryButton label="Get started" onPress={continueOnboarding} />
+                <PrimaryButton label="Get started" onPress={() => setStep(6)} />
+              </>
+            )}
+
+            {step === 6 && (
+              <>
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>
+                  How would you like to continue?
+                </Text>
+                <PrimaryButton label="Log in" onPress={chooseLogin} />
+                <PrimaryButton label="Register" onPress={chooseRegistration} />
+                <Pressable onPress={() => setStep(0)} hitSlop={10}>
+                  <Text style={styles.textLink}>Back</Text>
+                </Pressable>
               </>
             )}
 
@@ -393,13 +404,6 @@ export default function OnboardingScreen() {
                 </View>
               </>
             )}
-
-            {step === 5 && (
-              <>
-                <Text style={styles.completeScriptTitle}>Welcome to</Text>
-                <Text style={styles.completeBrand}>W.A.T.C.H.</Text>
-              </>
-            )}
           </View>
 
           {step === 2 && (
@@ -409,10 +413,7 @@ export default function OnboardingScreen() {
             <PrimaryButton label="Continue" onPress={continueOnboarding} />
           )}
           {step === 4 && (
-            <PrimaryButton label="Continue onboarding" onPress={continueOnboarding} />
-          )}
-          {step === 5 && (
-            <PrimaryButton label="Continue" onPress={finishOnboarding} />
+            <PrimaryButton label="Continue onboarding" onPress={finishOnboarding} />
           )}
         </Animated.View>
       </ScrollView>
@@ -586,10 +587,6 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     borderRadius: 22,
   },
-  completeCard: {
-    backgroundColor: '#F5F6FC',
-    borderColor: 'rgba(43, 29, 70, 0.08)',
-  },
   mainContent: {
     alignItems: 'center',
     width: '100%',
@@ -615,20 +612,6 @@ const styles = StyleSheet.create({
   brand: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '800',
-    textAlign: 'center',
-    marginBottom: 26,
-  },
-  completeScriptTitle: {
-    color: '#15121B',
-    fontFamily: Platform.select({ ios: 'Snell Roundhand', android: 'cursive', default: 'cursive' }),
-    fontSize: 28,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  completeBrand: {
-    color: '#111111',
-    fontSize: 17,
     fontWeight: '800',
     textAlign: 'center',
     marginBottom: 26,
