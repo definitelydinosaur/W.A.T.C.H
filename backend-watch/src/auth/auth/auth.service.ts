@@ -37,11 +37,11 @@ export class AuthService {
     const { error: profileError } = await this.supabaseClient
       .from('user_info')
       .insert({
-      id: user.id,
-      name: fullName,
-      email,
-      role: 'user',
-    });
+        id: user.id,
+        name: fullName,
+        email,
+        role: 'user',
+      });
 
     if (profileError) {
       throw new BadRequestException(profileError.message);
@@ -65,43 +65,31 @@ export class AuthService {
     }
 
     const user = data.user;
-if (error) {
-  throw new UnauthorizedException('Invalid email or password');
-}
+    if (!user || !data.session) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
 
-if (!user || !data.session) {
-  throw new UnauthorizedException('Invalid email or password');
-}
-return {
-  message: 'Login successful',
-  user: {
-    id: user.id,
-    email: user.email,
-  },
-  accessToken: data.session.access_token,
-  refreshToken: data.session.refresh_token,
-  expiresIn: data.session.expires_in,
-};
+    const { data: profile, error: profileError } = await this.supabaseClient
+      .from('user_info')
+      .select('name')
+      .eq('id', user.id)
+      .maybeSingle()
+      .overrideTypes<{ name: string | null }, { merge: false }>();
+
+    if (profileError) {
+      throw new BadRequestException('Unable to load your account profile.');
+    }
+
+    return {
+      message: 'Login successful',
+      user: {
+        id: user.id,
+        email: user.email,
+        name: profile?.name ?? user.email?.split('@')[0],
+      },
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresIn: data.session.expires_in,
+    };
   }
-
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

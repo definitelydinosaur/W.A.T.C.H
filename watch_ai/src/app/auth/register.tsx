@@ -8,11 +8,13 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import LoadingAuth from '../../components/loading-auth';
+import useAuthCardFlip from '../../hooks/use-auth-card-flip';
 
 const SLOW_LOADING_DELAY_MS = 600;
 
@@ -23,6 +25,7 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
+  const { AnimatedView, animatedStyle, flipTo, isFlipping } = useAuthCardFlip();
   const handleRegister = async () => {
     const trimmedName = fullName.trim();
     const trimmedEmail = email.trim();
@@ -99,7 +102,10 @@ export default function RegisterScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <View>
+        <AnimatedView
+          pointerEvents={isFlipping ? 'none' : 'auto'}
+          style={[styles.cardContainer, animatedStyle]}
+        >
           <View style={styles.cardWrap}>
             <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
             <LinearGradient
@@ -110,78 +116,98 @@ export default function RegisterScreen() {
             />
 
             <View style={styles.cardContent}>
+              <Image
+                source={require('../../../assets/images/authpage/Logo.png')}
+                style={styles.logo}
+                resizeMode="contain"
+                accessibilityLabel="W.A.T.C.H. logo"
+              />
               <Text style={styles.title}>W.A.T.C.H.</Text>
 
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your full name"
-                  placeholderTextColor="#5a5a65"
-                  value={fullName}
-                  onChangeText={setFullName}
-                  autoCapitalize="words"
-                  autoComplete="name"
+              <View style={styles.form}>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter your full name"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={fullName}
+                    onChangeText={setFullName}
+                    autoCapitalize="words"
+                    autoComplete="name"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter email"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter password"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Confirm Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Re-enter password"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    secureTextEntry
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.button, isRegistering && styles.buttonDisabled]}
+                  activeOpacity={0.85}
+                  onPress={handleRegister}
+                  disabled={isRegistering}
+                >
+                  <Text style={styles.buttonText}>
+                    {isRegistering ? 'Registering...' : 'Register'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={styles.connectDivider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.connectText}>OR CONNECT VIA</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                <Image
+                  source={require('../../../assets/images/authpage/google.png')}
+                  style={styles.googleLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="Google"
                 />
               </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter email"
-                  placeholderTextColor="#5a5a65"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter password"
-                  placeholderTextColor="#5a5a65"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-              </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Confirm password"
-                  placeholderTextColor="#5a5a65"
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry
-                />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.button, isRegistering && styles.buttonDisabled]}
-                activeOpacity={0.85}
-                onPress={handleRegister}
-                disabled={isRegistering}
-              >
-                <Text style={styles.buttonText}>
-                  {isRegistering ? 'Registering...' : 'Register'}
-                </Text>
-              </TouchableOpacity>
 
               <Text style={styles.loginPrompt}>
-                Already have an account?{' '}
-                <Text style={styles.loginLink} onPress={() => router.push('/auth/login')}>
-                  Log in
+                Already have W.A.T.C.H.?{' '}
+                <Text style={styles.loginLink} onPress={() => flipTo('/auth/login')}>
+                  Sign in!
                 </Text>
               </Text>
-            </View>
           </View>
         </View>
+        </AnimatedView>
       </KeyboardAvoidingView>
       {showSlowLoading && (
         <View style={StyleSheet.absoluteFill}>
@@ -199,13 +225,18 @@ const styles = StyleSheet.create({
   centerWrap: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
+  },
+  cardContainer: {
+    height: '82%',
+    width: '100%',
   },
   cardWrap: {
-    borderRadius: 28,
+    flex: 1,
+    borderRadius: 48,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(185,195,255,0.75)',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,
@@ -213,35 +244,45 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   cardContent: {
-    paddingVertical: 40,
+    flex: 1,
+    paddingTop: 26,
+    paddingBottom: 22,
     paddingHorizontal: 24,
   },
+  logo: {
+    width: 68,
+    height: 68,
+    alignSelf: 'center',
+  },
   title: {
-    fontSize: 40,
+    fontSize: 30,
     fontWeight: '600',
     color: '#f2f2f5',
     textAlign: 'center',
-    letterSpacing: 2,
-    marginBottom: 36,
+    letterSpacing: 3.5,
+    marginTop: 16,
+  },
+  form: {
+    marginTop: 18,
   },
   fieldGroup: {
-    marginBottom: 22,
+    marginBottom: 9,
   },
   label: {
     fontSize: 14,
-    color: '#e5e5ea',
-    marginBottom: 8,
-    marginLeft: 4,
+    color: '#f4f4f8',
+    marginBottom: 6,
+    marginLeft: 9,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.35)',
-    borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#2b2b3a',
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.42)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.7)',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.22,
@@ -249,11 +290,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   button: {
-    backgroundColor: 'rgba(35,35,66,0.85)',
-    borderRadius: 24,
-    paddingVertical: 16,
+    height: 44,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(40,45,94,0.9)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(90,115,255,0.6)',
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 2,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
@@ -265,18 +309,38 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#f2f2f5',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 19,
+    fontWeight: '500',
+  },
+  connectDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 14,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+  },
+  connectText: {
+    color: '#f4f4f8',
+    fontSize: 12,
+    marginHorizontal: 9,
+  },
+  googleLogo: {
+    width: 36,
+    height: 36,
+    alignSelf: 'center',
+    marginTop: 10,
   },
   loginPrompt: {
-    marginTop: 18,
+    marginTop: 'auto',
     textAlign: 'center',
-    color: '#e5e5ea',
-    fontSize: 14,
+    color: '#ffffff',
+    fontSize: 12,
   },
   loginLink: {
-    color: '#ffffff',
-    fontWeight: '600',
-    textDecorationLine: 'underline',
+    color: '#e8b7ff',
   },
 });

@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth/auth.module';
 import { WeatherModule } from './weather/weather.module';
 import { AiModule } from './ai/ai.module';
 import { MapModule } from './map/map.module';
+import { ProfileModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { MapModule } from './map/map.module';
     WeatherModule,
     AiModule,
     MapModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}

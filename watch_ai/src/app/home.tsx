@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { useProfilePicture } from '../hooks/loadprofilepicture';
 import {
   View,
   Text,
@@ -8,21 +9,32 @@ import {
   Dimensions,
   Animated,
   Platform,
-  StatusBar,
   Modal,
   Alert,
   Easing,
   PanResponder,
 } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
-import supabase from '../lib/supabase';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const COLLAPSED_ENCLOSURE_HEIGHT = Platform.OS === 'ios' ? 122 : 114;
+const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
+const TAB_BAR_HEIGHT = TAB_BAR_WIDTH * (345 / 1170);
+const COLLAPSED_ENCLOSURE_HEIGHT = Math.max(
+  Platform.OS === 'ios' ? 122 : 114,
+  Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72)
+);
 const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.76, 640);
+
+const HOME_MENU_ITEMS = [
+  { label: 'Home', image: require('../../assets/images/homepage/home.png') },
+  { label: 'Alerts', image: require('../../assets/images/homepage/alert.png') },
+  { label: 'Settings', image: require('../../assets/images/homepage/settings.png') },
+  { label: 'Profile', image: require('../../assets/images/homepage/profile.png') },
+];
 
 type TimeOfDay = 'morning' | 'afternoon' | 'evening';
 
@@ -356,11 +368,17 @@ function WeatherIcon({
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const { welcomeName: routeWelcomeName } = useLocalSearchParams<{
+    welcomeName?: string | string[];
+  }>();
+  const welcomeName = typeof routeWelcomeName === 'string' ? routeWelcomeName.trim() : '';
   const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
   const [selectedCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [selectedHourId, setSelectedHourId] = useState('2');
-  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
+  const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
 
   // Dashboard Collapse / Expand State
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
@@ -392,6 +410,46 @@ export default function HomeScreen() {
   const sunFloatAnim = useMemo(() => new Animated.Value(0), []);
   const expandAnim = useMemo(() => new Animated.Value(1), []);
   const dragRubberBandAnim = useMemo(() => new Animated.Value(0), []);
+  const menuAnim = useMemo(() => new Animated.Value(0), []);
+  const welcomeAnim = useMemo(() => new Animated.Value(0), []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadProfilePicture();
+    }, [loadProfilePicture]),
+  );
+
+
+  useEffect(() => {
+    if (!welcomeName) return;
+    welcomeAnim.setValue(0);
+    const animation = Animated.sequence([
+      Animated.timing(welcomeAnim, {
+        toValue: 1,
+        duration: 550,
+        useNativeDriver: true,
+      }),
+      Animated.delay(2400),
+      Animated.timing(welcomeAnim, {
+        toValue: 0,
+        duration: 350,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    animation.start();
+
+    return () => animation.stop();
+  }, [welcomeAnim, welcomeName]);
+
+  useEffect(() => {
+    Animated.spring(menuAnim, {
+      toValue: menuExpanded ? 1 : 0,
+      friction: 8,
+      tension: 65,
+      useNativeDriver: false,
+    }).start();
+  }, [menuAnim, menuExpanded]);
 
   // Live ticking clock (updates every second for real-time responsiveness)
   useEffect(() => {
@@ -403,7 +461,7 @@ export default function HomeScreen() {
     return () => clearInterval(clockInterval);
   }, []);
 
-  // Animate transition on time phase changes
+
   useEffect(() => {
     imageFadeAnim.setValue(0.2);
     Animated.timing(imageFadeAnim, {
@@ -413,7 +471,7 @@ export default function HomeScreen() {
     }).start();
   }, [effectiveTimeOfDay, imageFadeAnim]);
 
-  // Entrance and continuous fluid animations
+
   useEffect(() => {
     // 1. Entrance Fade
     Animated.timing(fadeAnim, {
@@ -550,12 +608,15 @@ export default function HomeScreen() {
     }
   }, [collapseDashboard, expandDashboard, isDashboardExpanded]);
 
-  // PAN RESPONDER: Supports BOTH TAP and SWIPE (Up to expand, Down to collapse)
+
   const sheetPanResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => Math.abs(gestureState.dy) > 6,
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
+        onPanResponderTerminationRequest: () => false,
         onPanResponderMove: (_, gestureState) => {
           // Rubber-band drag feedback
           dragRubberBandAnim.setValue(gestureState.dy * 0.35);
@@ -585,16 +646,6 @@ export default function HomeScreen() {
     [dragRubberBandAnim, collapseDashboard, expandDashboard, toggleDashboard]
   );
 
-  const handleSignOut = async () => {
-    try {
-      await supabase.auth.signOut();
-      setMenuVisible(false);
-      router.replace('/auth/login');
-    } catch {
-      router.replace('/auth/login');
-    }
-  };
-
   // Interpolations for wind compass rotation
   const windRotate = windSwayAnim.interpolate({
     inputRange: [-1, 1],
@@ -609,7 +660,7 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <StatusBar style="light" />
 
       {/* 1. Underlying Sky Gradient */}
       <LinearGradient
@@ -1110,60 +1161,184 @@ export default function HomeScreen() {
             </Animated.View>
           )}
 
-          {/* Enclosed Liquid Glass Navigation Bar (Docked at Base of Enclosure) */}
-          <View style={styles.enclosedNavbar}>
-            {isDashboardExpanded && <View style={styles.navbarSeparator} />}
-            <View style={styles.dockBar}>
-              {/* Left Map / Radar Pin Button */}
-              <TouchableOpacity
-                style={styles.dockButton}
-                activeOpacity={0.7}
-                onPress={() =>
-                  Alert.alert(
-                    'Live Weather Radar',
-                    `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`
-                  )
-                }
-              >
-                <View style={styles.mapIcon}>
-                  <View style={styles.mapPinDot} />
-                </View>
-              </TouchableOpacity>
-
-              {/* Center Elevated (+) FAB with Metallic Radial Shimmer */}
-              <View style={styles.fabWrapper}>
-                <TouchableOpacity
-                  style={styles.fabButton}
-                  activeOpacity={0.85}
-                  onPress={() => setCitySelectorVisible(true)}
-                >
-                  <LinearGradient
-                    colors={['#FFFFFF', '#DADFE7', '#B4B9C4']}
-                    start={{ x: 0.2, y: 0.2 }}
-                    end={{ x: 0.8, y: 0.8 }}
-                    style={styles.fabGradient}
-                  >
-                    <Text style={styles.fabPlusText}>+</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-
-              {/* Right Menu Button */}
-              <TouchableOpacity
-                style={styles.dockButton}
-                activeOpacity={0.7}
-                onPress={() => setMenuVisible(true)}
-              >
-                <View style={styles.menuIcon}>
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                </View>
-              </TouchableOpacity>
-            </View>
-          </View>
         </LiquidGlassCard>
       </Animated.View>
+
+      <View style={styles.fixedTabBar} pointerEvents="box-none">
+        <Image
+          source={require('../../assets/images/homepage/TabBar.png')}
+          style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
+          contentFit="fill"
+          pointerEvents="none"
+        />
+        <TouchableOpacity
+          style={styles.tabBarRadarButton}
+          activeOpacity={0.65}
+          accessibilityRole="button"
+          accessibilityLabel="Open live weather radar"
+          onPress={() =>
+            Alert.alert(
+              'Live Weather Radar',
+              `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`
+            )
+          }
+        />
+        <TouchableOpacity
+          style={styles.tabBarLocationButton}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Select location"
+          onPress={() => setCitySelectorVisible(true)}
+        />
+        <TouchableOpacity
+          style={styles.tabBarMenuButton}
+          activeOpacity={0.65}
+          accessibilityRole="button"
+          accessibilityLabel={menuExpanded ? 'Close menu' : 'Open menu'}
+          accessibilityState={{ expanded: menuExpanded }}
+          onPress={() => setMenuExpanded((expanded) => !expanded)}
+        />
+      </View>
+
+      <View style={styles.homeMenu} pointerEvents="box-none">
+        <Animated.View
+          pointerEvents="box-none"
+          style={[
+            styles.homeMenuPill,
+            {
+              height: menuAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [52, 208],
+              }),
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={['#6738C7', '#382493']}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.9, y: 1 }}
+            style={styles.homeMenuPillGradient}
+          >
+            <TouchableOpacity
+              style={styles.homeMenuItem}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={menuExpanded ? 'Home' : 'Open menu'}
+              accessibilityState={{ expanded: menuExpanded }}
+              onPress={() => setMenuExpanded((expanded) => !expanded)}
+            >
+              <Animated.View
+                style={[
+                  styles.homeMenuTopIcon,
+                  {
+                    opacity: menuAnim,
+                    transform: [
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.75, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <Image
+                  source={HOME_MENU_ITEMS[0].image}
+                  style={styles.homeMenuItemIcon}
+                  contentFit="contain"
+                />
+              </Animated.View>
+              <Animated.View
+                style={[
+                  styles.homeMenuTopIcon,
+                  {
+                    opacity: menuAnim.interpolate({
+                      inputRange: [0, 0.6, 1],
+                      outputRange: [1, 0, 0],
+                    }),
+                    transform: [
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 0.75],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <View style={styles.homeMenuAvatar}>
+                  {profilePictureUrl ? (
+                    <Image
+                      source={{ uri: profilePictureUrl }}
+                      style={styles.homeMenuAvatarImage}
+                      contentFit="cover"
+                      onError={(error) => console.error('Profile picture image failed to load:', error)}
+                      accessibilityLabel="Profile picture"
+                    />
+                  ) : (
+                    <View style={styles.homeMenuAvatarPlaceholder}>
+                      <View style={styles.homeMenuAvatarHead} />
+                      <View style={styles.homeMenuAvatarBody} />
+                    </View>
+                  )}
+                </View>
+              </Animated.View>
+            </TouchableOpacity>
+            {HOME_MENU_ITEMS.slice(1).map((item, index) => (
+              <Animated.View
+                key={item.label}
+                pointerEvents={menuExpanded ? 'auto' : 'none'}
+                style={[
+                  styles.homeMenuAnimatedItem,
+                  {
+                    opacity: menuAnim,
+                    transform: [
+                      {
+                        translateY: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-10 - index * 2, 0],
+                        }),
+                      },
+                      {
+                        scale: menuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.8, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={styles.homeMenuItem}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
+                  onPress={() => {
+                    setMenuExpanded(false);
+                    if (item.label === 'Settings') {
+                      router.push({
+                        pathname: '/settings_page/settings',
+                        params: { profilePictureUrl: profilePictureUrl ?? '' },
+                      });
+                    } else if (item.label === 'Profile') {
+                      router.push('/Profile_page/profile');
+                    }
+                  }}
+                >
+                  <Image
+                    source={item.image}
+                    style={styles.homeMenuItemIcon}
+                    contentFit="contain"
+                  />
+                </TouchableOpacity>
+              </Animated.View>
+            ))}
+          </LinearGradient>
+        </Animated.View>
+      </View>
 
       {/* Interactive Liquid Glass City Selector Modal */}
       <Modal visible={citySelectorVisible} transparent animationType="fade">
@@ -1207,60 +1382,28 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Options / Settings Menu Modal */}
-      <Modal visible={menuVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <LiquidGlassCard style={styles.modalGlassCard} intensity={85} shimmerAnim={shimmerAnim}>
-            <Text style={styles.modalTitle}>W.A.T.C.H. Weather</Text>
-            <Text style={styles.modalSubtitle}>
-              Current Station: {selectedCity.name}, {selectedCity.country}
-            </Text>
+      {welcomeName && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.welcomeToast,
+            {
+              opacity: welcomeAnim,
+              transform: [
+                {
+                  translateY: welcomeAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-90, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <Text style={styles.welcomeToastText}>Welcome {welcomeName}!</Text>
+        </Animated.View>
+      )}
 
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={toggleDashboard}
-            >
-              <Text style={styles.modalOptionText}>
-                {isDashboardExpanded ? '▲ Collapse Dashboard Sheet' : '▼ Expand Dashboard Sheet'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => {
-                setMenuVisible(false);
-                Alert.alert('Refreshed', 'Real-time Doppler and atmospheric readings updated.');
-              }}
-            >
-              <Text style={styles.modalOptionText}>🔄 Refresh Sensor Telemetry</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalOption}
-              onPress={() => {
-                setMenuVisible(false);
-                setCitySelectorVisible(true);
-              }}
-            >
-              <Text style={styles.modalOptionText}>🌍 Switch City / Radar</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.modalOption, { backgroundColor: 'rgba(235, 75, 75, 0.22)' }]}
-              onPress={handleSignOut}
-            >
-              <Text style={[styles.modalOptionText, { color: '#FF7B7B' }]}>Log Out</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => setMenuVisible(false)}
-            >
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
-          </LiquidGlassCard>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -1270,6 +1413,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0D0C1D',
     overflow: 'hidden',
+  },
+  welcomeToast: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 54 : 42,
+    alignSelf: 'center',
+    zIndex: 20,
+    width: '88%',
+    maxWidth: 420,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.24)',
+    backgroundColor: 'rgba(36, 27, 73, 0.92)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  welcomeToastText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   fullScreenCloudWrapper: {
     position: 'absolute',
@@ -1450,7 +1618,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.3,
   },
-  // Bottom Dashboard Enclosure (Enclosed with Navbar)
+  // Dashboard enclosure
   bottomDashboardEnclosure: {
     position: 'absolute',
     bottom: 0,
@@ -1474,11 +1642,14 @@ const styles = StyleSheet.create({
     elevation: 16,
   },
   collapseToggleHeader: {
+    width: '100%',
+    minHeight: 64,
     alignItems: 'center',
+    justifyContent: 'flex-start',
     paddingTop: 12,
     paddingBottom: 8,
-    paddingHorizontal: 16,
     cursor: 'pointer',
+    zIndex: 1,
   },
   dragHandle: {
     width: 48,
@@ -1795,82 +1966,118 @@ const styles = StyleSheet.create({
   sunIconAnimated: {
     fontSize: 18,
   },
-  enclosedNavbar: {
-    width: '100%',
-    paddingBottom: Platform.OS === 'ios' ? 22 : 14,
+  fixedTabBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: '50%',
+    width: TAB_BAR_WIDTH,
+    height: TAB_BAR_HEIGHT,
+    marginLeft: -TAB_BAR_WIDTH / 2,
+    zIndex: 110,
   },
-  navbarSeparator: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.15)',
-    marginHorizontal: 20,
-    marginBottom: 6,
+  tabBarRadarButton: {
+    position: 'absolute',
+    left: '9%',
+    top: '40%',
+    width: '22%',
+    height: '40%',
   },
-  dockBar: {
-    width: '100%',
-    height: 80,
-    flexDirection: 'row',
+  tabBarLocationButton: {
+    position: 'absolute',
+    left: '35%',
+    top: '40%',
+    width: '30%',
+    height: '30%',
+  },
+  tabBarMenuButton: {
+    position: 'absolute',
+    right: '9%',
+    top: '40%',
+    width: '22%',
+    height: '40%',
+  },
+  homeMenu: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 60 : 44,
+    right: 18,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 30,
+    zIndex: 20,
+    elevation: 20,
   },
-  dockButton: {
-    padding: 12,
-  },
-  mapIcon: {
-    width: 26,
-    height: 30,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  mapPinDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#FFFFFF',
-  },
-  menuIcon: {
-    width: 24,
-    height: 20,
-    justifyContent: 'space-between',
-  },
-  menuLine: {
-    width: '100%',
-    height: 2.6,
-    borderRadius: 1.5,
-    backgroundColor: '#FFFFFF',
-  },
-  fabWrapper: {
-    top: 5,
-  },
-  fabButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    shadowColor: '#FFF',
-    shadowOffset: { width: 0, height: 3 },
+  homeMenuPill: {
+    width: 68,
+    borderRadius: 34,
+    overflow: 'hidden',
+    shadowColor: '#21105F',
+    shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
+    shadowRadius: 7,
+    elevation: 8,
   },
-  fabGradient: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 21,
+  homeMenuPillGradient: {
+    flex: 1,
+    borderRadius: 34,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.26)',
+  },
+  homeMenuTopIcon: {
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
   },
-  fabPlusText: {
-    color: '#2E335A',
-    fontSize: 21,
-    fontWeight: '400',
-    lineHeight: 22,
-    textAlign: 'center',
-    marginTop: -1,
+  homeMenuAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuAvatarImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  homeMenuAvatarPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E7E1F3',
+  },
+  homeMenuAvatarHead: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 3,
+    backgroundColor: '#6738C7',
+  },
+  homeMenuAvatarBody: {
+    width: 21,
+    height: 12,
+    marginTop: 2,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    backgroundColor: '#6738C7',
+  },
+  homeMenuItem: {
+    width: 68,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuAnimatedItem: {
+    width: 68,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  homeMenuItemIcon: {
+    width: 30,
+    height: 30,
   },
   // Icons styling
   iconBox: {

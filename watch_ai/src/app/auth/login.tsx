@@ -8,12 +8,14 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import supabase from '../../lib/supabase';
 import LoadingAuth from '../../components/loading-auth';
+import useAuthCardFlip from '../../hooks/use-auth-card-flip';
 
 const SLOW_LOADING_DELAY_MS = 600;
 
@@ -22,6 +24,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
+  const { AnimatedView, animatedStyle, flipTo, isFlipping } = useAuthCardFlip();
 
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
@@ -57,6 +60,7 @@ export default function LoginScreen() {
         message?: string | string[];
         accessToken?: string;
         refreshToken?: string;
+        user?: { name?: string };
       } = await response.json();
 
       if (!response.ok) {
@@ -79,9 +83,8 @@ export default function LoginScreen() {
         throw new Error(error.message);
       }
 
-      Alert.alert('Login successful', 'You are now signed in.', [
-        { text: 'OK', onPress: () => router.replace('/weather-watch/index') },
-      ]);
+      const welcomeName = result.user?.name?.trim() || trimmedEmail.split('@')[0];
+      router.replace({ pathname: '/home', params: { welcomeName } });
     } catch (error) {
       Alert.alert(
         'Login failed',
@@ -100,7 +103,10 @@ export default function LoginScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
-        <View style={styles.animatedContainer}>
+        <AnimatedView
+          pointerEvents={isFlipping ? 'none' : 'auto'}
+          style={[styles.animatedContainer, animatedStyle]}
+        >
           <View style={styles.cardWrap}>
             <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
             <LinearGradient
@@ -111,55 +117,82 @@ export default function LoginScreen() {
             />
 
             <View style={styles.cardContent}>
+              <Image
+                source={require('../../../assets/images/authpage/Logo.png')}
+                style={styles.logo}
+                resizeMode="contain"
+                accessibilityLabel="W.A.T.C.H. logo"
+              />
               <Text style={styles.title}>W.A.T.C.H.</Text>
 
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter email"
-                  placeholderTextColor="#5a5a65"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
+              <View style={styles.form}>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter email"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter password"
+                    placeholderTextColor="rgba(255,255,255,0.9)"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                  />
+                  <Text
+                    style={styles.forgotPasswordText}
+                    onPress={() => alert('Temporary: forgot password screen not ready yet')}
+                  >
+                    Forgot Password?
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.button, isLoggingIn && styles.buttonDisabled]}
+                  activeOpacity={0.85}
+                  onPress={handleLogin}
+                  disabled={isLoggingIn}
+                >
+                  <Text style={styles.buttonText}>
+                    {isLoggingIn ? 'Logging in...' : 'Log-in'}
+                  </Text>
+                </TouchableOpacity>
+
+                <View style={styles.connectDivider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.connectText}>OR CONNECT VIA</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+                <Image
+                  source={require('../../../assets/images/authpage/google.png')}
+                  style={styles.googleLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="Google"
                 />
               </View>
-
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter password"
-                  placeholderTextColor="#5a5a65"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-                <Text style={styles.forgotPasswordText} onPress={() => alert('Temporary: forgot password screen not ready yet')}>
-                  Forgot password
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                style={[styles.button, isLoggingIn && styles.buttonDisabled]}
-                activeOpacity={0.85}
-                onPress={handleLogin}
-                disabled={isLoggingIn}
-              >
-                <Text style={styles.buttonText}>
-                  {isLoggingIn ? 'Logging in...' : 'Log-in'}
-                </Text>
-              </TouchableOpacity>
 
               <Text style={styles.createAccountPrompt}>
-                <Text style={styles.createAccountText} onPress={() => router.push('/auth/register')}>
+                New to W.A.T.C.H.?{' '}
+                <Text
+                  style={styles.createAccountText}
+                  onPress={() => flipTo('/auth/register')}
+                >
                   Create Account
                 </Text>
               </Text>
-            </View>
           </View>
         </View>
+        </AnimatedView>
       </KeyboardAvoidingView>
       {showSlowLoading && (
         <View style={StyleSheet.absoluteFill}>
@@ -177,16 +210,18 @@ const styles = StyleSheet.create({
   centerWrap: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
   },
   animatedContainer: {
+    height: '82%',
     width: '100%',
   },
   cardWrap: {
-    borderRadius: 28,
+    flex: 1,
+    borderRadius: 48,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(185,195,255,0.75)',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.25,
@@ -194,35 +229,45 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   cardContent: {
-    paddingVertical: 40,
-    paddingHorizontal: 24,
+    flex: 1,
+    paddingTop: 32,
+    paddingBottom: 26,
+    paddingHorizontal: 32,
+  },
+  logo: {
+    width: 80,
+    height: 80,
+    alignSelf: 'center',
   },
   title: {
-    fontSize: 40,
+    fontSize: 36,
     fontWeight: '600',
     color: '#f2f2f5',
     textAlign: 'center',
-    letterSpacing: 2,
-    marginBottom: 36,
+    letterSpacing: 4,
+    marginTop: 18,
+  },
+  form: {
+    marginTop: 68,
   },
   fieldGroup: {
-    marginBottom: 22,
+    marginBottom: 14,
   },
   label: {
-    fontSize: 14,
-    color: '#e5e5ea',
-    marginBottom: 8,
-    marginLeft: 4,
+    fontSize: 20,
+    color: '#f4f4f8',
+    marginBottom: 6,
+    marginLeft: 9,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    height: 52,
+    backgroundColor: 'rgba(255,255,255,0.42)',
     borderRadius: 24,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#2b2b3a',
+    paddingHorizontal: 16,
+    fontSize: 20,
+    color: '#ffffff',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.7)',
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.22,
@@ -230,11 +275,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   button: {
-    backgroundColor: 'rgba(35,35,66,0.85)',
+    height: 56,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(40,45,94,0.9)',
     borderRadius: 24,
-    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(90,115,255,0.6)',
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 2,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.25,
@@ -246,25 +294,45 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#f2f2f5',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 25,
+    fontWeight: '500',
   },
   forgotPasswordText: {
     color: '#f3f3f7',
-    fontSize: 12,
-    marginTop: 10,
-    marginLeft: 4,
-    textDecorationLine: 'underline',
+    fontSize: 16,
+    marginTop: 18,
+    marginRight: 4,
     alignSelf: 'flex-end',
   },
-  createAccountPrompt: {
+  connectDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 18,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+  },
+  connectText: {
+    color: '#f4f4f8',
+    fontSize: 15,
+    marginHorizontal: 11,
+  },
+  googleLogo: {
+    width: 36,
+    height: 36,
+    alignSelf: 'center',
+    marginTop: 12,
+  },
+  createAccountPrompt: {
     textAlign: 'center',
+    marginTop: 'auto',
+    color: '#ffffff',
+    fontSize: 15,
   },
   createAccountText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
+    color: '#b7d0ff',
   },
 });
