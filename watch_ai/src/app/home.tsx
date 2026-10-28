@@ -6,6 +6,7 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  AppState,
   Dimensions,
   Animated,
   Platform,
@@ -19,6 +20,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Location from 'expo-location';
+import { profileApi } from '../lib/profile-api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
@@ -28,6 +31,8 @@ const COLLAPSED_ENCLOSURE_HEIGHT = Math.max(
   Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72)
 );
 const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.76, 640);
+const APP_LAUNCH_STARTED_AT = Date.now();
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
 const HOME_MENU_ITEMS = [
   { label: 'Home', image: require('../../assets/images/homepage/home.png') },
@@ -53,6 +58,55 @@ interface CityData {
   airQualityLabel: string;
   sunrise: string;
   sunset: string;
+}
+
+interface HomeLocation {
+  id: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  city: string | null;
+  province: string | null;
+  barangay: string | null;
+}
+
+interface HomeForecast {
+  updatedAt?: string;
+  stale?: boolean;
+  current: {
+    temperatureC: number;
+    feelsLikeC: number;
+    humidityPercent: number;
+    windKph: number;
+    uvIndex: number;
+    weatherCode: number;
+  };
+  hourly: {
+    time: string;
+    temperatureC: number;
+    precipitationProbability: number;
+    weatherCode: number;
+  }[];
+  daily: {
+    date: string;
+    minC: number;
+    maxC: number;
+    precipitationProbability: number;
+    weatherCode: number;
+    sunrise: string;
+    sunset: string;
+  }[];
+}
+
+interface HomeHazardAlert {
+  id: string;
+  title: string;
+  hazard?: {
+    hazard_type: string;
+    risk_level: string;
+    safety_tips: string[];
+    created_at: string;
+  } | null;
 }
 
 const CITIES: CityData[] = [
@@ -191,6 +245,25 @@ function getSystemTimeOfDay(): TimeOfDay {
   if (currentHour >= 5 && currentHour < 12) return 'morning';
   if (currentHour >= 12 && currentHour < 18) return 'afternoon';
   return 'evening';
+}
+
+function weatherDescriptionForCode(code: number) {
+  if (code === 0) return 'Clear sky';
+  if (code <= 3) return 'Partly cloudy';
+  if (code <= 48) return 'Foggy';
+  if (code <= 67) return 'Rain';
+  if (code <= 77) return 'Snow';
+  if (code <= 82) return 'Rain showers';
+  if (code <= 86) return 'Snow showers';
+  return 'Thunderstorm';
+}
+
+function formatClock(value?: string) {
+  if (!value) return '--';
+  return new Date(value).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 interface HourlyItem {
@@ -376,6 +449,11 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
   const [selectedCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [selectedHourId, setSelectedHourId] = useState('2');
+  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
+  const [homeWeather, setHomeWeather] = useState<HomeForecast | null>(null);
+  const [latestSafetyAlert, setLatestSafetyAlert] = useState<HomeHazardAlert | null>(null);
+  const [locationPromptPending, setLocationPromptPending] = useState(false);
+  const [homeError, setHomeError] = useState('');
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
@@ -393,11 +471,62 @@ export default function HomeScreen() {
   const currentTheme = TIME_THEMES[effectiveTimeOfDay];
 
   // Dynamic Selected Weather derived from selected hour or city base
-  const activeHour = BASE_HOURLY_DATA.find((h) => h.id === selectedHourId) ?? BASE_HOURLY_DATA[1];
+  const hourlyForecast =
+    homeWeather?.hourly.slice(0, 10).map((hour, index): HourlyItem => ({
+      id: String(index + 1),
+      time:
+        index === 1
+          ? 'Now'
+          : new Date(hour.time).toLocaleTimeString([], { hour: 'numeric' }),
+      temp: Math.round(hour.temperatureC),
+      rainChance: `${hour.precipitationProbability}%`,
+      condition:
+        hour.weatherCode === 0
+          ? 'sun'
+          : hour.weatherCode <= 3
+            ? 'cloud'
+            : hour.weatherCode <= 48
+              ? 'cloud-moon'
+              : 'rain',
+      desc: weatherDescriptionForCode(hour.weatherCode),
+    })) ?? BASE_HOURLY_DATA;
+  const dailyForecast =
+    homeWeather?.daily.map((day, index): DailyItem => ({
+      id: `home-${day.date}`,
+      day:
+        index === 0
+          ? 'Today'
+          : new Date(`${day.date}T12:00:00`).toLocaleDateString([], {
+              weekday: 'short',
+            }),
+      condition:
+        day.weatherCode === 0
+          ? 'sun'
+          : day.weatherCode <= 3
+            ? 'cloud'
+            : day.weatherCode <= 48
+              ? 'cloud-moon'
+              : 'rain',
+      minTemp: Math.round(day.minC),
+      maxTemp: Math.round(day.maxC),
+      rainChance: `${day.precipitationProbability}%`,
+    })) ?? DAILY_DATA;
+  const activeHour =
+    hourlyForecast.find((hour) => hour.id === selectedHourId) ??
+    hourlyForecast[1] ??
+    BASE_HOURLY_DATA[1];
   const displayedTemp =
-    selectedHourId === '2' ? selectedCity.temp : activeHour.temp + (selectedCity.temp - 19);
+    homeWeather
+      ? activeHour.temp
+      : selectedHourId === '2'
+        ? selectedCity.temp
+        : activeHour.temp + (selectedCity.temp - 19);
   const displayedCondition =
-    selectedHourId === '2' ? selectedCity.condition : activeHour.desc;
+    homeWeather
+      ? activeHour.desc
+      : selectedHourId === '2'
+        ? selectedCity.condition
+        : activeHour.desc;
 
   // ANIMATIONS
   const fadeAnim = useMemo(() => new Animated.Value(0), []);
@@ -413,11 +542,124 @@ export default function HomeScreen() {
   const menuAnim = useMemo(() => new Animated.Value(0), []);
   const welcomeAnim = useMemo(() => new Animated.Value(0), []);
 
+  const loadHomeProfile = useCallback(async () => {
+    try {
+      const { profile } = await profileApi<{
+        profile: {
+          home_location: HomeLocation | null;
+          location_prompt_dismissed_at: string | null;
+        };
+      }>('/profile');
+      setHomeLocation(profile.home_location);
+      setHomeWeather(null);
+      setHomeError('');
+      try {
+        const { alerts } = await profileApi<{ alerts: HomeHazardAlert[] }>('/alerts');
+        setLatestSafetyAlert(alerts.find((alert) => alert.hazard?.safety_tips?.length) ?? null);
+      } catch (alertError) {
+        console.error('Unable to load local safety tips:', alertError);
+        setLatestSafetyAlert(null);
+      }
+
+      const permission = await Location.getForegroundPermissionsAsync();
+      setLocationPromptPending(!permission.granted);
+      if (permission.granted && profile.location_prompt_dismissed_at) {
+        void profileApi('/profile/location-prompt', {
+          method: 'PATCH',
+          body: JSON.stringify({ dismissedAt: null }),
+        }).catch((error: unknown) => {
+          console.error('Unable to clear the location reminder:', error);
+        });
+      } else if (
+        !permission.granted &&
+        profile.location_prompt_dismissed_at &&
+        Date.parse(profile.location_prompt_dismissed_at) < APP_LAUNCH_STARTED_AT
+      ) {
+        router.push({
+          pathname: '/onboarding',
+          params: { startRegistration: 'true', promptOnly: 'true' },
+        });
+      }
+
+      if (!profile.home_location) {
+        setHomeWeather(null);
+        return;
+      }
+
+      const name =
+        profile.home_location.city ||
+        profile.home_location.barangay ||
+        profile.home_location.address.split(',')[0] ||
+        'Home';
+      setSelectedCity((current) => ({
+        ...current,
+        name,
+        country: 'Philippines',
+      }));
+
+      if (!API_URL) throw new Error('Set EXPO_PUBLIC_API_URL to your backend URL.');
+      const query = new URLSearchParams({
+        latitude: String(profile.home_location.latitude),
+        longitude: String(profile.home_location.longitude),
+      });
+      const response = await fetch(`${API_URL}/weather?${query}`);
+      const result = (await response.json()) as HomeForecast & {
+        message?: string | string[];
+      };
+      if (!response.ok) {
+        throw new Error(
+          Array.isArray(result.message)
+            ? result.message.join(', ')
+            : result.message ?? 'Home weather is unavailable.',
+        );
+      }
+      setHomeWeather(result);
+      setHomeError('');
+      setSelectedCity((current) => ({
+        ...current,
+        name,
+        country: 'Philippines',
+        temp: Math.round(result.current.temperatureC),
+        condition: weatherDescriptionForCode(result.current.weatherCode),
+        high: Math.round(result.daily[0]?.maxC ?? result.current.temperatureC),
+        low: Math.round(result.daily[0]?.minC ?? result.current.temperatureC),
+        uv: result.current.uvIndex,
+        wind: result.current.windKph,
+        humidity: result.current.humidityPercent,
+        sunrise: formatClock(result.daily[0]?.sunrise),
+        sunset: formatClock(result.daily[0]?.sunset),
+      }));
+    } catch (error) {
+      setHomeError(
+        error instanceof Error ? error.message : 'Unable to load your home weather.',
+      );
+      console.error('Home profile refresh failed:', error);
+    }
+  }, [router]);
+
   useFocusEffect(
     useCallback(() => {
       void loadProfilePicture();
-    }, [loadProfilePicture]),
+      void loadHomeProfile();
+    }, [loadHomeProfile, loadProfilePicture]),
   );
+
+  useEffect(() => {
+    const checkLocationPermission = async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        setLocationPromptPending(!permission.granted);
+      } catch (error) {
+        console.error('Unable to check location permission:', error);
+      }
+    };
+
+    void checkLocationPermission();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void checkLocationPermission();
+    });
+    return () => subscription.remove();
+  }, []);
 
 
   useEffect(() => {
@@ -723,6 +965,73 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {locationPromptPending && (
+          <View style={styles.locationBanner}>
+            <View style={styles.locationBannerText}>
+              <Text style={styles.locationBannerTitle}>Enable location</Text>
+              <Text style={styles.locationBannerDescription}>
+                Turn on location access for more relevant local alerts.
+              </Text>
+            </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() =>
+                router.push({
+                  pathname: '/onboarding',
+                  params: { startRegistration: 'true', promptOnly: 'true' },
+                })
+              }
+              style={styles.locationBannerButton}
+            >
+              <Text style={styles.locationBannerButtonText}>Enable</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        {!homeLocation && !locationPromptPending && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => router.push('/settings_page/edit_profile')}
+            style={styles.locationBanner}
+          >
+            <View style={styles.locationBannerText}>
+              <Text style={styles.locationBannerTitle}>Add a home location</Text>
+              <Text style={styles.locationBannerDescription}>
+                Set a home location to load local weather.
+              </Text>
+            </View>
+            <Text style={styles.locationBannerButtonText}>Set up</Text>
+          </TouchableOpacity>
+        )}
+        {homeError ? (
+          <Text accessibilityRole="alert" style={styles.homeError}>
+            {homeError}
+          </Text>
+        ) : null}
+        {homeWeather?.updatedAt ? (
+          <Text style={styles.weatherUpdated}>
+            {homeWeather.stale ? 'Weather unavailable · ' : 'Last updated · '}
+            {new Date(homeWeather.updatedAt).toLocaleTimeString([], {
+              hour: 'numeric',
+              minute: '2-digit',
+            })}
+          </Text>
+        ) : null}
+        {latestSafetyAlert?.hazard ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => router.push('/alert_page/alert')}
+            style={styles.aiSummaryCard}
+          >
+            <Text style={styles.aiSummaryEyebrow}>AI WEATHER SAFETY TIPS</Text>
+            <Text style={styles.aiSummaryTitle}>
+              {latestSafetyAlert.hazard.hazard_type} · {latestSafetyAlert.hazard.risk_level}
+            </Text>
+            {latestSafetyAlert.hazard.safety_tips.slice(0, 3).map((tip) => (
+              <Text key={tip} style={styles.aiSummaryTip}>• {tip}</Text>
+            ))}
+            <Text style={styles.aiSummaryDisclaimer}>Follow official PAGASA/LGU advisories. View all alerts ›</Text>
+          </TouchableOpacity>
+        ) : null}
         {/* Top Header / Hero Weather View */}
         <Animated.View style={[styles.headerSection, { opacity: fadeAnim }]}>
           <TouchableOpacity
@@ -905,10 +1214,11 @@ export default function HomeScreen() {
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.hourlyList}
                   >
-                    {BASE_HOURLY_DATA.map((item) => {
+                    {hourlyForecast.map((item) => {
                       const isSelected = selectedHourId === item.id;
-                      const itemTemp =
-                        item.id === '2'
+                      const itemTemp = homeWeather
+                        ? item.temp
+                        : item.id === '2'
                           ? selectedCity.temp
                           : item.temp + (selectedCity.temp - 19);
 
@@ -967,7 +1277,7 @@ export default function HomeScreen() {
               {activeTab === 'weekly' && (
                 <View style={styles.weeklyList}>
                   <Text style={styles.sectionSubtitle}>7-Day Temperature Range</Text>
-                  {DAILY_DATA.map((item) => (
+                  {dailyForecast.map((item) => (
                     <View key={item.id} style={styles.weeklyRow}>
                       <Text style={styles.weeklyDay}>{item.day}</Text>
                       <View style={styles.weeklyConditionCol}>
@@ -1323,6 +1633,8 @@ export default function HomeScreen() {
                         pathname: '/settings_page/settings',
                         params: { profilePictureUrl: profilePictureUrl ?? '' },
                       });
+                    } else if (item.label === 'Alerts') {
+                      router.push('/alert_page/alert');
                     } else if (item.label === 'Profile') {
                       router.push('/Profile_page/profile');
                     }
@@ -1340,37 +1652,27 @@ export default function HomeScreen() {
         </Animated.View>
       </View>
 
-      {/* Interactive Liquid Glass City Selector Modal */}
+      {/* Saved home location selector */}
       <Modal visible={citySelectorVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <LiquidGlassCard style={styles.modalGlassCard} intensity={85} shimmerAnim={shimmerAnim}>
-            <Text style={styles.modalTitle}>Select Location</Text>
-            <Text style={styles.modalSubtitle}>Real-time weather station network</Text>
+            <Text style={styles.modalTitle}>Home location</Text>
+            <Text style={styles.modalSubtitle}>
+              Local weather and alerts use this saved address.
+            </Text>
+            <Text style={styles.modalSubtitle}>
+              {homeLocation?.address ?? 'No home location has been saved.'}
+            </Text>
 
-            <ScrollView style={styles.cityListScroll} showsVerticalScrollIndicator={false}>
-              {CITIES.map((c) => {
-                const isCurrent = c.name === selectedCity.name;
-                return (
-                  <TouchableOpacity
-                    key={c.name}
-                    style={[styles.cityRowCard, isCurrent && styles.cityRowCardActive]}
-                    onPress={() => {
-                      setSelectedCity(c);
-                      setCitySelectorVisible(false);
-                    }}
-                    activeOpacity={0.8}
-                  >
-                    <View>
-                      <Text style={styles.cityRowName}>{c.name}</Text>
-                      <Text style={styles.cityRowCountry}>
-                        {c.country} • {c.condition}
-                      </Text>
-                    </View>
-                    <Text style={styles.cityRowTemp}>{c.temp}°</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={() => {
+                setCitySelectorVisible(false);
+                router.push('/settings_page/edit_profile');
+              }}
+            >
+              <Text style={styles.modalCloseText}>Change home location</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.modalCloseButton}
@@ -1454,6 +1756,100 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 62 : 46,
     paddingBottom: 130,
     alignItems: 'center',
+  },
+  locationBanner: {
+    width: '90%',
+    maxWidth: 430,
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(33, 18, 56, 0.78)',
+  },
+  locationBannerText: {
+    flex: 1,
+  },
+  locationBannerTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  locationBannerDescription: {
+    color: '#E1D2F2',
+    fontSize: 11,
+    marginTop: 3,
+  },
+  locationBannerButton: {
+    minWidth: 58,
+    alignItems: 'center',
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: '#7000B8',
+  },
+  locationBannerButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  homeError: {
+    width: '90%',
+    maxWidth: 430,
+    color: '#FFE0E7',
+    fontSize: 12,
+    padding: 10,
+    marginBottom: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(100, 25, 45, 0.64)',
+  },
+  weatherUpdated: {
+    width: '90%',
+    maxWidth: 430,
+    textAlign: 'right',
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 10,
+    marginBottom: 8,
+  },
+  aiSummaryCard: {
+    width: '90%',
+    maxWidth: 430,
+    padding: 15,
+    marginBottom: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+    backgroundColor: 'rgba(32, 20, 54, 0.82)',
+  },
+  aiSummaryEyebrow: {
+    color: '#D5B6FF',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  aiSummaryTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  aiSummaryTip: {
+    color: '#F0E7F8',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 4,
+  },
+  aiSummaryDisclaimer: {
+    color: '#C6B3D7',
+    fontSize: 10,
+    marginTop: 10,
   },
   atmosphericGlow: {
     position: 'absolute',

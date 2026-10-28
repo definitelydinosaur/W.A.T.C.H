@@ -190,10 +190,7 @@ export default function LoginScreen() {
                 <Text
                   style={styles.createAccountText}
                   onPress={() =>
-                    router.replace({
-                      pathname: '/onboarding',
-                      params: { startRegistration: 'true' },
-                    })
+                    router.replace('/auth/register')
                   }
                 >
                   Create Account

@@ -145,11 +145,16 @@ export default function ConfirmEmailScreen() {
 					<Pressable
 						accessibilityRole="button"
 						disabled={!isVerified}
-						onPress={() => router.replace('/auth/login')}
+						onPress={() =>
+							router.replace({
+								pathname: '/onboarding',
+								params: { startRegistration: 'true' },
+							})
+						}
 						style={[styles.passwordButton, !isVerified && styles.disabledPasswordButton]}
 					>
 						<Text style={[styles.passwordButtonText, !isVerified && styles.disabledPasswordText]}>
-							Log in with the password
+							Continue setup
 						</Text>
 					</Pressable>
 				</View>

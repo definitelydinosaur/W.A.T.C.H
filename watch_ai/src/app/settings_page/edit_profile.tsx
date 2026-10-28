@@ -23,6 +23,11 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useProfilePicture } from '../../hooks/loadprofilepicture';
 import supabase from '../../lib/supabase';
+import ProfileSelectionModal, {
+  HomeLocationInput,
+  InstitutionOption,
+} from '../../components/profile-selection-modal';
+import { profileApi } from '../../lib/profile-api';
 
 type PickerField = 'Country/Region';
 
@@ -66,8 +71,7 @@ export default function EditProfileScreen() {
       : null;
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
   const [name, setName] = useState('');
-  const email = '';
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState(new Date(1995, 4, 23));
   const [datePickerDraft, setDatePickerDraft] = useState(dateOfBirth);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -78,36 +82,48 @@ export default function EditProfileScreen() {
   );
   const [localProfilePicture, setLocalProfilePicture] = useState<string | null>(null);
   const [isUploadingPicture, setIsUploadingPicture] = useState(false);
+  const [homeLocation, setHomeLocation] = useState<HomeLocationInput | null>(null);
+  const [institution, setInstitution] = useState<InstitutionOption | null>(null);
+  const [selectionPicker, setSelectionPicker] =
+    useState<'location' | 'institution' | null>(null);
+  const [isSavingSelection, setIsSavingSelection] = useState(false);
 
 
 const loadProfile = useCallback(async () => {
   try {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) throw userError;
-
-    if (!user) {
-      Alert.alert('Session expired', 'Please log in again.');
-      return;
-    }
-
-    const { data: profile, error: profileError } = await supabase
-      .from('user_info')
-      .select('name, birthdate, country')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (profileError) throw profileError;
-
-    if (!profile) {
-      throw new Error('No profile was found for the signed-in user.');
-    }
-
+    const { profile } = await profileApi<{
+      profile: {
+        name: string | null;
+        email: string | null;
+        birthdate: string | null;
+        country: string | null;
+        home_location:
+          | (Omit<HomeLocationInput, 'name' | 'detail'> & { label?: string })
+          | null;
+        institution: InstitutionOption | null;
+      };
+    }>('/profile');
     setName(profile.name ?? '');
+    setEmail(profile.email ?? '');
     setCountry(profile.country ?? 'Philippines');
+    setHomeLocation(
+      profile.home_location
+        ? {
+            ...profile.home_location,
+            name:
+              profile.home_location.city ??
+              profile.home_location.barangay ??
+              profile.home_location.address.split(',')[0],
+            detail: [
+              profile.home_location.city,
+              profile.home_location.province,
+            ]
+              .filter(Boolean)
+              .join(', '),
+          }
+        : null,
+    );
+    setInstitution(profile.institution);
 
     const birthdate = parseBirthdate(profile.birthdate);
     if (birthdate) {
@@ -142,6 +158,18 @@ useFocusEffect(
   };
 
 const saveChanges = async () => {
+  if (name.trim().length < 3) {
+    Alert.alert('Invalid name', 'Please enter a name with at least 3 characters.');
+    return;
+  }
+  if (!country.trim()) {
+    Alert.alert('Invalid country', 'Please select a country or region.');
+    return;
+  }
+  if (dateOfBirth > new Date()) {
+    Alert.alert('Invalid date', 'Date of birth cannot be in the future.');
+    return;
+  }
   setIsSaving(true);
 
   try {
@@ -188,6 +216,80 @@ const saveChanges = async () => {
     );
   } finally {
     setIsSaving(false);
+  }
+};
+
+const saveHomeLocation = async (location: HomeLocationInput) => {
+  if (isSavingSelection) return;
+  setIsSavingSelection(true);
+  try {
+    await profileApi('/profile/home-location', {
+      method: 'POST',
+      body: JSON.stringify({
+        address: location.address,
+        latitude: location.latitude,
+        longitude: location.longitude,
+        city: location.city,
+        province: location.province,
+        barangay: location.barangay,
+      }),
+    });
+    setHomeLocation(location);
+    setSelectionPicker(null);
+    Alert.alert('Success', 'Your home location has been updated.');
+  } catch (error) {
+    Alert.alert(
+      'Update failed',
+      error instanceof Error ? error.message : 'Unable to save home location.',
+    );
+  } finally {
+    setIsSavingSelection(false);
+  }
+};
+
+const saveInstitution = async (selected: InstitutionOption | null) => {
+  if (isSavingSelection) return;
+  setIsSavingSelection(true);
+  try {
+    const body = selected
+      ? selected.id
+        ? { institutionId: selected.id }
+        : {
+            name: selected.name,
+            facebookPageUrl: selected.facebook_page_url,
+          }
+      : { institutionId: null };
+    const result = await profileApi<{ institution: InstitutionOption | null }>(
+      '/profile/institution',
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+    setInstitution(result.institution);
+    setSelectionPicker(null);
+    Alert.alert('Success', 'Your institution has been updated.');
+  } catch (error) {
+    Alert.alert(
+      'Update failed',
+      error instanceof Error ? error.message : 'Unable to save institution.',
+    );
+  } finally {
+    setIsSavingSelection(false);
+  }
+};
+
+const sendPasswordReset = async () => {
+  if (!email.trim()) {
+    Alert.alert('Email unavailable', 'A password reset email cannot be sent for this account.');
+    return;
+  }
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+    if (error) throw error;
+    Alert.alert('Check your email', 'A secure password reset link has been sent.');
+  } catch (error) {
+    Alert.alert(
+      'Password reset failed',
+      error instanceof Error ? error.message : 'Please try again.',
+    );
   }
 };
 
@@ -475,17 +577,18 @@ const changeProfilePicture = async () => {
                 </ProfileField>
 
                 <ProfileField label="Password">
-                  <TextInput
-                    accessibilityLabel="Password"
-                    autoCapitalize="none"
-                    onChangeText={setPassword}
-                    placeholder="••••••••••••"
-                    placeholderTextColor="#19191D"
-                    returnKeyType="done"
-                    secureTextEntry
-                    style={styles.input}
-                    value={password}
-                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Send secure password reset link"
+                    onPress={() => void sendPasswordReset()}
+                    style={({ pressed }) => [
+                      styles.input,
+                      styles.passwordResetButton,
+                      pressed && styles.pickerPressed,
+                    ]}
+                  >
+                    <Text style={styles.passwordResetText}>Send secure reset link</Text>
+                  </Pressable>
                 </ProfileField>
 
                 <ProfileField label="Date of Birth">
@@ -501,6 +604,34 @@ const changeProfilePicture = async () => {
                     accessibilityLabel="Select country or region"
                     onPress={() => setActivePicker('Country/Region')}
                     value={country}
+                  />
+                </ProfileField>
+
+                <ProfileField label="Home location">
+                  <PickerButton
+                    accessibilityLabel="Change home location"
+                    onPress={() => {
+                      if (!isSavingSelection) setSelectionPicker('location');
+                    }}
+                    value={
+                      isSavingSelection
+                        ? 'Saving...'
+                        : homeLocation?.address ?? 'Choose home location'
+                    }
+                  />
+                </ProfileField>
+
+                <ProfileField label="Institution">
+                  <PickerButton
+                    accessibilityLabel="Change institution"
+                    onPress={() => {
+                      if (!isSavingSelection) setSelectionPicker('institution');
+                    }}
+                    value={
+                      isSavingSelection
+                        ? 'Saving...'
+                        : institution?.name ?? 'Choose institution (optional)'
+                    }
                   />
                 </ProfileField>
               </View>
@@ -610,6 +741,20 @@ const changeProfilePicture = async () => {
             value={dateOfBirth}
           />
         ))}
+      <ProfileSelectionModal
+        visible={selectionPicker === 'location'}
+        kind="location"
+        includeCurrentLocation
+        onClose={() => setSelectionPicker(null)}
+        onSelectLocation={(location) => void saveHomeLocation(location)}
+      />
+      <ProfileSelectionModal
+        visible={selectionPicker === 'institution'}
+        kind="institution"
+        onClose={() => setSelectionPicker(null)}
+        onSelectInstitution={(selected) => void saveInstitution(selected)}
+        onClearInstitution={() => void saveInstitution(null)}
+      />
     </LinearGradient>
   );
 }
@@ -639,7 +784,9 @@ function PickerButton({
       onPress={onPress}
       style={({ pressed }) => [styles.input, styles.pickerButton, pressed && styles.pickerPressed]}
     >
-      <Text style={styles.pickerValue}>{value}</Text>
+      <Text style={styles.pickerValue} numberOfLines={1}>
+        {value}
+      </Text>
       <Svg width={20} height={20} viewBox="0 0 24 24">
         <Path
           d="m5 9 7 7 7-7"
@@ -748,6 +895,13 @@ const styles = StyleSheet.create({
   },
   readOnlyInput: {
     opacity: 0.7,
+  },
+  passwordResetButton: {
+    justifyContent: 'center',
+  },
+  passwordResetText: {
+    color: '#37343D',
+    fontSize: 12,
   },
   pickerButton: {
     flexDirection: 'row',

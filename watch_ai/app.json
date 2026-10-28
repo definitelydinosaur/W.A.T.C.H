@@ -6,14 +6,30 @@
     "orientation": "portrait",
     "scheme": "watchai",
     "userInterfaceStyle": "automatic",
+    "ios": {
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "W.A.T.C.H. uses your location to show local weather and safety alerts."
+      }
+    },
     "android": {
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "output": "static"
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "W.A.T.C.H. uses your location to show local weather and safety alerts."
+        }
+      ],
+      "expo-notifications",
       [
         "expo-splash-screen",
         {

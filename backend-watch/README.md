@@ -36,29 +36,95 @@ $ npm install
 Create a `.env` file in `backend-watch` with `SUPABASE_URL` and either
 `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`. The backend loads this
 file from its own directory, including when started from the repository root.
-For Gemini AI, also set `GEMINI_API_KEY` and optionally `GEMINI_MODEL`
-(defaults to `gemini-2.5-flash`). Never put the Gemini or Supabase service key
-in the Expo app's `EXPO_PUBLIC_*` variables. See `.env.example` for the full
-set of backend settings.
+For local-alert AI, set `AI_API_KEY`; `AI_PROVIDER` defaults to `anthropic` and
+`AI_MODEL` defaults to `claude-3-5-haiku-latest`. `gemini` is also supported as
+an alternate provider. `FACEBOOK_ACCESS_TOKEN` is optional and is never
+hard-coded. Set `EXPO_ACCESS_TOKEN` for authenticated Expo push delivery and
+`ANNOUNCEMENT_ADMIN_TOKEN` for the administrative source/manual-post endpoints.
+Open-Meteo is used without a key; `WEATHER_API_KEY` is reserved for a future
+provider configuration. Never put AI, Facebook, Expo, or Supabase service
+secrets in the Expo app's `EXPO_PUBLIC_*` variables. See `.env.example` for
+the complete backend environment.
 
 ## Weather, map, and AI setup
 
-Apply `supabase/migrations/202610200001_weather_ai_cache.sql` to the project's
-Supabase database before using the live weather or AI endpoints. The backend
+Apply the migrations in `supabase/migrations` to the project's Supabase
+database before using the live weather, profile, institution, alert, or AI endpoints.
+The onboarding migration adds a single-default home location, the profile
+location-reminder timestamp, institution records and user links. It seeds
+University of San Carlos, UP Cebu, CIT-U, USJ-R, and Cebu Normal University;
+their social page URLs are intentionally blank for administrator review.
+Custom institutions are stored as unverified until reviewed. The backend
 uses Open-Meteo for forecasts, caches them for ten minutes, and classifies
 weather risk using fixed thresholds before any AI explanation is requested.
-Risk thresholds are advisory application rules: rain rate 15/30/50 mm per
-hour, wind 39/62/88 km/h, and computed heat index 33/42/52 °C. These are not
+Risk thresholds are advisory application rules: rainfall 15/30/50 mm, wind
+39/62/88 km/h, heat index 33/42/52 °C, and provider thunderstorm codes. These are not
 official PAGASA alerts and do not replace government advisories.
-Gemini requests are cached by prompt and retried with backoff; static safety
-guidance is returned when Gemini is not configured or is unavailable. Do not
-send personal data in AI requests; the backend redacts email addresses and
-phone-like numbers from announcement text before sending it to Gemini. Names
-and other identifying details should be removed at the source. School suspension summaries remain
-unverified unless the URL matches `TRUSTED_ANNOUNCEMENT_DOMAINS` or an
-administrator supplies the server-side `ANNOUNCEMENT_ADMIN_TOKEN` using the
-`x-announcement-admin-token` header. Never accept client-submitted boolean
-verification flags. AI requests are limited to ten per client IP per minute.
+The announcement classifier and generated weather tips use `AI_PROVIDER`,
+`AI_API_KEY`, and `AI_MODEL` (Anthropic by default; Gemini is supported).
+Malformed AI classification output is rejected; unavailable weather-tip
+generation uses reviewed static guidance, while low-confidence announcements
+are held for admin review. The older `/ai` helper endpoints retain their
+separate Gemini configuration and cache. Avoid sending personal data in AI
+requests; remove names and identifying details from source posts where possible.
+School-suspension summaries from the older AI helper remain unverified unless
+the URL matches `TRUSTED_ANNOUNCEMENT_DOMAINS` or an administrator supplies the
+server-side `ANNOUNCEMENT_ADMIN_TOKEN` using the `x-announcement-admin-token`
+header. Never accept client-submitted boolean verification flags. AI requests
+are limited to ten per client IP per minute.
+
+## Local announcements, AI safety tips, and push
+
+The backend polls only active, trusted sources every five minutes. It tries
+Facebook Graph API access first when a page ID and `FACEBOOK_ACCESS_TOKEN` are
+configured, then an official RSS/Atom feed. A website URL is accepted only when
+it returns an XML feed; the service does not scrape Facebook pages, private
+content, or HTML, and never bypasses access controls. Failed Facebook access
+marks the source degraded and tries the feed fallback. Admins can add/disable
+sources and manually enter urgent official posts using the server-side admin
+token. Low-confidence AI results are retained as `pending_review` and are not
+sent to users. Published announcements are attributed to their source.
+
+Add a trusted source (admin token required):
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:3000/admin/sources `
+  -Headers @{ 'x-admin-token' = $env:ANNOUNCEMENT_ADMIN_TOKEN } `
+  -ContentType 'application/json' `
+  -Body '{"type":"lgu_mayor","name":"Cebu City Mayor","city":"Cebu City","is_trusted":true}'
+```
+
+Use the returned source `id` for manual testing. A manual post is accepted only
+for an active, trusted source:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:3000/admin/announcements `
+  -Headers @{ 'x-admin-token' = $env:ANNOUNCEMENT_ADMIN_TOKEN } `
+  -ContentType 'application/json' `
+  -Body '{"source_id":"<source-uuid>","text":"No classes tomorrow due to typhoon.","posted_at":"<current-ISO-8601-time>"}'
+```
+
+Use a registered test device with notifications allowed, a valid EAS project,
+`EXPO_ACCESS_TOKEN`, an active home city of Cebu City, and a configured AI
+provider. Check the authenticated `GET /alerts` response and the device push.
+Admin review items are available from `GET /admin/announcements/review`.
+
+The weather monitor polls saved default locations every ten minutes, writes
+weather snapshots, uses configurable-in-code rule thresholds (not AI) for risk
+levels, and requests short safety tips for Advisory-or-higher hazards. Cached
+forecasts remain available with a stale marker if Open-Meteo is down; app
+surfaces show last-updated/unavailable states.
+
+### Expo push setup
+
+Install dependencies, set the EAS project ID in `watch_ai/.env` or EAS config,
+then create an iOS/Android development build or EAS build. On Android, configure
+Firebase/FCM credentials in the EAS project. Remote push is not available in
+Expo Go on Android. The app requests notification permission separately from
+location permission and stores device tokens through the authenticated backend.
+Notification taps open the announcement detail screen or the alerts screen.
 
 The map geocoder uses OpenStreetMap Nominatim, and onboarding suggestions use
 OpenStreetMap Photon scoped to the Philippines. Provider requests share a
@@ -69,9 +135,23 @@ Available endpoints:
 - `GET /weather?latitude=10.3157&longitude=123.8854`
 - `GET /map/geocode?query=Cebu%20City`
 - `GET /map/suggest?kind=location&query=Cebu`
-- `GET /map/suggest?kind=institution&query=University`
+- `GET /institutions?query=University`
+- `GET /profile` (authenticated; includes home location and default institution)
+- `POST /profile/home-location` (authenticated; saves the user's default location)
+- `PATCH /profile/location-prompt` (authenticated; stores or clears the reminder timestamp)
+- `PUT /profile/institution` (authenticated; selects, adds, or clears the default institution)
 - `POST /ai/hazard-guidance`
 - `POST /ai/announcement-summary`
+- `POST /admin/sources` and `PATCH /admin/sources/:id` (admin token required)
+- `POST /admin/announcements` and `GET /admin/announcements/review` (admin token required)
+- `GET /alerts`, `GET /alerts/announcements/:id` (authenticated)
+- `POST /profile/push-token` (authenticated)
+
+Authenticated profile endpoints require the Supabase access token in a Bearer
+Authorization header. Registration requires email verification before the
+mobile app opens location and profile onboarding. The Expo app requests only
+foreground location access; denied permissions can be retried or opened in
+device settings.
 
 ## Compile and run the project
 

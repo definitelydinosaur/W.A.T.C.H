@@ -7,5 +7,6 @@ import { AiService } from './ai.service';
   imports: [SupabaseModule],
   controllers: [AiController],
   providers: [AiService],
+  exports: [AiService],
 })
 export class AiModule {}
