@@ -14,7 +14,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import LoadingAuth from '../../components/loading-auth';
-import useAuthCardFlip from '../../hooks/use-auth-card-flip';
+import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 
 const SLOW_LOADING_DELAY_MS = 600;
 
@@ -25,7 +25,7 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
-  const { AnimatedView, animatedStyle, flipTo, isFlipping } = useAuthCardFlip();
+  const { AnimatedView, animatedStyle, navigateTo, isTransitioning } = useAuthCardTransition();
   const handleRegister = async () => {
     const trimmedName = fullName.trim();
     const trimmedEmail = email.trim();
@@ -97,13 +97,17 @@ export default function RegisterScreen() {
   };
 
   return (
-    <LinearGradient colors={['#1a1a2e', '#16213e']} style={styles.screen}>
+    <LinearGradient
+      colors={['#351356', '#511079', '#17152D']}
+      locations={[0, 0.48, 1]}
+      style={styles.screen}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.centerWrap}
       >
         <AnimatedView
-          pointerEvents={isFlipping ? 'none' : 'auto'}
+          pointerEvents={isTransitioning ? 'none' : 'auto'}
           style={[styles.cardContainer, animatedStyle]}
         >
           <View style={styles.cardWrap}>
@@ -201,7 +205,7 @@ export default function RegisterScreen() {
 
               <Text style={styles.loginPrompt}>
                 Already have W.A.T.C.H.?{' '}
-                <Text style={styles.loginLink} onPress={() => flipTo('/auth/login')}>
+                <Text style={styles.loginLink} onPress={() => navigateTo('/auth/login')}>
                   Sign in!
                 </Text>
               </Text>
