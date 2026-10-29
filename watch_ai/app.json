@@ -12,6 +12,7 @@
       }
     },
     "android": {
+      "package": "com.stratodevs.watch",
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_FINE_LOCATION",

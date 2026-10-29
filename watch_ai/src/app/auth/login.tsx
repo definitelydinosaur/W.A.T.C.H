@@ -27,7 +27,7 @@ export default function LoginScreen() {
   const { AnimatedView, animatedStyle, isTransitioning } = useAuthCardTransition();
 
   const handleLogin = async () => {
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
     if (!trimmedEmail.includes('@')) {

@@ -452,6 +452,7 @@ export default function HomeScreen() {
   const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
   const [homeWeather, setHomeWeather] = useState<HomeForecast | null>(null);
   const [latestSafetyAlert, setLatestSafetyAlert] = useState<HomeHazardAlert | null>(null);
+  const [safetyTipsUnavailable, setSafetyTipsUnavailable] = useState(false);
   const [locationPromptPending, setLocationPromptPending] = useState(false);
   const [homeError, setHomeError] = useState('');
   const [menuExpanded, setMenuExpanded] = useState(false);
@@ -554,11 +555,15 @@ export default function HomeScreen() {
       setHomeWeather(null);
       setHomeError('');
       try {
-        const { alerts } = await profileApi<{ alerts: HomeHazardAlert[] }>('/alerts');
+        const { alerts } = await profileApi<{
+          alerts: HomeHazardAlert[];
+          last_updated: string | null;
+        }>('/alerts');
         setLatestSafetyAlert(alerts.find((alert) => alert.hazard?.safety_tips?.length) ?? null);
+        setSafetyTipsUnavailable(false);
       } catch (alertError) {
-        console.error('Unable to load local safety tips:', alertError);
-        setLatestSafetyAlert(null);
+        console.warn('Unable to load local safety tips:', alertError);
+        setSafetyTipsUnavailable(true);
       }
 
       const permission = await Location.getForegroundPermissionsAsync();
@@ -568,7 +573,7 @@ export default function HomeScreen() {
           method: 'PATCH',
           body: JSON.stringify({ dismissedAt: null }),
         }).catch((error: unknown) => {
-          console.error('Unable to clear the location reminder:', error);
+          console.warn('Unable to clear the location reminder:', error);
         });
       } else if (
         !permission.granted &&
@@ -633,7 +638,7 @@ export default function HomeScreen() {
       setHomeError(
         error instanceof Error ? error.message : 'Unable to load your home weather.',
       );
-      console.error('Home profile refresh failed:', error);
+      console.warn('Home profile refresh failed:', error);
     }
   }, [router]);
 
@@ -1031,6 +1036,20 @@ export default function HomeScreen() {
             ))}
             <Text style={styles.aiSummaryDisclaimer}>Follow official PAGASA/LGU advisories. View all alerts ›</Text>
           </TouchableOpacity>
+        ) : null}
+        {safetyTipsUnavailable ? (
+          <View style={styles.safetyTipsUnavailable}>
+            <Text accessibilityRole="alert" style={styles.safetyTipsUnavailableText}>
+              Safety tips are unavailable right now
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => void loadHomeProfile()}
+              style={styles.safetyTipsRetry}
+            >
+              <Text style={styles.safetyTipsRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
         ) : null}
         {/* Top Header / Hero Weather View */}
         <Animated.View style={[styles.headerSection, { opacity: fadeAnim }]}>
@@ -1826,6 +1845,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.24)',
     backgroundColor: 'rgba(32, 20, 54, 0.82)',
+  },
+  safetyTipsUnavailable: {
+    width: '90%',
+    maxWidth: 430,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    marginBottom: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(100, 25, 45, 0.64)',
+  },
+  safetyTipsUnavailableText: {
+    flex: 1,
+    color: '#FFE0E7',
+    fontSize: 12,
+    marginRight: 12,
+  },
+  safetyTipsRetry: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: '#7000B8',
+  },
+  safetyTipsRetryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   aiSummaryEyebrow: {
     color: '#D5B6FF',

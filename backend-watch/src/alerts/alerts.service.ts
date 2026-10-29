@@ -286,6 +286,7 @@ export class AlertsService {
           ? (row.hazard[0] ?? null)
           : row.hazard,
       })),
+      last_updated: rows[0]?.created_at ?? rows[0]?.sent_at ?? null,
     };
   }
 

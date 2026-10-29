@@ -69,18 +69,25 @@ In the output, you'll find options to open the app in a
 ## Push notifications and local alerts
 
 Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL`,
-`EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and
-`EXPO_PUBLIC_EAS_PROJECT_ID`. The backend separately needs `EXPO_ACCESS_TOKEN`,
+`EXPO_PUBLIC_SUPABASE_URL`, and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Link
+the app to its EAS project with `eas init` (which sets
+`expo.extra.eas.projectId`). The backend separately needs `EXPO_ACCESS_TOKEN`,
 `AI_API_KEY`, and (if Facebook Graph access is authorized) `FACEBOOK_ACCESS_TOKEN`.
 Never put server credentials in `EXPO_PUBLIC_*` variables.
 
 Notification permission is requested separately from location permission after
-sign-in. To test remote notifications, use an iOS/Android development build or
-EAS build with the EAS project configured. Remote push is not supported in
-Expo Go on Android; configure FCM credentials in the EAS project for Android.
+sign-in. Remote push and notification-tap deep links must be tested in a
+development build, not Expo Go. Build Android with
+`eas build --profile development --platform android`, configure the EAS project
+ID and FCM credentials, then install that build on the test phone.
 Open the **Alerts** screen to see delivered announcements and weather safety
 tips. Tapping an announcement opens its source, original text, AI summary, and
 verification disclaimer.
+
+For a physical Android phone, set `EXPO_PUBLIC_API_URL` in `watch_ai/.env` to
+the computer's reachable LAN address (for example `http://192.168.1.20:3000`),
+not `localhost`. The NestJS backend listens on `0.0.0.0`; allow port 3000
+through the computer's firewall if needed.
 
 The backend alert job requires the Supabase migrations to be applied, a trusted
 source, an AI provider key, Expo push credentials, and a physical test device

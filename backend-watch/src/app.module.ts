@@ -9,6 +9,7 @@ import { ProfileModule } from './users/users.module';
 import { InstitutionsModule } from './institutions/institutions.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AlertsModule } from './alerts/alerts.module';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -25,5 +26,6 @@ import { AlertsModule } from './alerts/alerts.module';
     InstitutionsModule,
     AlertsModule,
   ],
+  controllers: [HealthController],
 })
 export class AppModule {}
