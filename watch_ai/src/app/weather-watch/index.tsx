@@ -10,44 +10,20 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import {
+  CEBU,
+  Forecast,
+  aqiLabel,
+  fetchForecast,
+  uvLabel,
+  weatherDescription,
+  weatherIcon,
+} from '../../lib/weather';
 
-const CEBU = { latitude: 10.3157, longitude: 123.8854 };
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
-interface Forecast {
-  updatedAt: string;
-  stale: boolean;
-  current: {
-    temperatureC: number;
-    feelsLikeC: number;
-    humidityPercent: number;
-    precipitationMm: number;
-    windKph: number;
-    weatherCode: number;
-    uvIndex: number;
-  };
-  hourly: {
-    time: string;
-    temperatureC: number;
-    precipitationProbability: number;
-    weatherCode: number;
-  }[];
-  daily: {
-    date: string;
-    minC: number;
-    maxC: number;
-    precipitationProbability: number;
-    weatherCode: number;
-    sunrise: string;
-    sunset: string;
-  }[];
-  risk: { level: string; reason: string };
-  riskMeasurements: {
-    rainMm: number;
-    windKph: number;
-    heatIndexC: number;
-  };
-}
+const formatTime = (iso: string) =>
+  iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '--';
 
 interface SafetyGuidance {
   explanation: string;
@@ -66,24 +42,11 @@ export default function WeatherWatchScreen() {
   const [guidanceError, setGuidanceError] = useState('');
   const [guidanceLoading, setGuidanceLoading] = useState(false);
 
+  const [tab, setTab] = useState<'hourly' | 'weekly'>('hourly');
+
   const loadForecast = useCallback(async (signal?: AbortSignal) => {
-    if (!API_URL) {
-      setError('Set EXPO_PUBLIC_API_URL to your backend URL.');
-      setLoading(false);
-      setRefreshing(false);
-      return;
-    }
     try {
-      const query = new URLSearchParams({
-        latitude: String(CEBU.latitude),
-        longitude: String(CEBU.longitude),
-      });
-      const response = await fetch(`${API_URL}/weather?${query}`, { signal });
-      if (!response.ok) {
-        const body = (await response.json()) as { message?: string };
-        throw new Error(body.message ?? `Weather request failed (${response.status}).`);
-      }
-      setForecast((await response.json()) as Forecast);
+      setForecast(await fetchForecast(signal));
       setError('');
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -101,7 +64,11 @@ export default function WeatherWatchScreen() {
   }, []);
 
   const loadSafetyGuidance = async () => {
-    if (!forecast || !API_URL) return;
+    if (!forecast) return;
+    if (!API_URL) {
+      setGuidanceError('Safety guidance needs EXPO_PUBLIC_API_URL to be set.');
+      return;
+    }
     setGuidanceLoading(true);
     setGuidanceError('');
     const { riskMeasurements, risk } = forecast;
@@ -178,7 +145,7 @@ export default function WeatherWatchScreen() {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.eyebrow}>WEATHER WATCH</Text>
-            <Text style={styles.city}>Cebu City</Text>
+            <Text style={styles.city}>{CEBU.name}</Text>
           </View>
           <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
             <Text style={styles.mapButtonText}>Map overview</Text>
@@ -210,24 +177,48 @@ export default function WeatherWatchScreen() {
             {forecast && (
               <>
                 <View style={styles.forecastCard}>
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Hourly forecast</Text>
-                    <Text style={styles.muted}>Next 24 hours</Text>
+                  <View style={styles.tabs}>
+                    {(['hourly', 'weekly'] as const).map((key) => (
+                      <Pressable
+                        key={key}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected: tab === key }}
+                        onPress={() => setTab(key)}
+                        style={[styles.tab, tab === key && styles.tabActive]}
+                      >
+                        <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>
+                          {key === 'hourly' ? 'Hourly' : 'Weekly'}
+                        </Text>
+                      </Pressable>
+                    ))}
                   </View>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    <View style={styles.hourRow}>
-                      {forecast.hourly.slice(0, 12).map((hour, index) => (
-                        <View key={hour.time} style={styles.hourItem}>
-                          <Text style={styles.hourTime}>
-                            {index === 0 ? 'Now' : new Date(hour.time).toLocaleTimeString([], { hour: 'numeric' })}
-                          </Text>
-                          <Text style={styles.hourIcon}>{weatherIcon(hour.weatherCode)}</Text>
-                          <Text style={styles.hourTemp}>{Math.round(hour.temperatureC)}°</Text>
-                          <Text style={styles.rainChance}>{hour.precipitationProbability}%</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </ScrollView>
+                  {tab === 'hourly' ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                      <View style={styles.hourRow}>
+                        {forecast.hourly.map((hour, index) => (
+                          <View key={hour.time} style={styles.hourItem}>
+                            <Text style={styles.hourTime}>
+                              {index === 0 ? 'Now' : new Date(hour.time).toLocaleTimeString([], { hour: 'numeric' })}
+                            </Text>
+                            <Text style={styles.hourIcon}>{weatherIcon(hour.weatherCode)}</Text>
+                            <Text style={styles.hourTemp}>{Math.round(hour.temperatureC)}°</Text>
+                            <Text style={styles.rainChance}>{hour.precipitationProbability}%</Text>
+                          </View>
+                        ))}
+                      </View>
+                    </ScrollView>
+                  ) : (
+                    forecast.daily.map((day) => (
+                      <View key={day.date} style={styles.dayRow}>
+                        <Text style={styles.dayName}>
+                          {new Date(`${day.date}T00:00`).toLocaleDateString([], { weekday: 'short' })}
+                        </Text>
+                        <Text style={styles.dayIcon}>{weatherIcon(day.weatherCode)}</Text>
+                        <Text style={styles.muted}>{day.precipitationProbability}% rain</Text>
+                        <Text style={styles.dayTemps}>{Math.round(day.minC)}° / {Math.round(day.maxC)}°</Text>
+                      </View>
+                    ))
+                  )}
                 </View>
 
                 <View style={[styles.riskCard, { borderColor: riskColor }]}>
@@ -257,24 +248,35 @@ export default function WeatherWatchScreen() {
                 </View>
 
                 <View style={styles.metricGrid}>
-                  <Metric label="UV INDEX" value={`${current?.uvIndex ?? '--'}`} />
+                  <Metric
+                    label="AIR QUALITY"
+                    value={forecast.airQuality.aqi === null ? '--' : `${Math.round(forecast.airQuality.aqi)} AQI`}
+                    note={aqiLabel(forecast.airQuality.aqi)}
+                  />
+                  <Metric
+                    label="UV INDEX"
+                    value={`${Math.round(current?.uvIndex ?? 0)}`}
+                    note={uvLabel(current?.uvIndex ?? 0)}
+                  />
+                  <Metric
+                    label="WIND"
+                    value={`${Math.round(current?.windKph ?? 0)} km/h`}
+                    note={current?.windDirection}
+                  />
+                  <Metric
+                    label="RAINFALL"
+                    value={`${current?.precipitationMm ?? 0} mm`}
+                    note={`Today ${forecast.daily[0]?.precipitationMm ?? 0} mm`}
+                  />
+                  <Metric
+                    label="SUNRISE"
+                    value={formatTime(forecast.daily[0]?.sunrise ?? '')}
+                  />
+                  <Metric
+                    label="SUNSET"
+                    value={formatTime(forecast.daily[0]?.sunset ?? '')}
+                  />
                   <Metric label="HUMIDITY" value={`${current?.humidityPercent ?? '--'}%`} />
-                  <Metric label="WIND" value={`${current?.windKph ?? '--'} km/h`} />
-                  <Metric label="RAIN NOW" value={`${current?.precipitationMm ?? '--'} mm`} />
-                </View>
-
-                <View style={styles.forecastCard}>
-                  <Text style={styles.sectionTitle}>7-day forecast</Text>
-                  {forecast.daily.map((day) => (
-                    <View key={day.date} style={styles.dayRow}>
-                      <Text style={styles.dayName}>
-                        {new Date(day.date).toLocaleDateString([], { weekday: 'short' })}
-                      </Text>
-                      <Text style={styles.dayIcon}> {weatherIcon(day.weatherCode)} </Text>
-                      <Text style={styles.muted}>{day.precipitationProbability}% rain</Text>
-                      <Text style={styles.dayTemps}>{Math.round(day.minC)}° / {Math.round(day.maxC)}°</Text>
-                    </View>
-                  ))}
                 </View>
               </>
             )}
@@ -288,12 +290,12 @@ export default function WeatherWatchScreen() {
                 }}
               >
                 <Text style={styles.errorText}>{error} Tap to retry.</Text>
-                {forecast?.stale && <Text style={styles.muted}>Showing the last available forecast.</Text>}
+                {forecast && <Text style={styles.muted}>Showing the last available forecast.</Text>}
               </Pressable>
             ) : null}
             {forecast && (
               <Text style={styles.updatedAt}>
-                {forecast.stale ? 'Last available update' : 'Updated'}{' '}
+                {'Updated '}
                 {new Date(forecast.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                 {' · Open-Meteo'}
               </Text>
@@ -305,32 +307,14 @@ export default function WeatherWatchScreen() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.metricValue}>{value}</Text>
+      {note ? <Text style={styles.muted}>{note}</Text> : null}
     </View>
   );
-}
-
-function weatherDescription(code: number) {
-  if (code === 0) return 'Clear sky';
-  if (code <= 3) return 'Partly cloudy';
-  if (code <= 48) return 'Foggy';
-  if (code <= 67) return 'Rain';
-  if (code <= 77) return 'Snow';
-  if (code <= 82) return 'Rain showers';
-  if (code <= 86) return 'Snow showers';
-  return 'Thunderstorm';
-}
-
-function weatherIcon(code: number) {
-  if (code === 0) return '☀';
-  if (code <= 3) return '☁';
-  if (code <= 48) return '≋';
-  if (code <= 67 || (code >= 80 && code <= 82)) return '☂';
-  return '⚡';
 }
 
 const styles = StyleSheet.create({
@@ -348,6 +332,11 @@ const styles = StyleSheet.create({
   highLow: { color: '#D5C2E7', fontSize: 13, marginTop: 6 },
   loading: { alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 12 },
   muted: { color: '#D0C5DD', fontSize: 12 },
+  tabs: { flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.25)', borderRadius: 14, padding: 4, marginBottom: 14 },
+  tab: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 11 },
+  tabActive: { backgroundColor: '#7200B7' },
+  tabText: { color: '#D0C5DD', fontSize: 13, fontWeight: '600' },
+  tabTextActive: { color: '#FFFFFF' },
   forecastCard: { backgroundColor: 'rgba(42,20,72,0.78)', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderRadius: 20, padding: 16, marginBottom: 14 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   sectionTitle: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
