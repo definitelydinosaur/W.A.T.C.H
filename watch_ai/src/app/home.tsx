@@ -14,6 +14,8 @@ import {
   Alert,
   Easing,
   PanResponder,
+  FlatList,
+  TextInput,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +24,14 @@ import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { profileApi } from '../lib/profile-api';
+import { CEBU_LOCATIONS } from '../lib/cebu-locations';
+import {
+  Forecast,
+  aqiLabel,
+  fetchForecast,
+  uvLabel,
+  weatherDescription,
+} from '../lib/weather';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
@@ -58,6 +68,12 @@ interface CityData {
   airQualityLabel: string;
   sunrise: string;
   sunset: string;
+  // Live-only rainfall details (Open-Meteo)
+  rainNowMm?: number;
+  rainTodayMm?: number;
+  rainChance?: number;
+  latitude: number;
+  longitude: number;
 }
 
 interface HomeLocation {
@@ -440,6 +456,24 @@ function WeatherIcon({
   );
 }
 
+const hourLabel = (iso: string) => {
+  const h = parseInt(iso.slice(11, 13), 10);
+  return `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
+};
+
+const clockLabel = (iso: string) => {
+  if (!iso) return '--';
+  const m = iso.slice(14, 16);
+  const h = parseInt(iso.slice(11, 13), 10);
+  return `${h % 12 === 0 ? 12 : h % 12}:${m} ${h < 12 ? 'AM' : 'PM'}`;
+};
+
+function toCondition(code: number, hour: number): HourlyItem['condition'] {
+  if (code >= 51) return 'rain';
+  if (code <= 1) return hour >= 6 && hour < 18 ? 'sun' : 'cloud-moon';
+  return 'cloud';
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const { welcomeName: routeWelcomeName } = useLocalSearchParams<{
@@ -447,7 +481,88 @@ export default function HomeScreen() {
   }>();
   const welcomeName = typeof routeWelcomeName === 'string' ? routeWelcomeName.trim() : '';
   const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
-  const [selectedCity, setSelectedCity] = useState<CityData>(CITIES[0]);
+  const [baseCity, setSelectedCity] = useState<CityData>(CITIES[0]);
+  const [cityQuery, setCityQuery] = useState('');
+  const filteredCities = useMemo(() => {
+    const q = cityQuery.trim().toLowerCase();
+    if (!q) return CITIES;
+    return CITIES.filter((c) => `${c.name} ${c.country}`.toLowerCase().includes(q));
+  }, [cityQuery]);
+  const [live, setLive] = useState<{ name: string; data: Forecast } | null>(null);
+  // Ignore a stale forecast left over from a previously selected location.
+  const liveForecast = live?.name === baseCity.name ? live.data : null;
+
+  // Live Open-Meteo data for the selected location, refreshed every 10 minutes
+  useEffect(() => {
+    const controller = new AbortController();
+    const { name, latitude, longitude } = baseCity;
+    const load = () =>
+      fetchForecast(controller.signal, { latitude, longitude })
+        .then((data) => setLive({ name, data }))
+        .catch(() => {});
+    void load();
+    const interval = setInterval(load, 10 * 60 * 1000);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [baseCity]);
+
+  const isLive = !!liveForecast;
+  const selectedCity = useMemo<CityData>(() => {
+    if (!isLive || !liveForecast) return baseCity;
+    const { current, daily, airQuality } = liveForecast;
+    return {
+      ...baseCity,
+      temp: Math.round(current.temperatureC),
+      condition: weatherDescription(current.weatherCode),
+      high: Math.round(daily[0]?.maxC ?? current.temperatureC),
+      low: Math.round(daily[0]?.minC ?? current.temperatureC),
+      uv: Math.round(current.uvIndex),
+      wind: Math.round(current.windKph),
+      windDir: current.windDirection,
+      humidity: Math.round(current.humidityPercent),
+      airQuality: Math.round(airQuality.aqi ?? 0),
+      airQualityLabel: aqiLabel(airQuality.aqi),
+      sunrise: clockLabel(daily[0]?.sunrise ?? ''),
+      sunset: clockLabel(daily[0]?.sunset ?? ''),
+      rainNowMm: current.precipitationMm,
+      rainTodayMm: daily[0]?.precipitationMm ?? 0,
+      rainChance: daily[0]?.precipitationProbability ?? 0,
+    };
+  }, [baseCity, isLive, liveForecast]);
+
+  const hourlyData = useMemo<HourlyItem[]>(() => {
+    if (!isLive || !liveForecast) return BASE_HOURLY_DATA;
+    return liveForecast.hourly.map((h, i) => ({
+      id: i === 0 ? '2' : `h${i}`,
+      time: i === 0 ? 'Now' : hourLabel(h.time),
+      temp: Math.round(h.temperatureC),
+      rainChance: h.precipitationProbability >= 20 ? `${h.precipitationProbability}%` : undefined,
+      condition: toCondition(h.weatherCode, parseInt(h.time.slice(11, 13), 10)),
+      desc: weatherDescription(h.weatherCode),
+    }));
+  }, [isLive, liveForecast]);
+
+  const dailyData = useMemo<DailyItem[]>(() => {
+    if (!isLive || !liveForecast) return DAILY_DATA;
+    return liveForecast.daily.map((d, i) => ({
+      id: `d${i}`,
+      day:
+        i === 0
+          ? 'Today'
+          : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][
+              new Date(`${d.date}T12:00:00Z`).getUTCDay()
+            ],
+      condition: toCondition(d.weatherCode, 12),
+      minTemp: Math.round(d.minC),
+      maxTemp: Math.round(d.maxC),
+      rainChance: d.precipitationProbability >= 20 ? `${d.precipitationProbability}%` : undefined,
+    }));
+  }, [isLive, liveForecast]);
+
+  // Demo cities are offset from a 19° baseline; live data is used as-is.
+  const tempOffset = isLive ? 0 : selectedCity.temp - 19;
   const [selectedHourId, setSelectedHourId] = useState('2');
   const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
   const [homeWeather, setHomeWeather] = useState<HomeForecast | null>(null);
@@ -1239,7 +1354,7 @@ export default function HomeScreen() {
                         ? item.temp
                         : item.id === '2'
                           ? selectedCity.temp
-                          : item.temp + (selectedCity.temp - 19);
+                          : item.temp + tempOffset;
 
                       return (
                         <TouchableOpacity
@@ -1381,9 +1496,13 @@ export default function HomeScreen() {
                       <View style={styles.radarPinInner} />
                     </View>
                     <View style={styles.radarInfoCol}>
-                      <Text style={styles.radarPrimaryText}>Precipitation Approaching</Text>
+                      <Text style={styles.radarPrimaryText}>
+                        {isLive ? `Rainfall: ${selectedCity.rainNowMm ?? 0} mm now` : 'Precipitation Approaching'}
+                      </Text>
                       <Text style={styles.radarSecondaryText}>
-                        Scattered cloud cover across {selectedCity.name}. No storm warnings.
+                        {isLive
+                          ? `Today in ${selectedCity.name}: ${selectedCity.rainTodayMm ?? 0} mm expected, ${selectedCity.rainChance ?? 0}% chance of rain.`
+                          : `Scattered cloud cover across ${selectedCity.name}. No storm warnings.`}
                       </Text>
                     </View>
                   </View>
@@ -1419,14 +1538,22 @@ export default function HomeScreen() {
                       ]}
                     />
                   </View>
-                  <Text style={styles.detailSub}>Air quality is ideal for outdoor activities.</Text>
+                  <Text style={styles.detailSub}>
+                    {!isLive || selectedCity.airQuality <= 50
+                      ? 'Air quality is ideal for outdoor activities.'
+                      : 'Sensitive groups should limit prolonged outdoor activity.'}
+                  </Text>
                 </LiquidGlassCard>
 
                 {/* 3. UV Index Widget with Liquid Meter */}
                 <LiquidGlassCard style={styles.detailCard} intensity={55}>
                   <Text style={styles.detailLabel}>UV INDEX</Text>
                   <Text style={styles.detailValue}>
-                    {effectiveTimeOfDay === 'afternoon' ? '6 High' : `${selectedCity.uv} Moderate`}
+                    {isLive
+                      ? `${selectedCity.uv} ${uvLabel(selectedCity.uv)}`
+                      : effectiveTimeOfDay === 'afternoon'
+                        ? '6 High'
+                        : `${selectedCity.uv} Moderate`}
                   </Text>
                   <View style={styles.uvMeterTrack}>
                     <LinearGradient
@@ -1435,12 +1562,14 @@ export default function HomeScreen() {
                       end={{ x: 1, y: 0 }}
                       style={[
                         styles.uvMeterFill,
-                        { width: `${(effectiveTimeOfDay === 'afternoon' ? 6 : selectedCity.uv) * 10}%` },
+                        {
+                          width: `${Math.min(100, (!isLive && effectiveTimeOfDay === 'afternoon' ? 6 : selectedCity.uv) * 9)}%`,
+                        },
                       ]}
                     />
                   </View>
                   <Text style={styles.detailSub}>
-                    {effectiveTimeOfDay === 'afternoon'
+                    {(isLive ? selectedCity.uv >= 6 : effectiveTimeOfDay === 'afternoon')
                       ? 'Sun protection required from 11 AM - 4 PM.'
                       : 'Low to moderate risk of sun exposure.'}
                   </Text>
@@ -1458,7 +1587,7 @@ export default function HomeScreen() {
                     {selectedCity.wind} km/h {selectedCity.windDir}
                   </Text>
                   <Text style={styles.detailSub}>
-                    Gusts up to {selectedCity.wind + 9} km/h • Humidity {selectedCity.humidity}%
+                    {isLive ? '' : `Gusts up to ${selectedCity.wind + 9} km/h • `}Humidity {selectedCity.humidity}%
                   </Text>
                 </LiquidGlassCard>
 
@@ -2602,8 +2731,19 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   cityListScroll: {
-    maxHeight: 240,
+    maxHeight: 300,
     marginBottom: 14,
+  },
+  citySearchInput: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
   },
   cityRowCard: {
     flexDirection: 'row',
