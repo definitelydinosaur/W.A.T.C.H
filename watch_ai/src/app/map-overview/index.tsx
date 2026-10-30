@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import MapView from '../../components/map-overview/MapView';
+import { profileApi } from '../../lib/profile-api';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
@@ -26,6 +27,15 @@ interface LocationResult {
   };
 }
 
+interface HomeHazard {
+  id: string;
+  hazard?: {
+    hazard_type: string;
+    risk_level: string;
+    safety_tips: string[];
+  } | null;
+}
+
 export default function MapOverviewScreen() {
   const [location, setLocation] = useState<LocationResult>({
     name: 'Cebu City',
@@ -35,6 +45,53 @@ export default function MapOverviewScreen() {
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [searching, setSearching] = useState(false);
+  const [homeCoordinates, setHomeCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [homeHazard, setHomeHazard] = useState<HomeHazard | null>(null);
+  const [tipsError, setTipsError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void profileApi<{
+      profile: {
+        home_location: {
+          address: string;
+          city: string | null;
+          latitude: number;
+          longitude: number;
+        } | null;
+      };
+    }>('/profile')
+      .then((profile) => {
+        if (!active) return;
+        const home = profile.profile.home_location;
+        if (home) {
+          setHomeCoordinates({ latitude: home.latitude, longitude: home.longitude });
+          setLocation({
+            name: home.city || home.address.split(',')[0] || 'Home',
+            latitude: home.latitude,
+            longitude: home.longitude,
+          });
+        }
+      })
+      .catch((loadError: unknown) => {
+        console.error('Unable to load the home location for map:', loadError);
+      });
+    void profileApi<{ alerts: HomeHazard[] }>('/alerts')
+      .then((alertResult) => {
+        if (!active) return;
+        setHomeHazard(
+          alertResult.alerts.find((alert) => alert.hazard?.safety_tips?.length) ?? null,
+        );
+        setTipsError('');
+      })
+      .catch((loadError: unknown) => {
+        console.error('Unable to load home safety tips for map:', loadError);
+        if (active) setTipsError('Local safety tips are unavailable.');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const searchLocation = async () => {
     if (!query.trim()) {
@@ -73,6 +130,11 @@ export default function MapOverviewScreen() {
   ]
     .filter(Boolean)
     .join(', ');
+  const showingHomeArea = Boolean(
+    homeCoordinates &&
+      Math.abs(location.latitude - homeCoordinates.latitude) < 0.15 &&
+      Math.abs(location.longitude - homeCoordinates.longitude) < 0.15,
+  );
 
   return (
     <View style={styles.screen}>
@@ -109,6 +171,20 @@ export default function MapOverviewScreen() {
           {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
         </Text>
         <Text style={styles.mapAttribution}>Map data © OpenStreetMap contributors</Text>
+        {showingHomeArea && homeHazard?.hazard ? (
+          <View style={styles.safetyPanel}>
+            <Text style={styles.safetyTitle}>
+              {homeHazard.hazard.hazard_type} · {homeHazard.hazard.risk_level}
+            </Text>
+            {homeHazard.hazard.safety_tips.slice(0, 3).map((tip) => (
+              <Text key={tip} style={styles.safetyTip}>• {tip}</Text>
+            ))}
+            <Text style={styles.safetyDisclaimer}>Follow official PAGASA/LGU advisories.</Text>
+          </View>
+        ) : null}
+        {showingHomeArea && tipsError ? (
+          <Text style={styles.tipsError}>{tipsError}</Text>
+        ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
     </View>
@@ -130,5 +206,10 @@ const styles = StyleSheet.create({
   address: { color: '#6F6876', fontSize: 12, marginTop: 5 },
   coordinates: { color: '#817A88', fontSize: 11, marginTop: 12 },
   mapAttribution: { color: '#898391', fontSize: 10, marginTop: 12 },
+  safetyPanel: { padding: 12, marginTop: 12, borderRadius: 14, backgroundColor: '#E8E2F6' },
+  safetyTitle: { color: '#351356', fontSize: 13, fontWeight: '800' },
+  safetyTip: { color: '#423A4D', fontSize: 11, lineHeight: 16, marginTop: 5 },
+  safetyDisclaimer: { color: '#685A78', fontSize: 10, marginTop: 7 },
+  tipsError: { color: '#A0184D', fontSize: 11, marginTop: 10 },
   error: { color: '#A0184D', fontSize: 12, marginTop: 10 },
 });

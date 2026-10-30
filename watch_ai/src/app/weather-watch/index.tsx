@@ -9,21 +9,54 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import {
-  CEBU,
-  Forecast,
-  aqiLabel,
-  fetchForecast,
-  uvLabel,
-  weatherDescription,
-  weatherIcon,
-} from '../../lib/weather';
+import { router, useFocusEffect } from 'expo-router';
+import { profileApi } from '../../lib/profile-api';
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
-const formatTime = (iso: string) =>
-  iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '--';
+interface HomeLocation {
+  address: string;
+  latitude: number;
+  longitude: number;
+  city: string | null;
+  province: string | null;
+  barangay: string | null;
+}
+
+interface Forecast {
+  updatedAt: string;
+  stale: boolean;
+  current: {
+    temperatureC: number;
+    feelsLikeC: number;
+    humidityPercent: number;
+    precipitationMm: number;
+    windKph: number;
+    weatherCode: number;
+    uvIndex: number;
+  };
+  hourly: {
+    time: string;
+    temperatureC: number;
+    precipitationProbability: number;
+    weatherCode: number;
+  }[];
+  daily: {
+    date: string;
+    minC: number;
+    maxC: number;
+    precipitationProbability: number;
+    weatherCode: number;
+    sunrise: string;
+    sunset: string;
+  }[];
+  risk: { level: string; reason: string };
+  riskMeasurements: {
+    rainMm: number;
+    windKph: number;
+    heatIndexC: number;
+  };
+}
 
 interface SafetyGuidance {
   explanation: string;
@@ -35,6 +68,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
 export default function WeatherWatchScreen() {
   const [forecast, setForecast] = useState<Forecast | null>(null);
+  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -42,11 +76,24 @@ export default function WeatherWatchScreen() {
   const [guidanceError, setGuidanceError] = useState('');
   const [guidanceLoading, setGuidanceLoading] = useState(false);
 
-  const [tab, setTab] = useState<'hourly' | 'weekly'>('hourly');
-
-  const loadForecast = useCallback(async (signal?: AbortSignal) => {
+  const loadForecast = useCallback(async (location: HomeLocation, signal?: AbortSignal) => {
+    if (!API_URL) {
+      setError('Set EXPO_PUBLIC_API_URL to your backend URL.');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
-      setForecast(await fetchForecast(signal));
+      const query = new URLSearchParams({
+        latitude: String(location.latitude),
+        longitude: String(location.longitude),
+      });
+      const response = await fetch(`${API_URL}/weather?${query}`, { signal });
+      if (!response.ok) {
+        const body = (await response.json()) as { message?: string };
+        throw new Error(body.message ?? `Weather request failed (${response.status}).`);
+      }
+      setForecast((await response.json()) as Forecast);
       setError('');
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -106,18 +153,48 @@ export default function WeatherWatchScreen() {
     }
   };
 
-  useEffect(() => {
+  useFocusEffect(
+    useCallback(() => {
     const controller = new AbortController();
-    const initialLoad = setTimeout(() => {
-      void loadForecast(controller.signal);
-    }, 0);
-    const interval = setInterval(() => void loadForecast(), REFRESH_INTERVAL_MS);
+    void (async () => {
+      try {
+        const { profile } = await profileApi<{
+          profile: { home_location: HomeLocation | null };
+        }>('/profile');
+        if (controller.signal.aborted) return;
+        if (!profile.home_location) {
+          setHomeLocation(null);
+          setError('Add a home location in Edit Profile to load local weather.');
+          setLoading(false);
+          return;
+        }
+        setHomeLocation(profile.home_location);
+        await loadForecast(profile.home_location, controller.signal);
+      } catch (loadError) {
+        if (controller.signal.aborted) return;
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : 'Unable to load your home location.',
+        );
+        setLoading(false);
+      }
+    })();
+
     return () => {
-      clearTimeout(initialLoad);
       controller.abort();
-      clearInterval(interval);
     };
-  }, [loadForecast]);
+    }, [loadForecast]),
+  );
+
+  useEffect(() => {
+    if (!homeLocation) return;
+    const interval = setInterval(
+      () => void loadForecast(homeLocation),
+      REFRESH_INTERVAL_MS,
+    );
+    return () => clearInterval(interval);
+  }, [homeLocation, loadForecast]);
 
   const current = forecast?.current;
   const riskColor =
@@ -136,8 +213,9 @@ export default function WeatherWatchScreen() {
             refreshing={refreshing}
             tintColor="#FFFFFF"
             onRefresh={() => {
+              if (!homeLocation) return;
               setRefreshing(true);
-              void loadForecast();
+              void loadForecast(homeLocation);
             }}
           />
         }
@@ -145,7 +223,12 @@ export default function WeatherWatchScreen() {
         <View style={styles.topRow}>
           <View>
             <Text style={styles.eyebrow}>WEATHER WATCH</Text>
-            <Text style={styles.city}>{CEBU.name}</Text>
+            <Text style={styles.city}>
+              {homeLocation?.city ??
+                homeLocation?.barangay ??
+                homeLocation?.address.split(',')[0] ??
+                'Home location'}
+            </Text>
           </View>
           <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
             <Text style={styles.mapButtonText}>Map overview</Text>
@@ -285,8 +368,9 @@ export default function WeatherWatchScreen() {
               <Pressable
                 style={styles.errorCard}
                 onPress={() => {
+                  if (!homeLocation) return;
                   setRefreshing(true);
-                  void loadForecast();
+                  void loadForecast(homeLocation);
                 }}
               >
                 <Text style={styles.errorText}>{error} Tap to retry.</Text>

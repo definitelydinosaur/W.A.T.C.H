@@ -21,9 +21,18 @@ export interface GeocodeResult {
 export interface MapSuggestion {
   name: string;
   detail: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  city: string;
+  province: string;
+  barangay: string;
 }
 
 interface PhotonFeature {
+  geometry: {
+    coordinates: [number, number];
+  };
   properties: {
     name?: string;
     country?: string;
@@ -33,6 +42,8 @@ interface PhotonFeature {
     district?: string;
     locality?: string;
     suburb?: string;
+    street?: string;
+    housenumber?: string;
     type?: string;
     osm_key?: string;
     osm_value?: string;
@@ -92,7 +103,7 @@ export class MapService {
 
       const result = (await response.json()) as { features?: PhotonFeature[] };
       const suggestions = (result.features ?? [])
-        .map(({ properties }) => {
+        .map(({ geometry, properties }) => {
           const name = properties.name?.trim();
           const isPhilippines =
             properties.country?.toLocaleLowerCase() === 'philippines';
@@ -115,22 +126,53 @@ export class MapService {
             ['school', 'university', 'college'].includes(
               properties.osm_value?.toLocaleLowerCase() ?? '',
             );
+          const city =
+            properties.city ??
+            properties.county ??
+            properties.district ??
+            properties.locality ??
+            '';
+          const province = properties.state ?? '';
+          const barangay = properties.suburb ?? properties.district ?? '';
           const detail =
             [
               properties.locality,
               properties.suburb,
               properties.district,
-              properties.city,
-              properties.county,
-              properties.state,
+              city,
+              province,
             ].find(
               (part) =>
                 part && part.toLocaleLowerCase() !== name?.toLocaleLowerCase(),
             ) ?? '';
+          const address = [
+            properties.housenumber,
+            properties.street,
+            name,
+            properties.suburb,
+            properties.district,
+            city,
+            province,
+            properties.country,
+          ]
+            .filter((part, index, parts) => {
+              if (!part) return false;
+              return parts.findIndex(
+                (candidate) =>
+                  candidate?.toLocaleLowerCase() === part.toLocaleLowerCase(),
+              ) === index;
+            })
+            .join(', ');
 
           return {
             name,
             detail,
+            address,
+            latitude: geometry.coordinates[1],
+            longitude: geometry.coordinates[0],
+            city,
+            province,
+            barangay,
             matches:
               isPhilippines &&
               (kind === 'location' ? isLocation : isInstitution),
@@ -139,11 +181,25 @@ export class MapService {
         .filter(
           (
             suggestion,
-          ): suggestion is { name: string; detail: string; matches: true } =>
-            Boolean(suggestion.name && suggestion.matches),
+          ): suggestion is MapSuggestion & { matches: true } =>
+            Boolean(
+              suggestion.name &&
+                suggestion.matches &&
+                Number.isFinite(suggestion.latitude) &&
+                Number.isFinite(suggestion.longitude),
+            ),
         )
         .slice(0, 7)
-        .map(({ name, detail }) => ({ name, detail }));
+        .map(({ name, detail, address, latitude, longitude, city, province, barangay }) => ({
+          name,
+          detail,
+          address,
+          latitude,
+          longitude,
+          city,
+          province,
+          barangay,
+        }));
 
       this.suggestionCache.set(cacheKey, suggestions);
       return suggestions;
