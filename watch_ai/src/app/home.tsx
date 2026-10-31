@@ -6,7 +6,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  AppState,
   Dimensions,
   Animated,
   Platform,
@@ -21,10 +20,15 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
+import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as Location from 'expo-location';
-import { profileApi } from '../lib/profile-api';
 import { CEBU_LOCATIONS } from '../lib/cebu-locations';
+import { WeatherBackdrop, compassToDeg } from '../components/sky';
+import {
+  getHourTheme,
+  manilaIso,
+  sunTimesForDate,
+} from '../lib/solar-theme';
 import {
   Forecast,
   aqiLabel,
@@ -38,11 +42,9 @@ const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
 const TAB_BAR_HEIGHT = TAB_BAR_WIDTH * (345 / 1170);
 const COLLAPSED_ENCLOSURE_HEIGHT = Math.max(
   Platform.OS === 'ios' ? 122 : 114,
-  Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72)
+  Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72),
 );
-const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.76, 640);
-const APP_LAUNCH_STARTED_AT = Date.now();
-const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.72, 620);
 
 const HOME_MENU_ITEMS = [
   { label: 'Home', image: require('../../assets/images/homepage/home.png') },
@@ -51,12 +53,11 @@ const HOME_MENU_ITEMS = [
   { label: 'Profile', image: require('../../assets/images/homepage/profile.png') },
 ];
 
-type TimeOfDay = 'morning' | 'afternoon' | 'evening';
-
 interface CityData {
   name: string;
   country: string;
   temp: number;
+  feelsLike: number;
   condition: string;
   high: number;
   low: number;
@@ -68,7 +69,6 @@ interface CityData {
   airQualityLabel: string;
   sunrise: string;
   sunset: string;
-  // Live-only rainfall details (Open-Meteo)
   rainNowMm?: number;
   rainTodayMm?: number;
   rainChance?: number;
@@ -76,232 +76,49 @@ interface CityData {
   longitude: number;
 }
 
-interface HomeLocation {
-  id: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  city: string | null;
-  province: string | null;
-  barangay: string | null;
-}
-
-interface HomeForecast {
-  updatedAt?: string;
-  stale?: boolean;
-  current: {
-    temperatureC: number;
-    feelsLikeC: number;
-    humidityPercent: number;
-    windKph: number;
-    uvIndex: number;
-    weatherCode: number;
-  };
-  hourly: {
-    time: string;
-    temperatureC: number;
-    precipitationProbability: number;
-    weatherCode: number;
-  }[];
-  daily: {
-    date: string;
-    minC: number;
-    maxC: number;
-    precipitationProbability: number;
-    weatherCode: number;
-    sunrise: string;
-    sunset: string;
-  }[];
-}
-
-interface HomeHazardAlert {
-  id: string;
-  title: string;
-  hazard?: {
-    hazard_type: string;
-    risk_level: string;
-    safety_tips: string[];
-    created_at: string;
-  } | null;
-}
-
-const CITIES: CityData[] = [
-  {
-    name: 'Montreal',
-    country: 'Canada',
-    temp: 19,
-    condition: 'Mostly Clear',
-    high: 24,
-    low: 18,
-    uv: 3,
-    wind: 14,
-    windDir: 'ESE',
-    humidity: 74,
-    airQuality: 28,
-    airQualityLabel: 'Good',
-    sunrise: '5:28 AM',
-    sunset: '7:25 PM',
-  },
-  {
-    name: 'Tokyo',
-    country: 'Japan',
-    temp: 22,
-    condition: 'Gentle Rain',
-    high: 25,
-    low: 19,
-    uv: 2,
-    wind: 11,
-    windDir: 'NNE',
-    humidity: 82,
-    airQuality: 19,
-    airQualityLabel: 'Excellent',
-    sunrise: '5:35 AM',
-    sunset: '5:42 PM',
-  },
-  {
-    name: 'New York',
-    country: 'United States',
-    temp: 21,
-    condition: 'Partly Sunny',
-    high: 26,
-    low: 17,
-    uv: 5,
-    wind: 18,
-    windDir: 'WSW',
-    humidity: 62,
-    airQuality: 45,
-    airQualityLabel: 'Moderate',
-    sunrise: '6:12 AM',
-    sunset: '6:54 PM',
-  },
-  {
-    name: 'London',
-    country: 'United Kingdom',
-    temp: 16,
-    condition: 'Cloudy Mist',
-    high: 19,
-    low: 13,
-    uv: 2,
-    wind: 22,
-    windDir: 'W',
-    humidity: 88,
-    airQuality: 24,
-    airQualityLabel: 'Good',
-    sunrise: '6:45 AM',
-    sunset: '6:38 PM',
-  },
-  {
-    name: 'Paris',
-    country: 'France',
-    temp: 18,
-    condition: 'Scattered Clouds',
-    high: 22,
-    low: 14,
-    uv: 4,
-    wind: 13,
-    windDir: 'SSW',
-    humidity: 70,
-    airQuality: 32,
-    airQualityLabel: 'Good',
-    sunrise: '7:15 AM',
-    sunset: '7:20 PM',
-  },
-];
-
-interface TimeTheme {
-  label: string;
-  badge: string;
-  defaultCondition: string;
-  bgGradient: [string, string, string];
-  overlayGradient: [string, string, string];
-  liquidCardTint: [string, string];
-  glowColor: string;
-  image: any;
-  cloudCover: string;
-}
-
-const TIME_THEMES: Record<TimeOfDay, TimeTheme> = {
-  morning: {
-    label: 'Morning',
-    badge: '🌅 MORNING DAWN',
-    defaultCondition: 'Golden Sunrise',
-    bgGradient: ['#2B3A60', '#A85A65', '#E28E72'],
-    overlayGradient: ['rgba(30, 20, 45, 0.15)', 'rgba(40, 28, 50, 0.40)', 'rgba(25, 20, 38, 0.90)'],
-    liquidCardTint: ['rgba(120, 75, 105, 0.38)', 'rgba(45, 32, 60, 0.65)'],
-    glowColor: '#FFB86C',
-    image: require('../../assets/images/clouds-morning.jpg'),
-    cloudCover: '42% Cloud Cover',
-  },
-  afternoon: {
-    label: 'Afternoon',
-    badge: '☀️ AFTERNOON SKY',
-    defaultCondition: 'Sunlit Clouds',
-    bgGradient: ['#114E96', '#2274CA', '#4E9DE6'],
-    overlayGradient: ['rgba(10, 30, 65, 0.15)', 'rgba(15, 45, 90, 0.40)', 'rgba(10, 28, 58, 0.90)'],
-    liquidCardTint: ['rgba(35, 90, 160, 0.38)', 'rgba(15, 45, 95, 0.65)'],
-    glowColor: '#64B5F6',
-    image: require('../../assets/images/clouds-afternoon.jpg'),
-    cloudCover: '58% Cloud Cover',
-  },
-  evening: {
-    label: 'Evening',
-    badge: '🌙 EVENING TWILIGHT',
-    defaultCondition: 'Twilight Glow',
-    bgGradient: ['#2E335A', '#1C1B33', '#111026'],
-    overlayGradient: ['rgba(15, 10, 30, 0.20)', 'rgba(25, 18, 45, 0.50)', 'rgba(17, 16, 38, 0.94)'],
-    liquidCardTint: ['rgba(72, 49, 157, 0.38)', 'rgba(32, 28, 64, 0.65)'],
-    glowColor: '#C427FB',
-    image: require('../../assets/images/clouds-evening.jpg'),
-    cloudCover: '30% Cloud Cover',
-  },
-};
-
-function getSystemTimeOfDay(): TimeOfDay {
-  const currentHour = new Date().getHours();
-  if (currentHour >= 5 && currentHour < 12) return 'morning';
-  if (currentHour >= 12 && currentHour < 18) return 'afternoon';
-  return 'evening';
-}
-
-function weatherDescriptionForCode(code: number) {
-  if (code === 0) return 'Clear sky';
-  if (code <= 3) return 'Partly cloudy';
-  if (code <= 48) return 'Foggy';
-  if (code <= 67) return 'Rain';
-  if (code <= 77) return 'Snow';
-  if (code <= 82) return 'Rain showers';
-  if (code <= 86) return 'Snow showers';
-  return 'Thunderstorm';
-}
-
-function formatClock(value?: string) {
-  if (!value) return '--';
-  return new Date(value).toLocaleTimeString([], {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
+const CITIES: CityData[] = CEBU_LOCATIONS.map((l) => ({
+  name: l.name,
+  country: l.area,
+  latitude: l.latitude,
+  longitude: l.longitude,
+  temp: 28,
+  feelsLike: 30,
+  condition: 'Loading weather…',
+  high: 31,
+  low: 25,
+  uv: 5,
+  wind: 14,
+  windDir: 'NE',
+  humidity: 72,
+  airQuality: 28,
+  airQualityLabel: 'Good',
+  sunrise: '5:45 AM',
+  sunset: '5:35 PM',
+}));
 
 interface HourlyItem {
   id: string;
   time: string;
+  iso: string;
   temp: number;
   rainChance?: string;
+  precipitationMm?: number;
+  weatherCode: number;
   condition: 'rain' | 'cloud-moon' | 'cloud' | 'sun';
   desc: string;
 }
 
 const BASE_HOURLY_DATA: HourlyItem[] = [
-  { id: '1', time: '12 AM', temp: 18, rainChance: '30%', condition: 'rain', desc: 'Light Rain Showers' },
-  { id: '2', time: 'Now', temp: 19, condition: 'cloud-moon', desc: 'Mostly Clear & Calm' },
-  { id: '3', time: '1 AM', temp: 19, rainChance: '20%', condition: 'rain', desc: 'Passing Showers' },
-  { id: '4', time: '2 AM', temp: 18, condition: 'cloud-moon', desc: 'Clear Night Sky' },
-  { id: '5', time: '3 AM', temp: 18, condition: 'cloud', desc: 'Cool Evening Breeze' },
-  { id: '6', time: '4 AM', temp: 17, condition: 'cloud', desc: 'Scattered Clouds' },
-  { id: '7', time: '5 AM', temp: 17, condition: 'cloud-moon', desc: 'First Dawn Light' },
-  { id: '8', time: '6 AM', temp: 18, condition: 'sun', desc: 'Golden Sunrise' },
-  { id: '9', time: '7 AM', temp: 20, condition: 'sun', desc: 'Clear Sunlit Morning' },
-  { id: '10', time: '8 AM', temp: 22, condition: 'sun', desc: 'Bright Morning Sun' },
+  { id: '2', time: 'Now', iso: '2026-10-31T13:00', temp: 29, weatherCode: 1, condition: 'sun', desc: 'Mostly Clear' },
+  { id: 'h1', time: '2 PM', iso: '2026-10-31T14:00', temp: 30, weatherCode: 1, condition: 'sun', desc: 'Sunlit Sky' },
+  { id: 'h2', time: '3 PM', iso: '2026-10-31T15:00', temp: 29, rainChance: '25%', precipitationMm: 0.3, weatherCode: 2, condition: 'cloud', desc: 'Partly Cloudy' },
+  { id: 'h3', time: '4 PM', iso: '2026-10-31T16:00', temp: 28, rainChance: '30%', precipitationMm: 0.6, weatherCode: 2, condition: 'cloud', desc: 'Scattered Clouds' },
+  { id: 'h4', time: '5 PM', iso: '2026-10-31T17:15', temp: 27, weatherCode: 1, condition: 'sun', desc: 'Golden Hour' },
+  { id: 'h5', time: '6 PM', iso: '2026-10-31T18:00', temp: 26, weatherCode: 2, condition: 'cloud-moon', desc: 'Dusk Twilight' },
+  { id: 'h6', time: '7 PM', iso: '2026-10-31T19:00', temp: 26, rainChance: '40%', precipitationMm: 1.2, weatherCode: 61, condition: 'rain', desc: 'Evening Showers' },
+  { id: 'h7', time: '8 PM', iso: '2026-10-31T20:00', temp: 25, weatherCode: 1, condition: 'cloud-moon', desc: 'Starlit Night' },
+  { id: 'h8', time: '9 PM', iso: '2026-10-31T21:00', temp: 25, weatherCode: 0, condition: 'cloud-moon', desc: 'Clear Night Sky' },
+  { id: 'h9', time: '6 AM', iso: '2026-11-01T06:00', temp: 25, weatherCode: 0, condition: 'sun', desc: 'Morning Sunrise' },
 ];
 
 interface DailyItem {
@@ -314,21 +131,21 @@ interface DailyItem {
 }
 
 const DAILY_DATA: DailyItem[] = [
-  { id: 'd1', day: 'Today', condition: 'cloud-moon', minTemp: 18, maxTemp: 24 },
-  { id: 'd2', day: 'Mon', condition: 'rain', rainChance: '70%', minTemp: 17, maxTemp: 22 },
-  { id: 'd3', day: 'Tue', condition: 'cloud', minTemp: 16, maxTemp: 21 },
-  { id: 'd4', day: 'Wed', condition: 'sun', minTemp: 18, maxTemp: 25 },
-  { id: 'd5', day: 'Thu', condition: 'sun', minTemp: 19, maxTemp: 26 },
-  { id: 'd6', day: 'Fri', condition: 'rain', rainChance: '45%', minTemp: 18, maxTemp: 23 },
-  { id: 'd7', day: 'Sat', condition: 'cloud-moon', minTemp: 17, maxTemp: 22 },
+  { id: 'd0', day: 'Today', condition: 'sun', minTemp: 25, maxTemp: 31 },
+  { id: 'd1', day: 'Sun', condition: 'rain', rainChance: '65%', minTemp: 24, maxTemp: 29 },
+  { id: 'd2', day: 'Mon', condition: 'cloud', rainChance: '30%', minTemp: 25, maxTemp: 30 },
+  { id: 'd3', day: 'Tue', condition: 'sun', minTemp: 25, maxTemp: 31 },
+  { id: 'd4', day: 'Wed', condition: 'sun', minTemp: 26, maxTemp: 32 },
+  { id: 'd5', day: 'Thu', condition: 'rain', rainChance: '50%', minTemp: 24, maxTemp: 29 },
+  { id: 'd6', day: 'Fri', condition: 'cloud', minTemp: 25, maxTemp: 30 },
 ];
 
-// Reusable iOS Liquid Glass Card
+// Reusable High-Contrast iOS Glassmorphic Card
 function LiquidGlassCard({
   children,
   style,
   tintColors,
-  intensity = 60,
+  intensity = 65,
   shimmerAnim,
 }: {
   children: React.ReactNode;
@@ -339,32 +156,24 @@ function LiquidGlassCard({
 }) {
   return (
     <View style={[styles.liquidGlassContainer, style]}>
-      {/* 1. Underlying Frosted Glass Blur */}
       <BlurView intensity={intensity} tint="dark" style={StyleSheet.absoluteFill} />
-
-      {/* 2. Liquid Glass Translucent Fluid Tint */}
       <LinearGradient
         colors={
           tintColors ?? [
-            'rgba(255, 255, 255, 0.16)',
-            'rgba(255, 255, 255, 0.04)',
-            'rgba(18, 22, 45, 0.55)',
+            'rgba(18, 26, 52, 0.56)',
+            'rgba(10, 15, 34, 0.72)',
           ]
         }
         start={{ x: 0.1, y: 0.0 }}
         end={{ x: 0.9, y: 1.0 }}
         style={StyleSheet.absoluteFill}
       />
-
-      {/* 3. Top Specular Liquid Light Refraction Rim */}
       <View style={styles.liquidSpecularTop} />
-
-      {/* 4. Left Rim Ambient Highlight */}
       <View style={styles.liquidSpecularLeft} />
 
-      {/* 5. Liquid Prismatic Shimmer Sweep */}
       {shimmerAnim && (
         <Animated.View
+          pointerEvents="none"
           style={[
             styles.shimmerBeam,
             {
@@ -375,9 +184,9 @@ function LiquidGlassCard({
           <LinearGradient
             colors={[
               'rgba(255, 255, 255, 0)',
-              'rgba(255, 255, 255, 0.09)',
-              'rgba(255, 255, 255, 0.22)',
-              'rgba(255, 255, 255, 0.09)',
+              'rgba(255, 255, 255, 0.06)',
+              'rgba(255, 255, 255, 0.14)',
+              'rgba(255, 255, 255, 0.06)',
               'rgba(255, 255, 255, 0)',
             ]}
             start={{ x: 0, y: 0 }}
@@ -387,13 +196,12 @@ function LiquidGlassCard({
         </Animated.View>
       )}
 
-      {/* 6. Card Inner Content */}
       {children}
     </View>
   );
 }
 
-// Stylized Animated Vector Weather Icon Component
+// Stylized Animated Vector Weather Icon
 function WeatherIcon({
   condition,
   size = 32,
@@ -442,7 +250,7 @@ function WeatherIcon({
   if (condition === 'cloud') {
     return (
       <View style={[styles.iconBox, { width: size, height: size }]}>
-        <View style={[styles.cloudShape, { backgroundColor: '#B8C0D8' }]} />
+        <View style={[styles.cloudShape, { backgroundColor: '#CBD5E8' }]} />
         <View style={[styles.cloudPuff, { left: 4, top: 4 }]} />
       </View>
     );
@@ -452,6 +260,103 @@ function WeatherIcon({
     <View style={[styles.iconBox, { width: size, height: size }]}>
       <View style={styles.crescentMoon} />
       <View style={[styles.cloudShape, { bottom: 2, right: 2, transform: [{ scale: 0.85 }] }]} />
+    </View>
+  );
+}
+
+// Apple Weather-style SVG Wind Radar Vector Dial
+function WindRadarDial({
+  windDir,
+  windKph,
+  swayAnim,
+  accentColor,
+}: {
+  windDir: string;
+  windKph: number;
+  swayAnim: Animated.Value;
+  accentColor: string;
+}) {
+  const fromDeg = compassToDeg(windDir) ?? 45;
+  // Wind vector arrow points in the direction the wind blows toward
+  const towardDeg = (fromDeg + 180) % 360;
+  const rotate = swayAnim.interpolate({
+    inputRange: [-1, 1],
+    outputRange: [`${towardDeg - 5}deg`, `${towardDeg + 5}deg`],
+  });
+
+  const ticks = Array.from({ length: 36 }, (_, i) => i * 10);
+
+  return (
+    <View style={styles.windDialBox}>
+      <Svg width={108} height={108} viewBox="0 0 108 108">
+        <Circle
+          cx={54}
+          cy={54}
+          r={48}
+          stroke="rgba(255,255,255,0.16)"
+          strokeWidth={1.2}
+          fill="rgba(8, 12, 28, 0.38)"
+        />
+        {ticks.map((deg) => {
+          const rad = ((deg - 90) * Math.PI) / 180;
+          const cardinal = deg % 90 === 0;
+          const rOuter = 47;
+          const rInner = cardinal ? 40 : 43;
+          return (
+            <Line
+              key={deg}
+              x1={54 + Math.cos(rad) * rInner}
+              y1={54 + Math.sin(rad) * rInner}
+              x2={54 + Math.cos(rad) * rOuter}
+              y2={54 + Math.sin(rad) * rOuter}
+              stroke={cardinal ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.28)'}
+              strokeWidth={cardinal ? 1.6 : 1}
+            />
+          );
+        })}
+        <SvgText x={54} y={18} fill="#FF6B6B" fontSize="9" fontWeight="700" textAnchor="middle">
+          N
+        </SvgText>
+        <SvgText x={92} y={57} fill="rgba(255,255,255,0.78)" fontSize="9" fontWeight="700" textAnchor="middle">
+          E
+        </SvgText>
+        <SvgText x={54} y={97} fill="rgba(255,255,255,0.78)" fontSize="9" fontWeight="700" textAnchor="middle">
+          S
+        </SvgText>
+        <SvgText x={16} y={57} fill="rgba(255,255,255,0.78)" fontSize="9" fontWeight="700" textAnchor="middle">
+          W
+        </SvgText>
+      </Svg>
+
+      {/* Animated Wind Vector Arrow */}
+      <Animated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { transform: [{ rotate }] }]}
+      >
+        <Svg width={108} height={108} viewBox="0 0 108 108">
+          <G>
+            <Line
+              x1={54}
+              y1={84}
+              x2={54}
+              y2={22}
+              stroke={accentColor}
+              strokeWidth={2.2}
+              strokeLinecap="round"
+            />
+            {/* Arrowhead pointing in wind travel direction */}
+            <Polygon points="54,14 48,26 60,26" fill={accentColor} />
+            {/* Tail ring */}
+            <Circle cx={54} cy={85} r={3.5} stroke={accentColor} strokeWidth={1.8} fill="#0D132A" />
+          </G>
+        </Svg>
+      </Animated.View>
+
+      {/* Center Velocity Readout */}
+      <View style={styles.windDialCenterBadge}>
+        <Text style={styles.windDialSpeed}>{windKph}</Text>
+        <Text style={styles.windDialUnit}>km/h</Text>
+      </View>
     </View>
   );
 }
@@ -480,7 +385,6 @@ export default function HomeScreen() {
     welcomeName?: string | string[];
   }>();
   const welcomeName = typeof routeWelcomeName === 'string' ? routeWelcomeName.trim() : '';
-  const [activeTab, setActiveTab] = useState<'hourly' | 'weekly'>('hourly');
   const [baseCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [cityQuery, setCityQuery] = useState('');
   const filteredCities = useMemo(() => {
@@ -489,7 +393,6 @@ export default function HomeScreen() {
     return CITIES.filter((c) => `${c.name} ${c.country}`.toLowerCase().includes(q));
   }, [cityQuery]);
   const [live, setLive] = useState<{ name: string; data: Forecast } | null>(null);
-  // Ignore a stale forecast left over from a previously selected location.
   const liveForecast = live?.name === baseCity.name ? live.data : null;
 
   // Live Open-Meteo data for the selected location, refreshed every 10 minutes
@@ -515,6 +418,7 @@ export default function HomeScreen() {
     return {
       ...baseCity,
       temp: Math.round(current.temperatureC),
+      feelsLike: Math.round(current.feelsLikeC),
       condition: weatherDescription(current.weatherCode),
       high: Math.round(daily[0]?.maxC ?? current.temperatureC),
       low: Math.round(daily[0]?.minC ?? current.temperatureC),
@@ -537,8 +441,11 @@ export default function HomeScreen() {
     return liveForecast.hourly.map((h, i) => ({
       id: i === 0 ? '2' : `h${i}`,
       time: i === 0 ? 'Now' : hourLabel(h.time),
+      iso: h.time,
       temp: Math.round(h.temperatureC),
-      rainChance: h.precipitationProbability >= 20 ? `${h.precipitationProbability}%` : undefined,
+      rainChance: h.precipitationProbability >= 15 ? `${h.precipitationProbability}%` : undefined,
+      precipitationMm: h.precipitationMm,
+      weatherCode: h.weatherCode,
       condition: toCondition(h.weatherCode, parseInt(h.time.slice(11, 13), 10)),
       desc: weatherDescription(h.weatherCode),
     }));
@@ -561,93 +468,56 @@ export default function HomeScreen() {
     }));
   }, [isLive, liveForecast]);
 
-  // Demo cities are offset from a 19° baseline; live data is used as-is.
-  const tempOffset = isLive ? 0 : selectedCity.temp - 19;
+  const weekTempBounds = useMemo(() => {
+    const mins = dailyData.map((d) => d.minTemp);
+    const maxs = dailyData.map((d) => d.maxTemp);
+    const min = Math.min(...mins);
+    const max = Math.max(...maxs);
+    return { min, span: Math.max(1, max - min) };
+  }, [dailyData]);
+
+  const tempOffset = isLive ? 0 : selectedCity.temp - 29;
   const [selectedHourId, setSelectedHourId] = useState('2');
-  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
-  const [homeWeather, setHomeWeather] = useState<HomeForecast | null>(null);
-  const [latestSafetyAlert, setLatestSafetyAlert] = useState<HomeHazardAlert | null>(null);
-  const [safetyTipsUnavailable, setSafetyTipsUnavailable] = useState(false);
-  const [locationPromptPending, setLocationPromptPending] = useState(false);
-  const [homeError, setHomeError] = useState('');
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
 
-  // Dashboard Collapse / Expand State
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
-
-  // Time of day state: auto or manual override
-  const [timeMode, setTimeMode] = useState<'auto' | TimeOfDay>('auto');
-  const [currentTimeOfDay, setCurrentTimeOfDay] = useState<TimeOfDay>(getSystemTimeOfDay());
   const [liveClock, setLiveClock] = useState(new Date());
 
-  // Effective time of day
-  const effectiveTimeOfDay: TimeOfDay = timeMode === 'auto' ? currentTimeOfDay : timeMode;
-  const currentTheme = TIME_THEMES[effectiveTimeOfDay];
-
-  // Dynamic Selected Weather derived from selected hour or city base
-  const hourlyForecast =
-    homeWeather?.hourly.slice(0, 10).map((hour, index): HourlyItem => ({
-      id: String(index + 1),
-      time:
-        index === 1
-          ? 'Now'
-          : new Date(hour.time).toLocaleTimeString([], { hour: 'numeric' }),
-      temp: Math.round(hour.temperatureC),
-      rainChance: `${hour.precipitationProbability}%`,
-      condition:
-        hour.weatherCode === 0
-          ? 'sun'
-          : hour.weatherCode <= 3
-            ? 'cloud'
-            : hour.weatherCode <= 48
-              ? 'cloud-moon'
-              : 'rain',
-      desc: weatherDescriptionForCode(hour.weatherCode),
-    })) ?? BASE_HOURLY_DATA;
-  const dailyForecast =
-    homeWeather?.daily.map((day, index): DailyItem => ({
-      id: `home-${day.date}`,
-      day:
-        index === 0
-          ? 'Today'
-          : new Date(`${day.date}T12:00:00`).toLocaleDateString([], {
-              weekday: 'short',
-            }),
-      condition:
-        day.weatherCode === 0
-          ? 'sun'
-          : day.weatherCode <= 3
-            ? 'cloud'
-            : day.weatherCode <= 48
-              ? 'cloud-moon'
-              : 'rain',
-      minTemp: Math.round(day.minC),
-      maxTemp: Math.round(day.maxC),
-      rainChance: `${day.precipitationProbability}%`,
-    })) ?? DAILY_DATA;
   const activeHour =
-    hourlyForecast.find((hour) => hour.id === selectedHourId) ??
-    hourlyForecast[1] ??
-    BASE_HOURLY_DATA[1];
+    hourlyData.find((h) => h.id === selectedHourId) ?? hourlyData[0];
+
+  const activeIso = useMemo(() => {
+    if (selectedHourId !== '2' && activeHour?.iso) return activeHour.iso;
+    return manilaIso(liveClock);
+  }, [selectedHourId, activeHour, liveClock]);
+
+  const activeSun = useMemo(
+    () => sunTimesForDate(liveForecast?.daily, activeIso),
+    [liveForecast?.daily, activeIso],
+  );
+
+  // Smoothly interpolated Time-of-Day theme across Dawn, Midday, Golden Hour, Dusk, and Deep Night
+  const solarTheme = useMemo(() => getHourTheme(activeIso, activeSun), [activeIso, activeSun]);
+
+  const effectiveWeatherCode =
+    selectedHourId === '2'
+      ? (liveForecast?.current.weatherCode ?? activeHour.weatherCode)
+      : activeHour.weatherCode;
+
+  const effectivePrecipMm =
+    selectedHourId === '2'
+      ? (selectedCity.rainNowMm ?? 0)
+      : (activeHour.precipitationMm ?? 0);
+
   const displayedTemp =
-    homeWeather
-      ? activeHour.temp
-      : selectedHourId === '2'
-        ? selectedCity.temp
-        : activeHour.temp + (selectedCity.temp - 19);
+    selectedHourId === '2' ? selectedCity.temp : activeHour.temp + tempOffset;
   const displayedCondition =
-    homeWeather
-      ? activeHour.desc
-      : selectedHourId === '2'
-        ? selectedCity.condition
-        : activeHour.desc;
+    selectedHourId === '2' ? selectedCity.condition : activeHour.desc;
 
   // ANIMATIONS
   const fadeAnim = useMemo(() => new Animated.Value(0), []);
-  const cloudDriftAnim = useMemo(() => new Animated.Value(0), []);
-  const imageFadeAnim = useMemo(() => new Animated.Value(1), []);
   const shimmerAnim = useMemo(() => new Animated.Value(-SCREEN_WIDTH), []);
   const pulseAnim = useMemo(() => new Animated.Value(0), []);
   const windSwayAnim = useMemo(() => new Animated.Value(0), []);
@@ -658,129 +528,11 @@ export default function HomeScreen() {
   const menuAnim = useMemo(() => new Animated.Value(0), []);
   const welcomeAnim = useMemo(() => new Animated.Value(0), []);
 
-  const loadHomeProfile = useCallback(async () => {
-    try {
-      const { profile } = await profileApi<{
-        profile: {
-          home_location: HomeLocation | null;
-          location_prompt_dismissed_at: string | null;
-        };
-      }>('/profile');
-      setHomeLocation(profile.home_location);
-      setHomeWeather(null);
-      setHomeError('');
-      try {
-        const { alerts } = await profileApi<{
-          alerts: HomeHazardAlert[];
-          last_updated: string | null;
-        }>('/alerts');
-        setLatestSafetyAlert(alerts.find((alert) => alert.hazard?.safety_tips?.length) ?? null);
-        setSafetyTipsUnavailable(false);
-      } catch (alertError) {
-        console.warn('Unable to load local safety tips:', alertError);
-        setSafetyTipsUnavailable(true);
-      }
-
-      const permission = await Location.getForegroundPermissionsAsync();
-      setLocationPromptPending(!permission.granted);
-      if (permission.granted && profile.location_prompt_dismissed_at) {
-        void profileApi('/profile/location-prompt', {
-          method: 'PATCH',
-          body: JSON.stringify({ dismissedAt: null }),
-        }).catch((error: unknown) => {
-          console.warn('Unable to clear the location reminder:', error);
-        });
-      } else if (
-        !permission.granted &&
-        profile.location_prompt_dismissed_at &&
-        Date.parse(profile.location_prompt_dismissed_at) < APP_LAUNCH_STARTED_AT
-      ) {
-        router.push({
-          pathname: '/onboarding',
-          params: { startRegistration: 'true', promptOnly: 'true' },
-        });
-      }
-
-      if (!profile.home_location) {
-        setHomeWeather(null);
-        return;
-      }
-
-      const name =
-        profile.home_location.city ||
-        profile.home_location.barangay ||
-        profile.home_location.address.split(',')[0] ||
-        'Home';
-      setSelectedCity((current) => ({
-        ...current,
-        name,
-        country: 'Philippines',
-      }));
-
-      if (!API_URL) throw new Error('Set EXPO_PUBLIC_API_URL to your backend URL.');
-      const query = new URLSearchParams({
-        latitude: String(profile.home_location.latitude),
-        longitude: String(profile.home_location.longitude),
-      });
-      const response = await fetch(`${API_URL}/weather?${query}`);
-      const result = (await response.json()) as HomeForecast & {
-        message?: string | string[];
-      };
-      if (!response.ok) {
-        throw new Error(
-          Array.isArray(result.message)
-            ? result.message.join(', ')
-            : result.message ?? 'Home weather is unavailable.',
-        );
-      }
-      setHomeWeather(result);
-      setHomeError('');
-      setSelectedCity((current) => ({
-        ...current,
-        name,
-        country: 'Philippines',
-        temp: Math.round(result.current.temperatureC),
-        condition: weatherDescriptionForCode(result.current.weatherCode),
-        high: Math.round(result.daily[0]?.maxC ?? result.current.temperatureC),
-        low: Math.round(result.daily[0]?.minC ?? result.current.temperatureC),
-        uv: result.current.uvIndex,
-        wind: result.current.windKph,
-        humidity: result.current.humidityPercent,
-        sunrise: formatClock(result.daily[0]?.sunrise),
-        sunset: formatClock(result.daily[0]?.sunset),
-      }));
-    } catch (error) {
-      setHomeError(
-        error instanceof Error ? error.message : 'Unable to load your home weather.',
-      );
-      console.warn('Home profile refresh failed:', error);
-    }
-  }, [router]);
-
   useFocusEffect(
     useCallback(() => {
       void loadProfilePicture();
-      void loadHomeProfile();
-    }, [loadHomeProfile, loadProfilePicture]),
+    }, [loadProfilePicture]),
   );
-
-  useEffect(() => {
-    const checkLocationPermission = async () => {
-      try {
-        const permission = await Location.getForegroundPermissionsAsync();
-        setLocationPromptPending(!permission.granted);
-      } catch (error) {
-        console.error('Unable to check location permission:', error);
-      }
-    };
-
-    void checkLocationPermission();
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void checkLocationPermission();
-    });
-    return () => subscription.remove();
-  }, []);
-
 
   useEffect(() => {
     if (!welcomeName) return;
@@ -798,9 +550,7 @@ export default function HomeScreen() {
         useNativeDriver: true,
       }),
     ]);
-
     animation.start();
-
     return () => animation.stop();
   }, [welcomeAnim, welcomeName]);
 
@@ -813,64 +563,29 @@ export default function HomeScreen() {
     }).start();
   }, [menuAnim, menuExpanded]);
 
-  // Live ticking clock (updates every second for real-time responsiveness)
   useEffect(() => {
     const clockInterval = setInterval(() => {
       setLiveClock(new Date());
-      const detected = getSystemTimeOfDay();
-      setCurrentTimeOfDay(detected);
     }, 1000);
     return () => clearInterval(clockInterval);
   }, []);
 
-
   useEffect(() => {
-    imageFadeAnim.setValue(0.2);
-    Animated.timing(imageFadeAnim, {
-      toValue: 1,
-      duration: 800,
-      useNativeDriver: true,
-    }).start();
-  }, [effectiveTimeOfDay, imageFadeAnim]);
-
-
-  useEffect(() => {
-    // 1. Entrance Fade
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 800,
       useNativeDriver: true,
     }).start();
 
-    // 2. Cloud horizontal ambient drift
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(cloudDriftAnim, {
-          toValue: 20,
-          duration: 9000,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(cloudDriftAnim, {
-          toValue: -20,
-          duration: 9000,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ]),
-    ).start();
-
-    // 3. Liquid Glass Prismatic Shimmer Sweep
     Animated.loop(
       Animated.timing(shimmerAnim, {
         toValue: SCREEN_WIDTH * 1.5,
-        duration: 4800,
+        duration: 5400,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     ).start();
 
-    // 4. Pulse / Breathing effect
     Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
@@ -888,25 +603,23 @@ export default function HomeScreen() {
       ]),
     ).start();
 
-    // 5. Compass / Wind vane sway animation
     Animated.loop(
       Animated.sequence([
         Animated.timing(windSwayAnim, {
           toValue: 1,
-          duration: 2200,
+          duration: 2400,
           easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
         Animated.timing(windSwayAnim, {
           toValue: -1,
-          duration: 2200,
+          duration: 2400,
           easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
       ]),
     ).start();
 
-    // 6. Live Radar Sonar Sweep
     Animated.loop(
       Animated.timing(radarSweepAnim, {
         toValue: 1,
@@ -916,11 +629,10 @@ export default function HomeScreen() {
       }),
     ).start();
 
-    // 7. Sun / Moon floating motion
     Animated.loop(
       Animated.sequence([
         Animated.timing(sunFloatAnim, {
-          toValue: -6,
+          toValue: -5,
           duration: 3000,
           useNativeDriver: true,
         }),
@@ -931,17 +643,8 @@ export default function HomeScreen() {
         }),
       ]),
     ).start();
-  }, [
-    fadeAnim,
-    cloudDriftAnim,
-    shimmerAnim,
-    pulseAnim,
-    windSwayAnim,
-    radarSweepAnim,
-    sunFloatAnim,
-  ]);
+  }, [fadeAnim, shimmerAnim, pulseAnim, windSwayAnim, radarSweepAnim, sunFloatAnim]);
 
-  // Expand / Collapse with smooth Spring Animation
   const expandDashboard = useCallback(() => {
     Animated.spring(expandAnim, {
       toValue: 1,
@@ -970,7 +673,6 @@ export default function HomeScreen() {
     }
   }, [collapseDashboard, expandDashboard, isDashboardExpanded]);
 
-
   const sheetPanResponder = useMemo(
     () =>
       PanResponder.create({
@@ -980,41 +682,27 @@ export default function HomeScreen() {
         onMoveShouldSetPanResponder: (_, gestureState) => Math.abs(gestureState.dy) > 6,
         onPanResponderTerminationRequest: () => false,
         onPanResponderMove: (_, gestureState) => {
-          // Rubber-band drag feedback
           dragRubberBandAnim.setValue(gestureState.dy * 0.35);
         },
         onPanResponderRelease: (_, gestureState) => {
-          // Reset rubber-band
           Animated.spring(dragRubberBandAnim, {
             toValue: 0,
             friction: 6,
             useNativeDriver: false,
           }).start();
 
-          // 1. SWIPE DOWN -> Collapse
           if (gestureState.dy > 20) {
             collapseDashboard();
-          }
-          // 2. SWIPE UP -> Expand
-          else if (gestureState.dy < -20) {
+          } else if (gestureState.dy < -20) {
             expandDashboard();
-          }
-          // 3. TAP (Small movement) -> Toggle
-          else if (Math.abs(gestureState.dy) < 15 && Math.abs(gestureState.dx) < 15) {
+          } else if (Math.abs(gestureState.dy) < 15 && Math.abs(gestureState.dx) < 15) {
             toggleDashboard();
           }
         },
       }),
-    [dragRubberBandAnim, collapseDashboard, expandDashboard, toggleDashboard]
+    [dragRubberBandAnim, collapseDashboard, expandDashboard, toggleDashboard],
   );
 
-  // Interpolations for wind compass rotation
-  const windRotate = windSwayAnim.interpolate({
-    inputRange: [-1, 1],
-    outputRange: ['-12deg', '12deg'],
-  });
-
-  // Animated height for bottom dashboard enclosure
   const sheetHeight = expandAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [COLLAPSED_ENCLOSURE_HEIGHT, EXPANDED_ENCLOSURE_HEIGHT],
@@ -1024,154 +712,27 @@ export default function HomeScreen() {
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* 1. Underlying Sky Gradient */}
-      <LinearGradient
-        colors={currentTheme.bgGradient}
-        start={{ x: 0.1, y: 0.0 }}
-        end={{ x: 0.9, y: 1.0 }}
-        style={StyleSheet.absoluteFill}
+      {/* 1. Pure Procedural Time-of-Day Gradient Engine & Weather Condition Layers (No Pictures) */}
+      <WeatherBackdrop
+        iso={activeIso}
+        sun={activeSun}
+        theme={solarTheme}
+        weatherCode={effectiveWeatherCode}
+        windKph={selectedCity.wind}
+        windDirection={selectedCity.windDir}
+        precipitationMm={effectivePrecipMm}
       />
 
-      {/* 2. Full-Screen Dynamic Cloud Canvas with Continuous Living Drift */}
-      <Animated.View
-        style={[
-          styles.fullScreenCloudWrapper,
-          {
-            opacity: imageFadeAnim,
-            transform: [{ translateX: cloudDriftAnim }],
-          },
-        ]}
-      >
-        <Image
-          source={currentTheme.image}
-          style={styles.fullScreenCloudImage}
-          contentFit="cover"
-          transition={600}
-        />
-      </Animated.View>
-
-      {/* 3. Atmospheric Ambient Glow */}
-      <Animated.View
-        style={[
-          styles.atmosphericGlow,
-          {
-            backgroundColor: currentTheme.glowColor,
-            opacity: pulseAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0.28, 0.45],
-            }),
-            transform: [
-              {
-                scale: pulseAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 1.08],
-                }),
-              },
-            ],
-          },
-        ]}
-      />
-
-      {/* 4. Full-Screen Protective Specular Vignette for Readability */}
-      <LinearGradient
-        colors={currentTheme.overlayGradient}
-        start={{ x: 0.5, y: 0.0 }}
-        end={{ x: 0.5, y: 1.0 }}
-        style={StyleSheet.absoluteFill}
-      />
-
-      {/* 5. Scrollable Weather Dashboard */}
+      {/* 2. Top Current Conditions Hero */}
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {locationPromptPending && (
-          <View style={styles.locationBanner}>
-            <View style={styles.locationBannerText}>
-              <Text style={styles.locationBannerTitle}>Enable location</Text>
-              <Text style={styles.locationBannerDescription}>
-                Turn on location access for more relevant local alerts.
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/onboarding',
-                  params: { startRegistration: 'true', promptOnly: 'true' },
-                })
-              }
-              style={styles.locationBannerButton}
-            >
-              <Text style={styles.locationBannerButtonText}>Enable</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {!homeLocation && !locationPromptPending && (
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={() => router.push('/settings_page/edit_profile')}
-            style={styles.locationBanner}
-          >
-            <View style={styles.locationBannerText}>
-              <Text style={styles.locationBannerTitle}>Add a home location</Text>
-              <Text style={styles.locationBannerDescription}>
-                Set a home location to load local weather.
-              </Text>
-            </View>
-            <Text style={styles.locationBannerButtonText}>Set up</Text>
-          </TouchableOpacity>
-        )}
-        {homeError ? (
-          <Text accessibilityRole="alert" style={styles.homeError}>
-            {homeError}
-          </Text>
-        ) : null}
-        {homeWeather?.updatedAt ? (
-          <Text style={styles.weatherUpdated}>
-            {homeWeather.stale ? 'Weather unavailable · ' : 'Last updated · '}
-            {new Date(homeWeather.updatedAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </Text>
-        ) : null}
-        {latestSafetyAlert?.hazard ? (
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={() => router.push('/alert_page/alert')}
-            style={styles.aiSummaryCard}
-          >
-            <Text style={styles.aiSummaryEyebrow}>AI WEATHER SAFETY TIPS</Text>
-            <Text style={styles.aiSummaryTitle}>
-              {latestSafetyAlert.hazard.hazard_type} · {latestSafetyAlert.hazard.risk_level}
-            </Text>
-            {latestSafetyAlert.hazard.safety_tips.slice(0, 3).map((tip) => (
-              <Text key={tip} style={styles.aiSummaryTip}>• {tip}</Text>
-            ))}
-            <Text style={styles.aiSummaryDisclaimer}>Follow official PAGASA/LGU advisories. View all alerts ›</Text>
-          </TouchableOpacity>
-        ) : null}
-        {safetyTipsUnavailable ? (
-          <View style={styles.safetyTipsUnavailable}>
-            <Text accessibilityRole="alert" style={styles.safetyTipsUnavailableText}>
-              Safety tips are unavailable right now
-            </Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => void loadHomeProfile()}
-              style={styles.safetyTipsRetry}
-            >
-              <Text style={styles.safetyTipsRetryText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        {/* Top Header / Hero Weather View */}
         <Animated.View style={[styles.headerSection, { opacity: fadeAnim }]}>
           <TouchableOpacity
             onPress={() => setCitySelectorVisible(true)}
             activeOpacity={0.8}
-            style={styles.cityPillButton}
+            style={[styles.cityPillButton, { backgroundColor: solarTheme.surface.headerScrim }]}
           >
             <Text style={styles.cityText}>{selectedCity.name}</Text>
             <View style={styles.cityDropdownChevron}>
@@ -1187,64 +748,17 @@ export default function HomeScreen() {
             <Text style={[styles.highLowText, { marginLeft: 14 }]}>
               L:{selectedCity.low}°
             </Text>
+            <Text style={[styles.highLowText, { marginLeft: 14, opacity: 0.86 }]}>
+              Feels {selectedCity.feelsLike}°
+            </Text>
           </View>
         </Animated.View>
 
-        {/* Time of Day Liquid Glass Switcher */}
-        <LiquidGlassCard
-          style={styles.cycleSwitcherGlassCard}
-          intensity={45}
-          tintColors={['rgba(255, 255, 255, 0.18)', 'rgba(15, 20, 45, 0.45)']}
-          shimmerAnim={shimmerAnim}
-        >
-          <View style={styles.cycleSwitcherInner}>
-            <TouchableOpacity
-              style={[styles.cyclePill, timeMode === 'auto' && styles.cyclePillActive]}
-              onPress={() => setTimeMode('auto')}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.cyclePillText, timeMode === 'auto' && styles.cyclePillTextActive]}>
-                Auto (Live)
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.cyclePill, timeMode === 'morning' && styles.cyclePillActive]}
-              onPress={() => setTimeMode('morning')}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.cyclePillText, timeMode === 'morning' && styles.cyclePillTextActive]}>
-                🌅 Morning
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.cyclePill, timeMode === 'afternoon' && styles.cyclePillActive]}
-              onPress={() => setTimeMode('afternoon')}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.cyclePillText, timeMode === 'afternoon' && styles.cyclePillTextActive]}>
-                ☀️ Afternoon
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.cyclePill, timeMode === 'evening' && styles.cyclePillActive]}
-              onPress={() => setTimeMode('evening')}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.cyclePillText, timeMode === 'evening' && styles.cyclePillTextActive]}>
-                🌙 Evening
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </LiquidGlassCard>
-
-        {/* Live Sky & Clock Liquid Pill Badge */}
+        {/* Live Atmospheric Status Pill */}
         <LiquidGlassCard
           style={styles.liveSkyStatusCard}
-          intensity={50}
-          shimmerAnim={shimmerAnim}
+          intensity={55}
+          tintColors={solarTheme.liquidCardTint}
         >
           <View style={styles.liveStatusRow}>
             <Animated.View
@@ -1259,14 +773,14 @@ export default function HomeScreen() {
               ]}
             />
             <Text style={styles.liveStatusText}>
-              {currentTheme.badge} • ☁️ {currentTheme.cloudCover} • 🕒{' '}
-              {liveClock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              {solarTheme.badge} • {selectedHourId === '2' ? 'LIVE' : activeHour.time} •{' '}
+              {liveClock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
           </View>
         </LiquidGlassCard>
       </ScrollView>
 
-      {/* 6. UNIFIED LIQUID GLASS BOTTOM DASHBOARD ENCLOSURE (ENCLOSED WITH NAVBAR) */}
+      {/* 3. iOS / Apple-Style Glassmorphism Weather Dashboard */}
       <Animated.View
         style={[
           styles.bottomDashboardEnclosure,
@@ -1278,83 +792,51 @@ export default function HomeScreen() {
       >
         <LiquidGlassCard
           style={styles.bottomEnclosureCard}
-          intensity={80}
-          tintColors={currentTheme.liquidCardTint}
+          intensity={82}
+          tintColors={solarTheme.liquidCardTint}
           shimmerAnim={shimmerAnim}
         >
-          {/* Top Drag Handle Header (Responds to BOTH TAP and SWIPE) */}
-          <View
-            style={styles.collapseToggleHeader}
-            {...sheetPanResponder.panHandlers}
-          >
+          {/* Top Drag Handle Header */}
+          <View style={styles.collapseToggleHeader} {...sheetPanResponder.panHandlers}>
             <View style={styles.dragHandle} />
           </View>
 
-
-
-          {/* FULL DASHBOARD CONTENT (Visible when Expanded) */}
           {isDashboardExpanded && (
             <Animated.View style={[styles.expandedContentWrapper, { opacity: expandAnim }]}>
-              {/* Segmented Liquid Tab Controls */}
-              <View style={styles.tabBar}>
-                <TouchableOpacity
-                  onPress={() => setActiveTab('hourly')}
-                  activeOpacity={0.8}
-                  style={[styles.tabItem, activeTab === 'hourly' && styles.tabItemActive]}
-                >
-                  <Text
-                    style={[
-                      styles.tabText,
-                      activeTab === 'hourly' ? styles.tabTextActive : styles.tabTextInactive,
-                    ]}
-                  >
-                    Hourly Forecast
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => setActiveTab('weekly')}
-                  activeOpacity={0.8}
-                  style={[styles.tabItem, activeTab === 'weekly' && styles.tabItemActive]}
-                >
-                  <Text
-                    style={[
-                      styles.tabText,
-                      activeTab === 'weekly' ? styles.tabTextActive : styles.tabTextInactive,
-                    ]}
-                  >
-                    Weekly Forecast
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Divider Specular Line */}
-              <View style={styles.tabDivider} />
-
-              {/* Scrollable Dashboard Cards */}
               <ScrollView
                 style={styles.expandedDashboardScroll}
+                contentContainerStyle={styles.dashboardCardsScrollContent}
                 showsVerticalScrollIndicator={false}
               >
+                {/* CARD 1: HOURLY TIMELINE */}
+                <LiquidGlassCard
+                  style={styles.appleCard}
+                  intensity={60}
+                  tintColors={solarTheme.liquidCardTint}
+                >
+                  <View style={styles.appleCardHeader}>
+                    <Text style={styles.appleCardHeaderText}>🕒 HOURLY TIMELINE</Text>
+                    <Text style={[styles.appleCardHeaderMeta, { color: solarTheme.text.accent }]}>
+                      Tap slot to preview sky
+                    </Text>
+                  </View>
+                  <View style={styles.appleHeaderDivider} />
 
-              {/* Hourly View */}
-              {activeTab === 'hourly' && (
-                <View>
-                  <Text style={styles.sectionSubtitle}>
-                    Tap any time slot to inspect preview metrics
-                  </Text>
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.hourlyList}
                   >
-                    {hourlyForecast.map((item) => {
+                    {hourlyData.map((item) => {
                       const isSelected = selectedHourId === item.id;
-                      const itemTemp = homeWeather
-                        ? item.temp
-                        : item.id === '2'
+                      const itemTemp =
+                        item.id === '2'
                           ? selectedCity.temp
                           : item.temp + tempOffset;
+                      const itemTheme = getHourTheme(
+                        item.iso,
+                        sunTimesForDate(liveForecast?.daily, item.iso),
+                      );
 
                       return (
                         <TouchableOpacity
@@ -1364,14 +846,22 @@ export default function HomeScreen() {
                           style={[
                             styles.hourlyGlassCard,
                             isSelected
-                              ? styles.hourlyGlassCardSelected
+                              ? [
+                                  styles.hourlyGlassCardSelected,
+                                  { borderColor: solarTheme.surface.borderSelected },
+                                ]
                               : styles.hourlyGlassCardDefault,
                           ]}
                         >
-                          {/* Internal Liquid Sheen on Selected Card */}
+                          <LinearGradient
+                            colors={[itemTheme.bgGradient[1], itemTheme.bgGradient[2]]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.hourlySkyStrip}
+                          />
                           {isSelected && (
                             <LinearGradient
-                              colors={['rgba(255, 255, 255, 0.35)', 'rgba(72, 49, 157, 0.45)']}
+                              colors={['rgba(255, 255, 255, 0.24)', 'rgba(108, 124, 255, 0.32)']}
                               start={{ x: 0, y: 0 }}
                               end={{ x: 1, y: 1 }}
                               style={StyleSheet.absoluteFill}
@@ -1404,58 +894,222 @@ export default function HomeScreen() {
                       );
                     })}
                   </ScrollView>
-                </View>
-              )}
+                </LiquidGlassCard>
 
-              {/* Weekly View */}
-              {activeTab === 'weekly' && (
-                <View style={styles.weeklyList}>
-                  <Text style={styles.sectionSubtitle}>7-Day Temperature Range</Text>
-                  {dailyForecast.map((item) => (
-                    <View key={item.id} style={styles.weeklyRow}>
-                      <Text style={styles.weeklyDay}>{item.day}</Text>
-                      <View style={styles.weeklyConditionCol}>
-                        <WeatherIcon condition={item.condition} size={22} />
-                        {item.rainChance && (
-                          <Text style={styles.weeklyRainText}>{item.rainChance}</Text>
-                        )}
+                {/* CARD 2: 7-DAY FORECAST */}
+                <LiquidGlassCard
+                  style={styles.appleCard}
+                  intensity={60}
+                  tintColors={solarTheme.liquidCardTint}
+                >
+                  <View style={styles.appleCardHeader}>
+                    <Text style={styles.appleCardHeaderText}>📅 7-DAY FORECAST</Text>
+                    <Text style={styles.appleCardHeaderMeta}>Cebu Province</Text>
+                  </View>
+                  <View style={styles.appleHeaderDivider} />
+
+                  <View style={styles.weeklyList}>
+                    {dailyData.map((item, idx) => {
+                      const barLeftPct =
+                        ((item.minTemp - weekTempBounds.min) / weekTempBounds.span) * 100;
+                      const barWidthPct = Math.max(
+                        14,
+                        ((item.maxTemp - item.minTemp) / weekTempBounds.span) * 100,
+                      );
+                      const currentMarkerPct = Math.min(
+                        96,
+                        Math.max(
+                          4,
+                          ((selectedCity.temp - weekTempBounds.min) / weekTempBounds.span) * 100,
+                        ),
+                      );
+
+                      return (
+                        <View
+                          key={item.id}
+                          style={[
+                            styles.weeklyRow,
+                            idx === dailyData.length - 1 && { borderBottomWidth: 0 },
+                          ]}
+                        >
+                          <Text style={styles.weeklyDay}>{item.day}</Text>
+                          <View style={styles.weeklyConditionCol}>
+                            <WeatherIcon condition={item.condition} size={22} />
+                            {item.rainChance && (
+                              <Text style={styles.weeklyRainText}>{item.rainChance}</Text>
+                            )}
+                          </View>
+                          <Text style={styles.weeklyMinTemp}>{item.minTemp}°</Text>
+                          <View style={styles.tempBarTrack}>
+                            <LinearGradient
+                              colors={['#38BDF8', '#FACC15', '#FB923C']}
+                              start={{ x: 0, y: 0 }}
+                              end={{ x: 1, y: 0 }}
+                              style={[
+                                styles.tempBarProgress,
+                                {
+                                  left: `${barLeftPct}%`,
+                                  width: `${Math.min(100 - barLeftPct, barWidthPct)}%`,
+                                },
+                              ]}
+                            />
+                            {item.day === 'Today' && (
+                              <Animated.View
+                                style={[
+                                  styles.tempBarCurrentMarker,
+                                  {
+                                    left: `${currentMarkerPct}%`,
+                                    opacity: pulseAnim.interpolate({
+                                      inputRange: [0, 1],
+                                      outputRange: [0.75, 1],
+                                    }),
+                                  },
+                                ]}
+                              />
+                            )}
+                          </View>
+                          <Text style={styles.weeklyMaxTemp}>{item.maxTemp}°</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </LiquidGlassCard>
+
+                {/* CARD 3: WIND RADAR VECTOR */}
+                <LiquidGlassCard
+                  style={styles.appleCard}
+                  intensity={60}
+                  tintColors={solarTheme.liquidCardTint}
+                >
+                  <View style={styles.appleCardHeader}>
+                    <Text style={styles.appleCardHeaderText}>💨 WIND RADAR VECTOR</Text>
+                    <Text style={[styles.appleCardHeaderMeta, { color: solarTheme.text.accent }]}>
+                      {selectedCity.windDir} Vector
+                    </Text>
+                  </View>
+                  <View style={styles.appleHeaderDivider} />
+
+                  <View style={styles.windCardBody}>
+                    <View style={styles.windMetricsCol}>
+                      <View style={styles.windStatRow}>
+                        <View>
+                          <Text style={styles.windStatValue}>{selectedCity.wind}</Text>
+                        </View>
+                        <View style={styles.windStatUnitCol}>
+                          <Text style={styles.windStatUnit}>km/h</Text>
+                          <Text style={styles.windStatLabel}>Sustained Wind</Text>
+                        </View>
                       </View>
-                      <Text style={styles.weeklyMinTemp}>{item.minTemp}°</Text>
-                      <View style={styles.tempBarTrack}>
-                        <LinearGradient
-                          colors={['#48319D', '#00D2FF', '#FFAE35']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                          style={styles.tempBarProgress}
-                        />
-                        {/* Live Marker on Today */}
-                        {item.day === 'Today' && (
-                          <Animated.View
-                            style={[
-                              styles.tempBarCurrentMarker,
+                      <View style={styles.windStatDivider} />
+                      <View style={styles.windStatRow}>
+                        <View>
+                          <Text style={styles.windStatValue}>{selectedCity.wind + 8}</Text>
+                        </View>
+                        <View style={styles.windStatUnitCol}>
+                          <Text style={styles.windStatUnit}>km/h</Text>
+                          <Text style={styles.windStatLabel}>Peak Gusts</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.windDirectionNote}>
+                        Originating from {selectedCity.windDir} • Humidity {selectedCity.humidity}%
+                      </Text>
+                    </View>
+
+                    <WindRadarDial
+                      windDir={selectedCity.windDir}
+                      windKph={selectedCity.wind}
+                      swayAnim={windSwayAnim}
+                      accentColor={solarTheme.text.accent}
+                    />
+                  </View>
+                </LiquidGlassCard>
+
+                {/* BENTO ROW: UV INDEX + AIR QUALITY */}
+                <View style={styles.bentoGrid}>
+                  {/* CARD 4: UV INDEX */}
+                  <LiquidGlassCard
+                    style={styles.detailCard}
+                    intensity={60}
+                    tintColors={solarTheme.liquidCardTint}
+                  >
+                    <Text style={styles.detailLabel}>☀️ UV INDEX</Text>
+                    <Text style={styles.detailValueBig}>{selectedCity.uv}</Text>
+                    <Text style={[styles.detailBadge, { color: solarTheme.text.accent }]}>
+                      {uvLabel(selectedCity.uv)}
+                    </Text>
+                    <View style={styles.spectrumBar}>
+                      <LinearGradient
+                        colors={['#22C55E', '#EAB308', '#F97316', '#EF4444', '#A855F7']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                      <View
+                        style={[
+                          styles.spectrumPin,
+                          {
+                            left: `${Math.min(96, Math.max(4, (selectedCity.uv / 11) * 100))}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                    <Text style={styles.detailSub}>
+                      {selectedCity.uv >= 6
+                        ? 'Use SPF 30+ protection until 4 PM.'
+                        : 'Low UV risk for outdoor activity.'}
+                    </Text>
+                  </LiquidGlassCard>
+
+                  {/* CARD 5: AIR QUALITY */}
+                  <LiquidGlassCard
+                    style={styles.detailCard}
+                    intensity={60}
+                    tintColors={solarTheme.liquidCardTint}
+                  >
+                    <Text style={styles.detailLabel}>🍃 AIR QUALITY</Text>
+                    <Text style={styles.detailValueBig}>{selectedCity.airQuality}</Text>
+                    <Text style={[styles.detailBadge, { color: solarTheme.text.accent }]}>
+                      {selectedCity.airQualityLabel}
+                    </Text>
+                    <View style={styles.spectrumBar}>
+                      <LinearGradient
+                        colors={['#00E676', '#FFEB3B', '#FF9800', '#F44336']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                      <Animated.View
+                        style={[
+                          styles.spectrumPin,
+                          {
+                            left: `${Math.min(96, Math.max(6, (selectedCity.airQuality / 150) * 100))}%`,
+                            transform: [
                               {
-                                opacity: pulseAnim.interpolate({
+                                scale: pulseAnim.interpolate({
                                   inputRange: [0, 1],
-                                  outputRange: [0.7, 1],
+                                  outputRange: [1, 1.25],
                                 }),
                               },
-                            ]}
-                          />
-                        )}
-                      </View>
-                      <Text style={styles.weeklyMaxTemp}>{item.maxTemp}°</Text>
+                            ],
+                          },
+                        ]}
+                      />
                     </View>
-                  ))}
-                </View>
-              )}
+                    <Text style={styles.detailSub}>
+                      {selectedCity.airQuality <= 50
+                        ? 'Clean air; ideal for outdoor activities.'
+                        : 'Moderate particulates in the area.'}
+                    </Text>
+                  </LiquidGlassCard>
 
-              {/* LIQUID GLASS WIDGETS GRID */}
-              <View style={styles.detailsGrid}>
-                {/* 1. Live Weather Radar Widget with Sonar Animation */}
-                <LiquidGlassCard style={styles.wideWidgetCard} intensity={55}>
-                  <View style={styles.widgetHeaderRow}>
-                    <Text style={styles.widgetLabel}>LIVE DOPPLER RADAR</Text>
-                    <View style={styles.radarLiveBadge}>
+                  {/* CARD 6: LIVE DOPPLER PRECIPITATION */}
+                  <LiquidGlassCard
+                    style={styles.detailCard}
+                    intensity={60}
+                    tintColors={solarTheme.liquidCardTint}
+                  >
+                    <View style={styles.widgetHeaderRow}>
+                      <Text style={styles.detailLabel}>🌧️ RAINFALL</Text>
                       <Animated.View
                         style={[
                           styles.radarDot,
@@ -1467,161 +1121,51 @@ export default function HomeScreen() {
                           },
                         ]}
                       />
-                      <Text style={styles.radarLiveText}>ACTIVE</Text>
                     </View>
-                  </View>
+                    <Text style={styles.detailValueBig}>{selectedCity.rainNowMm ?? 0} mm</Text>
+                    <Text style={[styles.detailBadge, { color: '#38BDF8' }]}>
+                      Past Hour
+                    </Text>
+                    <Text style={styles.detailSub}>
+                      {selectedCity.rainTodayMm ?? 0} mm expected today ({selectedCity.rainChance ?? 0}% chance).
+                    </Text>
+                  </LiquidGlassCard>
 
-                  <View style={styles.radarVisualContainer}>
-                    {/* Sonar sweep rings */}
-                    <Animated.View
-                      style={[
-                        styles.radarRing,
-                        {
-                          transform: [
-                            {
-                              scale: radarSweepAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [0.3, 1.8],
-                              }),
-                            },
-                          ],
-                          opacity: radarSweepAnim.interpolate({
-                            inputRange: [0, 0.7, 1],
-                            outputRange: [0.8, 0.3, 0],
-                          }),
-                        },
-                      ]}
-                    />
-                    <View style={styles.radarCenterPin}>
-                      <View style={styles.radarPinInner} />
+                  {/* CARD 7: SOLAR CYCLE */}
+                  <LiquidGlassCard
+                    style={styles.detailCard}
+                    intensity={60}
+                    tintColors={solarTheme.liquidCardTint}
+                  >
+                    <View style={styles.widgetHeaderRow}>
+                      <Text style={styles.detailLabel}>🌇 SUNSET</Text>
+                      <Animated.Text
+                        style={[
+                          styles.sunIconAnimated,
+                          { transform: [{ translateY: sunFloatAnim }] },
+                        ]}
+                      >
+                        {solarTheme.isDay ? '☀️' : '🌙'}
+                      </Animated.Text>
                     </View>
-                    <View style={styles.radarInfoCol}>
-                      <Text style={styles.radarPrimaryText}>
-                        {isLive ? `Rainfall: ${selectedCity.rainNowMm ?? 0} mm now` : 'Precipitation Approaching'}
-                      </Text>
-                      <Text style={styles.radarSecondaryText}>
-                        {isLive
-                          ? `Today in ${selectedCity.name}: ${selectedCity.rainTodayMm ?? 0} mm expected, ${selectedCity.rainChance ?? 0}% chance of rain.`
-                          : `Scattered cloud cover across ${selectedCity.name}. No storm warnings.`}
-                      </Text>
-                    </View>
-                  </View>
-                </LiquidGlassCard>
+                    <Text style={styles.detailValue}>{selectedCity.sunset}</Text>
+                    <Text style={[styles.detailBadge, { color: solarTheme.text.accent }]}>
+                      Dawn / Sunrise
+                    </Text>
+                    <Text style={styles.detailSub}>
+                      Sunrise at {selectedCity.sunrise}
+                    </Text>
+                  </LiquidGlassCard>
+                </View>
 
-                {/* 2. Air Quality Widget with Animated Spectrum */}
-                <LiquidGlassCard style={styles.detailCard} intensity={55}>
-                  <Text style={styles.detailLabel}>AIR QUALITY</Text>
-                  <Text style={styles.detailValue}>
-                    {selectedCity.airQuality} - {selectedCity.airQualityLabel}
-                  </Text>
-                  <View style={styles.spectrumBar}>
-                    <LinearGradient
-                      colors={['#00E676', '#FFEB3B', '#FF9800', '#F44336']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={StyleSheet.absoluteFill}
-                    />
-                    <Animated.View
-                      style={[
-                        styles.spectrumPin,
-                        {
-                          left: `${Math.min(100, Math.max(10, selectedCity.airQuality))}%`,
-                          transform: [
-                            {
-                              scale: pulseAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 1.3],
-                              }),
-                            },
-                          ],
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.detailSub}>
-                    {!isLive || selectedCity.airQuality <= 50
-                      ? 'Air quality is ideal for outdoor activities.'
-                      : 'Sensitive groups should limit prolonged outdoor activity.'}
-                  </Text>
-                </LiquidGlassCard>
-
-                {/* 3. UV Index Widget with Liquid Meter */}
-                <LiquidGlassCard style={styles.detailCard} intensity={55}>
-                  <Text style={styles.detailLabel}>UV INDEX</Text>
-                  <Text style={styles.detailValue}>
-                    {isLive
-                      ? `${selectedCity.uv} ${uvLabel(selectedCity.uv)}`
-                      : effectiveTimeOfDay === 'afternoon'
-                        ? '6 High'
-                        : `${selectedCity.uv} Moderate`}
-                  </Text>
-                  <View style={styles.uvMeterTrack}>
-                    <LinearGradient
-                      colors={['#00D2FF', '#FFAE35', '#FF416C']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={[
-                        styles.uvMeterFill,
-                        {
-                          width: `${Math.min(100, (!isLive && effectiveTimeOfDay === 'afternoon' ? 6 : selectedCity.uv) * 9)}%`,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.detailSub}>
-                    {(isLive ? selectedCity.uv >= 6 : effectiveTimeOfDay === 'afternoon')
-                      ? 'Sun protection required from 11 AM - 4 PM.'
-                      : 'Low to moderate risk of sun exposure.'}
-                  </Text>
-                </LiquidGlassCard>
-
-                {/* 4. Wind & Gusts with Rotating Compass Vane */}
-                <LiquidGlassCard style={styles.detailCard} intensity={55}>
-                  <View style={styles.widgetHeaderRow}>
-                    <Text style={styles.detailLabel}>WIND & GUSTS</Text>
-                    <Animated.View style={{ transform: [{ rotate: windRotate }] }}>
-                      <Text style={styles.compassNeedleIcon}>🧭</Text>
-                    </Animated.View>
-                  </View>
-                  <Text style={styles.detailValue}>
-                    {selectedCity.wind} km/h {selectedCity.windDir}
-                  </Text>
-                  <Text style={styles.detailSub}>
-                    {isLive ? '' : `Gusts up to ${selectedCity.wind + 9} km/h • `}Humidity {selectedCity.humidity}%
-                  </Text>
-                </LiquidGlassCard>
-
-                {/* 5. Sunrise / Sunset with Floating Arc */}
-                <LiquidGlassCard style={styles.detailCard} intensity={55}>
-                  <View style={styles.widgetHeaderRow}>
-                    <Text style={styles.detailLabel}>SOLAR CYCLE</Text>
-                    <Animated.Text
-                      style={[
-                        styles.sunIconAnimated,
-                        { transform: [{ translateY: sunFloatAnim }] },
-                      ]}
-                    >
-                      {effectiveTimeOfDay === 'evening' ? '🌙' : '☀️'}
-                    </Animated.Text>
-                  </View>
-                  <Text style={styles.detailValue}>
-                    {effectiveTimeOfDay === 'morning' ? selectedCity.sunrise : selectedCity.sunset}
-                  </Text>
-                  <Text style={styles.detailSub}>
-                    {effectiveTimeOfDay === 'morning'
-                      ? `Sunset tonight at ${selectedCity.sunset}`
-                      : `Next sunrise tomorrow at ${selectedCity.sunrise}`}
-                  </Text>
-                </LiquidGlassCard>
-              </View>
-                <View style={{ height: 18 }} />
+                <View style={{ height: 28 }} />
               </ScrollView>
             </Animated.View>
           )}
-
         </LiquidGlassCard>
       </Animated.View>
 
+      {/* Bottom TabBar */}
       <View style={styles.fixedTabBar} pointerEvents="box-none">
         <Image
           source={require('../../assets/images/homepage/TabBar.png')}
@@ -1637,7 +1181,7 @@ export default function HomeScreen() {
           onPress={() =>
             Alert.alert(
               'Live Weather Radar',
-              `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`
+              `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`,
             )
           }
         />
@@ -1658,6 +1202,7 @@ export default function HomeScreen() {
         />
       </View>
 
+      {/* Top-Right Expandable Menu Pill */}
       <View style={styles.homeMenu} pointerEvents="box-none">
         <Animated.View
           pointerEvents="box-none"
@@ -1781,8 +1326,6 @@ export default function HomeScreen() {
                         pathname: '/settings_page/settings',
                         params: { profilePictureUrl: profilePictureUrl ?? '' },
                       });
-                    } else if (item.label === 'Alerts') {
-                      router.push('/alert_page/alert');
                     } else if (item.label === 'Profile') {
                       router.push('/Profile_page/profile');
                     }
@@ -1800,27 +1343,60 @@ export default function HomeScreen() {
         </Animated.View>
       </View>
 
-      {/* Saved home location selector */}
+      {/* Interactive Liquid Glass City Selector Modal */}
       <Modal visible={citySelectorVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <LiquidGlassCard style={styles.modalGlassCard} intensity={85} shimmerAnim={shimmerAnim}>
-            <Text style={styles.modalTitle}>Home location</Text>
-            <Text style={styles.modalSubtitle}>
-              Local weather and alerts use this saved address.
-            </Text>
-            <Text style={styles.modalSubtitle}>
-              {homeLocation?.address ?? 'No home location has been saved.'}
-            </Text>
+            <Text style={styles.modalTitle}>Select Location</Text>
+            <Text style={styles.modalSubtitle}>Cebu cities &amp; barangays · live Open-Meteo</Text>
 
-            <TouchableOpacity
-              style={styles.modalCloseButton}
-              onPress={() => {
-                setCitySelectorVisible(false);
-                router.push('/settings_page/edit_profile');
+            <TextInput
+              style={styles.citySearchInput}
+              value={cityQuery}
+              onChangeText={setCityQuery}
+              placeholder="Search city, town or barangay"
+              placeholderTextColor="rgba(255, 255, 255, 0.45)"
+              autoCorrect={false}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+              accessibilityLabel="Search locations"
+            />
+
+            <FlatList
+              style={styles.cityListScroll}
+              data={filteredCities}
+              keyExtractor={(c) => c.name}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={12}
+              windowSize={7}
+              ListEmptyComponent={
+                <Text style={styles.cityRowCountry}>No matching location in Cebu.</Text>
+              }
+              renderItem={({ item: c }) => {
+                const isCurrent = c.name === selectedCity.name;
+                return (
+                  <TouchableOpacity
+                    style={[styles.cityRowCard, isCurrent && styles.cityRowCardActive]}
+                    onPress={() => {
+                      setSelectedCity(c);
+                      setCitySelectorVisible(false);
+                      setCityQuery('');
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cityRowName}>{c.name}</Text>
+                      <Text style={styles.cityRowCountry}>
+                        {c.country}
+                        {isCurrent ? ` • ${selectedCity.condition}` : ''}
+                      </Text>
+                    </View>
+                    <Text style={styles.cityRowTemp}>{isCurrent ? `${selectedCity.temp}°` : ''}</Text>
+                  </TouchableOpacity>
+                );
               }}
-            >
-              <Text style={styles.modalCloseText}>Change home location</Text>
-            </TouchableOpacity>
+            />
 
             <TouchableOpacity
               style={styles.modalCloseButton}
@@ -1853,7 +1429,6 @@ export default function HomeScreen() {
           <Text style={styles.welcomeToastText}>Welcome {welcomeName}!</Text>
         </Animated.View>
       )}
-
     </View>
   );
 }
@@ -1861,7 +1436,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0D0C1D',
+    backgroundColor: '#040716',
     overflow: 'hidden',
   },
   welcomeToast: {
@@ -1889,172 +1464,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  fullScreenCloudWrapper: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '124%',
-    left: '-12%',
-  },
-  fullScreenCloudImage: {
-    width: '100%',
-    height: '100%',
-  },
   scrollContent: {
-    paddingTop: Platform.OS === 'ios' ? 62 : 46,
-    paddingBottom: 130,
+    paddingTop: Platform.OS === 'ios' ? 58 : 44,
+    paddingBottom: 120,
     alignItems: 'center',
-  },
-  locationBanner: {
-    width: '90%',
-    maxWidth: 430,
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    marginBottom: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(33, 18, 56, 0.78)',
-  },
-  locationBannerText: {
-    flex: 1,
-  },
-  locationBannerTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  locationBannerDescription: {
-    color: '#E1D2F2',
-    fontSize: 11,
-    marginTop: 3,
-  },
-  locationBannerButton: {
-    minWidth: 58,
-    alignItems: 'center',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#7000B8',
-  },
-  locationBannerButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  homeError: {
-    width: '90%',
-    maxWidth: 430,
-    color: '#FFE0E7',
-    fontSize: 12,
-    padding: 10,
-    marginBottom: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(100, 25, 45, 0.64)',
-  },
-  weatherUpdated: {
-    width: '90%',
-    maxWidth: 430,
-    textAlign: 'right',
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 10,
-    marginBottom: 8,
-  },
-  aiSummaryCard: {
-    width: '90%',
-    maxWidth: 430,
-    padding: 15,
-    marginBottom: 14,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.24)',
-    backgroundColor: 'rgba(32, 20, 54, 0.82)',
-  },
-  safetyTipsUnavailable: {
-    width: '90%',
-    maxWidth: 430,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    marginBottom: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(100, 25, 45, 0.64)',
-  },
-  safetyTipsUnavailableText: {
-    flex: 1,
-    color: '#FFE0E7',
-    fontSize: 12,
-    marginRight: 12,
-  },
-  safetyTipsRetry: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: '#7000B8',
-  },
-  safetyTipsRetryText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  aiSummaryEyebrow: {
-    color: '#D5B6FF',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-  },
-  aiSummaryTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 6,
-    marginBottom: 8,
-  },
-  aiSummaryTip: {
-    color: '#F0E7F8',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  aiSummaryDisclaimer: {
-    color: '#C6B3D7',
-    fontSize: 10,
-    marginTop: 10,
-  },
-  atmosphericGlow: {
-    position: 'absolute',
-    top: 80,
-    left: SCREEN_WIDTH / 2 - 160,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
   },
   headerSection: {
+    width: '100%',
     alignItems: 'center',
-    marginBottom: 6,
+    justifyContent: 'center',
+    marginBottom: 4,
   },
   cityPillButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.28)',
+    backgroundColor: 'rgba(6, 10, 26, 0.36)',
     paddingHorizontal: 16,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: 'rgba(255, 255, 255, 0.26)',
   },
   cityText: {
     color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '500',
-    letterSpacing: 0.4,
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    fontSize: 26,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    textShadowColor: 'rgba(0, 0, 0, 0.55)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
@@ -2063,50 +1499,53 @@ const styles = StyleSheet.create({
     marginTop: -2,
   },
   chevronText: {
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 16,
   },
   tempHero: {
     color: '#FFFFFF',
-    fontSize: 104,
+    fontSize: 96,
     fontWeight: '200',
-    lineHeight: 112,
-    marginTop: -2,
-    textShadowColor: 'rgba(0, 0, 0, 0.45)',
+    lineHeight: 104,
+    marginTop: 2,
+    textAlign: 'center',
+    alignSelf: 'center',
+    paddingLeft: 16,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 3 },
-    textShadowRadius: 12,
+    textShadowRadius: 14,
   },
   conditionText: {
     color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '500',
+    fontSize: 20,
+    fontWeight: '600',
     marginTop: -2,
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.65)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },
   highLowRow: {
     flexDirection: 'row',
-    marginTop: 6,
+    marginTop: 5,
   },
   highLowText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    fontSize: 16,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 0.65)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
   },
-  // Liquid Glass Card Core Design
   liquidGlassContainer: {
-    borderRadius: 30,
+    borderRadius: 26,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
+    borderColor: 'rgba(255, 255, 255, 0.24)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
     elevation: 8,
   },
   liquidSpecularTop: {
@@ -2114,8 +1553,8 @@ const styles = StyleSheet.create({
     top: 0,
     left: 14,
     right: 14,
-    height: 1.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+    height: 1.2,
+    backgroundColor: 'rgba(255, 255, 255, 0.48)',
     borderTopLeftRadius: 1,
     borderTopRightRadius: 1,
   },
@@ -2125,7 +1564,7 @@ const styles = StyleSheet.create({
     bottom: 14,
     left: 0,
     width: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
   },
   shimmerBeam: {
     position: 'absolute',
@@ -2133,51 +1572,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 140,
   },
-  // Switchers & Badges
-  cycleSwitcherGlassCard: {
-    marginTop: 14,
-    marginBottom: 8,
-    borderRadius: 22,
-  },
-  cycleSwitcherInner: {
-    flexDirection: 'row',
-    padding: 4,
-    gap: 4,
-  },
-  cyclePill: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 18,
-  },
-  cyclePillActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.28)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.55)',
-  },
-  cyclePillText: {
-    color: 'rgba(255, 255, 255, 0.75)',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  cyclePillTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
   liveSkyStatusCard: {
     borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginTop: 6,
-    marginBottom: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    marginTop: 8,
+    marginBottom: 12,
   },
   liveStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   livePulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#00E676',
     marginRight: 8,
     shadowColor: '#00E676',
@@ -2186,9 +1595,9 @@ const styles = StyleSheet.create({
   },
   liveStatusText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
   // Dashboard enclosure
   bottomDashboardEnclosure: {
@@ -2200,12 +1609,12 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   bottomEnclosureCard: {
-    width: Math.min(SCREEN_WIDTH - 20, 420),
+    width: Math.min(SCREEN_WIDTH - 16, 430),
     height: '100%',
-    borderTopLeftRadius: 36,
-    borderTopRightRadius: 36,
-    borderBottomLeftRadius: Platform.OS === 'ios' ? 36 : 28,
-    borderBottomRightRadius: Platform.OS === 'ios' ? 36 : 28,
+    borderTopLeftRadius: 34,
+    borderTopRightRadius: 34,
+    borderBottomLeftRadius: Platform.OS === 'ios' ? 34 : 26,
+    borderBottomRightRadius: Platform.OS === 'ios' ? 34 : 26,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -8 },
@@ -2215,19 +1624,18 @@ const styles = StyleSheet.create({
   },
   collapseToggleHeader: {
     width: '100%',
-    minHeight: 64,
+    minHeight: 36,
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 12,
-    paddingBottom: 8,
-    cursor: 'pointer',
+    justifyContent: 'center',
+    paddingTop: 10,
+    paddingBottom: 6,
     zIndex: 1,
   },
   dragHandle: {
-    width: 48,
+    width: 44,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+    backgroundColor: 'rgba(255, 255, 255, 0.48)',
   },
   expandedContentWrapper: {
     flex: 1,
@@ -2235,123 +1643,120 @@ const styles = StyleSheet.create({
   expandedDashboardScroll: {
     flex: 1,
   },
-  tabBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  tabItem: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-  },
-  tabItemActive: {
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  tabText: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  tabTextActive: {
-    color: '#FFFFFF',
-  },
-  tabTextInactive: {
-    color: 'rgba(255, 255, 255, 0.65)',
-  },
-  tabDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    marginHorizontal: 18,
-    marginBottom: 14,
-  },
-  sectionSubtitle: {
-    color: 'rgba(255, 255, 255, 0.65)',
-    fontSize: 12,
-    textAlign: 'center',
-    marginBottom: 12,
-    letterSpacing: 0.2,
-  },
-  hourlyList: {
-    paddingHorizontal: 16,
+  dashboardCardsScrollContent: {
+    paddingHorizontal: 14,
+    paddingTop: 4,
+    paddingBottom: 110,
     gap: 12,
   },
+  // Apple Weather-style Glass Cards
+  appleCard: {
+    width: '100%',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  appleCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  appleCardHeaderText: {
+    color: 'rgba(255, 255, 255, 0.78)',
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  appleCardHeaderMeta: {
+    color: 'rgba(255, 255, 255, 0.68)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  appleHeaderDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    marginBottom: 12,
+  },
+  hourlyList: {
+    gap: 10,
+    paddingHorizontal: 2,
+  },
   hourlyGlassCard: {
-    width: 66,
-    height: 152,
-    borderRadius: 32,
+    width: 64,
+    height: 138,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderWidth: 1,
     overflow: 'hidden',
   },
   hourlyGlassCardDefault: {
-    backgroundColor: 'rgba(255, 255, 255, 0.10)',
-    borderColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.18)',
   },
   hourlyGlassCardSelected: {
-    backgroundColor: 'rgba(72, 49, 157, 0.45)',
-    borderColor: 'rgba(255, 255, 255, 0.75)',
-    shadowColor: '#00D2FF',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.65,
-    shadowRadius: 12,
-    elevation: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: 'rgba(255, 255, 255, 0.85)',
+  },
+  hourlySkyStrip: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 4,
   },
   hourlyTime: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.88)',
+    fontSize: 13,
+    fontWeight: '600',
   },
   hourlyTimeSelected: {
+    color: '#FFFFFF',
     fontWeight: '700',
   },
   rainText: {
-    color: '#00E5FF',
-    fontSize: 12,
+    color: '#5CE1FF',
+    fontSize: 11,
     fontWeight: '700',
   },
   hourlyTemp: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
   },
-  // Weekly View
+  // 7-Day Forecast Card
   weeklyList: {
-    paddingHorizontal: 18,
-    gap: 10,
+    gap: 2,
   },
   weeklyRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 7,
-    borderBottomWidth: 0.5,
-    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255, 255, 255, 0.14)',
   },
   weeklyDay: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-    width: 58,
+    fontSize: 15,
+    fontWeight: '600',
+    width: 54,
   },
   weeklyConditionCol: {
     alignItems: 'center',
-    width: 44,
+    width: 42,
   },
   weeklyRainText: {
-    color: '#00E5FF',
+    color: '#5CE1FF',
     fontSize: 10,
     fontWeight: '700',
   },
   weeklyMinTemp: {
-    color: 'rgba(255, 255, 255, 0.65)',
+    color: 'rgba(255, 255, 255, 0.72)',
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
     width: 34,
     textAlign: 'right',
   },
@@ -2365,149 +1770,161 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   tempBarProgress: {
-    width: '100%',
-    height: '100%',
-  },
-  tempBarCurrentMarker: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    left: '42%',
-    width: 6,
     borderRadius: 3,
+  },
+  tempBarCurrentMarker: {
+    position: 'absolute',
+    top: -1,
+    width: 8,
+    height: 8,
+    marginLeft: -4,
+    borderRadius: 4,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#FFF',
-    shadowRadius: 4,
-    shadowOpacity: 1,
+    borderWidth: 1.5,
+    borderColor: '#0A1024',
   },
   weeklyMaxTemp: {
     color: '#FFFFFF',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
     width: 34,
     textAlign: 'left',
   },
-  // Widgets Grid
-  detailsGrid: {
+  // Wind Radar Vector Card
+  windCardBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  windMetricsCol: {
+    flex: 1,
+    gap: 6,
+  },
+  windStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  windStatValue: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '700',
+    lineHeight: 32,
+  },
+  windStatUnitCol: {
+    justifyContent: 'center',
+  },
+  windStatUnit: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  windStatLabel: {
+    color: 'rgba(255, 255, 255, 0.68)',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  windStatDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    marginVertical: 2,
+  },
+  windDirectionNote: {
+    color: 'rgba(255, 255, 255, 0.76)',
+    fontSize: 11.5,
+    marginTop: 2,
+  },
+  windDialBox: {
+    width: 108,
+    height: 108,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  windDialCenterBadge: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(10, 15, 34, 0.86)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  windDialSpeed: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  windDialUnit: {
+    color: 'rgba(255, 255, 255, 0.68)',
+    fontSize: 8.5,
+    fontWeight: '600',
+  },
+  // 2-Column Bento Grid
+  bentoGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    marginTop: 18,
     gap: 12,
   },
-  wideWidgetCard: {
-    width: '100%',
-    padding: 16,
-    borderRadius: 24,
+  detailCard: {
+    width: '48%',
+    flexGrow: 1,
+    borderRadius: 22,
+    padding: 14,
   },
   widgetHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
-  },
-  widgetLabel: {
-    color: 'rgba(255, 255, 255, 0.65)',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-  },
-  radarLiveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 230, 118, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 230, 118, 0.4)',
   },
   radarDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#00E676',
-    marginRight: 5,
-  },
-  radarLiveText: {
-    color: '#00E676',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  radarVisualContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  radarCenterPin: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0, 210, 255, 0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#00D2FF',
-  },
-  radarPinInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#FFFFFF',
-  },
-  radarRing: {
-    position: 'absolute',
-    left: 2,
-    top: 2,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#00D2FF',
-  },
-  radarInfoCol: {
-    marginLeft: 16,
-    flex: 1,
-  },
-  radarPrimaryText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  radarSecondaryText: {
-    color: 'rgba(255, 255, 255, 0.75)',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  detailCard: {
-    width: (SCREEN_WIDTH - 66) / 2,
-    maxWidth: 180,
-    borderRadius: 24,
-    padding: 15,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#38BDF8',
   },
   detailLabel: {
-    color: 'rgba(255, 255, 255, 0.65)',
+    color: 'rgba(255, 255, 255, 0.78)',
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    letterSpacing: 0.7,
     marginBottom: 6,
+  },
+  detailValueBig: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '700',
+    lineHeight: 32,
   },
   detailValue: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 6,
+    fontSize: 22,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  detailBadge: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 2,
+    marginBottom: 4,
   },
   detailSub: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 11,
-    lineHeight: 15,
+    color: 'rgba(255, 255, 255, 0.78)',
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 4,
   },
   spectrumBar: {
     height: 6,
     borderRadius: 3,
-    marginVertical: 8,
+    marginVertical: 6,
     overflow: 'hidden',
     position: 'relative',
   },
@@ -2516,27 +1933,14 @@ const styles = StyleSheet.create({
     top: 0,
     width: 6,
     height: 6,
+    marginLeft: -3,
     borderRadius: 3,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#000',
   },
-  uvMeterTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    marginVertical: 8,
-    overflow: 'hidden',
-  },
-  uvMeterFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  compassNeedleIcon: {
-    fontSize: 18,
-  },
   sunIconAnimated: {
-    fontSize: 18,
+    fontSize: 17,
   },
   fixedTabBar: {
     position: 'absolute',
@@ -2681,7 +2085,7 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
     borderWidth: 1,
-    borderColor: 'rgba(255, 174, 53, 0.4)',
+    borderColor: 'rgba(255, 174, 53, 0.45)',
   },
   crescentMoon: {
     width: 18,
@@ -2701,7 +2105,7 @@ const styles = StyleSheet.create({
     width: 2,
     height: 6,
     borderRadius: 1,
-    backgroundColor: '#00E5FF',
+    backgroundColor: '#5CE1FF',
   },
   // Modals
   modalOverlay: {
@@ -2724,7 +2128,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   modalSubtitle: {
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: 'rgba(255, 255, 255, 0.72)',
     fontSize: 13,
     textAlign: 'center',
     marginTop: 4,
@@ -2739,7 +2143,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -2767,7 +2171,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   cityRowCountry: {
-    color: 'rgba(255, 255, 255, 0.65)',
+    color: 'rgba(255, 255, 255, 0.68)',
     fontSize: 12,
     marginTop: 2,
   },
@@ -2776,27 +2180,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '300',
   },
-  modalOption: {
-    backgroundColor: 'rgba(255, 255, 255, 0.10)',
-    paddingVertical: 14,
-    borderRadius: 16,
-    alignItems: 'center',
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.16)',
-  },
-  modalOptionText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
   modalCloseButton: {
     alignItems: 'center',
     paddingVertical: 10,
     marginTop: 4,
   },
   modalCloseText: {
-    color: 'rgba(255, 255, 255, 0.75)',
+    color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 15,
     fontWeight: '600',
   },
