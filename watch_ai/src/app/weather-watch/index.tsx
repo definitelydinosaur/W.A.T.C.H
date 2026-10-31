@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router } from 'expo-router';
 import { WeatherBackdrop } from '../../components/sky';
 import { HourlyForecast, HourlyForecastItem } from '../../components/weather/hourly-forecast';
 import {
@@ -25,21 +25,11 @@ import {
   uvLabel,
   weatherDescription,
 } from '../../lib/weather';
-import { profileApi } from '../../lib/profile-api';
 
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 const formatTime = (iso: string) =>
   iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '--';
-
-interface HomeLocation {
-  address: string;
-  latitude: number;
-  longitude: number;
-  city: string | null;
-  province: string | null;
-  barangay: string | null;
-}
 
 interface SafetyGuidance {
   explanation: string;
@@ -51,7 +41,6 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
 export default function WeatherWatchScreen() {
   const [forecast, setForecast] = useState<Forecast | null>(null);
-  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,42 +51,9 @@ export default function WeatherWatchScreen() {
 
   const [tab, setTab] = useState<'hourly' | 'weekly'>('hourly');
 
-  const loadForecast = useCallback(async (location: HomeLocation, signal?: AbortSignal) => {
-    if (!API_URL) {
-      try {
-        setForecast(
-          await fetchForecast(signal, {
-            latitude: location.latitude,
-            longitude: location.longitude,
-          }),
-        );
-        setError('');
-      } catch (loadError) {
-        if (signal?.aborted) return;
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : 'Weather is unavailable. Try again shortly.',
-        );
-      } finally {
-        if (!signal?.aborted) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      }
-      return;
-    }
+  const loadForecast = useCallback(async (signal?: AbortSignal) => {
     try {
-      const query = new URLSearchParams({
-        latitude: String(location.latitude),
-        longitude: String(location.longitude),
-      });
-      const response = await fetch(`${API_URL}/weather?${query}`, { signal });
-      if (!response.ok) {
-        const body = (await response.json()) as { message?: string };
-        throw new Error(body.message ?? `Weather request failed (${response.status}).`);
-      }
-      setForecast((await response.json()) as Forecast);
+      setForecast(await fetchForecast(signal));
       setError('');
     } catch (loadError) {
       if (signal?.aborted) return;
@@ -157,48 +113,18 @@ export default function WeatherWatchScreen() {
     }
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      const controller = new AbortController();
-      void (async () => {
-        try {
-          const { profile } = await profileApi<{
-            profile: { home_location: HomeLocation | null };
-          }>('/profile');
-          if (controller.signal.aborted) return;
-          if (!profile.home_location) {
-            setHomeLocation(null);
-            setError('Add a home location in Edit Profile to load local weather.');
-            setLoading(false);
-            return;
-          }
-          setHomeLocation(profile.home_location);
-          await loadForecast(profile.home_location, controller.signal);
-        } catch (loadError) {
-          if (controller.signal.aborted) return;
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'Unable to load your home location.',
-          );
-          setLoading(false);
-        }
-      })();
-
-      return () => {
-        controller.abort();
-      };
-    }, [loadForecast]),
-  );
-
   useEffect(() => {
-    if (!homeLocation) return;
-    const interval = setInterval(
-      () => void loadForecast(homeLocation),
-      REFRESH_INTERVAL_MS,
-    );
-    return () => clearInterval(interval);
-  }, [homeLocation, loadForecast]);
+    const controller = new AbortController();
+    const initialLoad = setTimeout(() => {
+      void loadForecast(controller.signal);
+    }, 0);
+    const interval = setInterval(() => void loadForecast(), REFRESH_INTERVAL_MS);
+    return () => {
+      clearTimeout(initialLoad);
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [loadForecast]);
 
   const hourlyItems = useMemo<HourlyForecastItem[]>(
     () =>
@@ -239,12 +165,6 @@ export default function WeatherWatchScreen() {
         ? '#FFB45A'
         : theme.text.accent;
 
-  const cityName =
-    homeLocation?.city ??
-    homeLocation?.barangay ??
-    homeLocation?.address.split(',')[0] ??
-    CEBU.name;
-
   return (
     <View style={styles.screen}>
       <WeatherBackdrop
@@ -264,9 +184,8 @@ export default function WeatherWatchScreen() {
             refreshing={refreshing}
             tintColor="#FFFFFF"
             onRefresh={() => {
-              if (!homeLocation) return;
               setRefreshing(true);
-              void loadForecast(homeLocation);
+              void loadForecast();
             }}
           />
         }
@@ -276,7 +195,7 @@ export default function WeatherWatchScreen() {
             <Text style={[styles.eyebrow, { color: theme.text.accent }]}>
               WEATHER WATCH · {theme.badge}
             </Text>
-            <Text style={styles.city}>{cityName}</Text>
+            <Text style={styles.city}>{CEBU.name}</Text>
           </View>
           <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
             <Text style={styles.mapButtonText}>Map overview</Text>
@@ -438,9 +357,8 @@ export default function WeatherWatchScreen() {
               <Pressable
                 style={styles.errorCard}
                 onPress={() => {
-                  if (!homeLocation) return;
                   setRefreshing(true);
-                  void loadForecast(homeLocation);
+                  void loadForecast();
                 }}
               >
                 <Text style={styles.errorText}>{error} Tap to retry.</Text>

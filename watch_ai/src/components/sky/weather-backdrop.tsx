@@ -343,18 +343,19 @@ export function WeatherBackdrop({
         />
       )}
 
-      {/* 5. Volumetric Multi-Plane fBm Clouds (Cirrus, Altocumulus, Stratocumulus) */}
+      {/* 5. Photorealistic Volumetric Multi-Depth Clouds (Cirrus, Altocumulus, Stratocumulus) */}
       {cloudLayer.mounted && (
         <CloudLayer
           opacity={cloudLayer.value}
           cover={cond.cloud}
           wind={cond.wind}
           windDir={cond.windDir}
+          solar={activeTheme.solar}
+          sunElevation={activeTheme.sunElevation}
+          storm={cond.storm}
+          rain={cond.rain}
           light={cloudPalette.light}
           shade={cloudPalette.shade}
-          sunElevation={activeTheme.sunElevation}
-          colorTemp={activeTheme.colorTemp}
-          storm={cond.storm}
           count={cloudCount}
         />
       )}

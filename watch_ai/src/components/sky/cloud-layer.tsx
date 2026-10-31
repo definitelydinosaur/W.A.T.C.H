@@ -1,893 +1,812 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
-import Svg, {
-  Circle,
-  Defs,
-  Ellipse,
-  G,
-  LinearGradient as SvgLinearGradient,
-  Mask,
-  RadialGradient,
-  Rect,
-  Stop,
-} from 'react-native-svg';
-import { phased, seeded, useLoop, useParticles } from './animation';
+import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Circle, Defs, Ellipse, G, RadialGradient, Stop } from 'react-native-svg';
+import { SolarState } from '../../lib/solar-theme';
+import { phased, useLoop, useParticles } from './animation';
 
 // ============================================================================
-// 1. PROCEDURAL FRACTAL NOISE (2D PERLIN / SIMPLEX GRADIENT + 5-OCTAVE fBm)
+// 1. FRACTAL NOISE & VOLUMETRIC DENSITY MATH (Perlin/Value-Gradient + 5-Octave fBm)
 // ============================================================================
 
 /**
- * Permutation table & 12-direction gradient vectors for fast, deterministic
- * 2D gradient noise used to synthesize volumetric cloud density fields.
+ * Fast deterministic 2D hash returning a pseudo-random gradient scalar in [0, 1].
+ * Avoids lookup table allocation while remaining coherent across platforms.
  */
-const PERM = new Uint8Array(512);
-const GRADS: [number, number][] = [
-  [1, 1], [-1, 1], [1, -1], [-1, -1],
-  [1, 0], [-1, 0], [0, 1], [0, -1],
-  [0.7071, 0.7071], [-0.7071, 0.7071], [0.7071, -0.7071], [-0.7071, -0.7071],
-];
+function hash2D(ix: number, iy: number, seed = 1337): number {
+  let n = (ix * 374761393 + iy * 668265263 + seed * 1442695041) | 0;
+  n = (n ^ (n >> 13)) * 1274126177;
+  return ((n ^ (n >> 16)) >>> 0) / 4294967296;
+}
 
-(() => {
-  const rand = seeded(1337);
-  const p = Array.from({ length: 256 }, (_, i) => i);
-  for (let i = 255; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    const tmp = p[i];
-    p[i] = p[j];
-    p[j] = tmp;
-  }
-  for (let i = 0; i < 512; i++) {
-    PERM[i] = p[i & 255];
-  }
-})();
+/** Quintic Perlin fade curve: 6t^5 - 15t^4 + 10t^3 for C2-continuous derivatives. */
+const quintic = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 
-const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-const smoothstep = (edge0: number, edge1: number, x: number) => {
-  const t = clamp01((x - edge0) / (edge1 - edge0));
-  return t * t * (3 - 2 * t);
-};
 
-/** Single-octave 2D Perlin gradient noise mapped to [-1, 1]. */
-export function noise2D(x: number, y: number): number {
-  const X = Math.floor(x) & 255;
-  const Y = Math.floor(y) & 255;
-  const xf = x - Math.floor(x);
-  const yf = y - Math.floor(y);
-  const u = fade(xf);
-  const v = fade(yf);
+/**
+ * 2D smooth gradient-value noise in [0, 1].
+ */
+export function noise2D(x: number, y: number, seed = 1337): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const fx = x - ix;
+  const fy = y - iy;
+  const u = quintic(fx);
+  const v = quintic(fy);
 
-  const aa = PERM[PERM[X] + Y] % 12;
-  const ab = PERM[PERM[X] + Y + 1] % 12;
-  const ba = PERM[PERM[X + 1] + Y] % 12;
-  const bb = PERM[PERM[X + 1] + Y + 1] % 12;
+  const n00 = hash2D(ix, iy, seed);
+  const n10 = hash2D(ix + 1, iy, seed);
+  const n01 = hash2D(ix, iy + 1, seed);
+  const n11 = hash2D(ix + 1, iy + 1, seed);
 
-  const dotAA = GRADS[aa][0] * xf + GRADS[aa][1] * yf;
-  const dotBA = GRADS[ba][0] * (xf - 1) + GRADS[ba][1] * yf;
-  const dotAB = GRADS[ab][0] * xf + GRADS[ab][1] * (yf - 1);
-  const dotBB = GRADS[bb][0] * (xf - 1) + GRADS[bb][1] * (yf - 1);
-
-  return lerp(lerp(dotAA, dotBA, u), lerp(dotAB, dotBB, u), v);
+  return lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
 }
 
 /**
- * Multi-octave Fractional Brownian Motion (fBm).
- * Sums `octaves` of 2D gradient noise with lacunarity = 2.03 and gain = 0.5
- * (rotated between octaves to eliminate axis-aligned grid artifacts), normalized to [0, 1].
+ * Multi-Octave Fractional Brownian Motion (fBm).
+ * Sums `octaves` of 2D noise with lacunarity = 2.02 and persistence (gain) = 0.5
+ * to produce self-similar billowy cloud density fields.
  */
-export function fbm2D(x: number, y: number, octaves = 5): number {
+export function fbm2D(x: number, y: number, octaves = 5, seed = 1337): number {
   let value = 0;
-  let amp = 0.5;
-  let freq = 1;
+  let amplitude = 0.5;
+  let frequency = 1;
   let norm = 0;
-  // Rotate octave coordinates by ~37 deg (cos=0.8, sin=0.6) to break axial alignment
-  let rx = x;
-  let ry = y;
+
   for (let i = 0; i < octaves; i++) {
-    value += amp * noise2D(rx * freq, ry * freq);
-    norm += amp;
-    const nx = rx * 0.8 - ry * 0.6;
-    const ny = rx * 0.6 + ry * 0.8;
-    rx = nx;
-    ry = ny;
-    freq *= 2.03;
-    amp *= 0.5;
+    value += amplitude * noise2D(x * frequency, y * frequency, seed + i * 97);
+    norm += amplitude;
+    frequency *= 2.02;
+    amplitude *= 0.5;
   }
-  return clamp01(0.5 + (value / norm) * 0.68);
+  return value / norm;
 }
 
 /**
- * Domain-warped fBm: warps input coordinates by a secondary fBm vector field
- * to produce billowing cumulus cauliflower edges and sheared cirrus filaments.
+ * Domain-warped fBm: fbm(p + fbm(p)) creates curling, turbulent cumulus & mammatus edges
+ * rather than isotropic blobs.
  */
-export function warpedFbm(x: number, y: number, warpStrength = 0.65, octaves = 5): number {
-  const qx = fbm2D(x + 1.7, y + 9.2, 3) - 0.5;
-  const qy = fbm2D(x + 8.3, y + 2.8, 3) - 0.5;
-  return fbm2D(x + qx * warpStrength * 2.4, y + qy * warpStrength * 2.4, octaves);
+export function warpedFbm2D(x: number, y: number, octaves = 4, seed = 1337): number {
+  const qx = fbm2D(x + 1.7, y + 9.2, 3, seed) - 0.5;
+  const qy = fbm2D(x + 8.3, y + 2.8, 3, seed + 41) - 0.5;
+  return fbm2D(x + 1.85 * qx, y + 1.85 * qy, octaves, seed + 113);
 }
 
 // ============================================================================
-// 2. VOLUMETRIC LIGHT SCATTERING (HENYEY-GREENSTEIN + BEER-LAMBERT + BOUNCE)
+// 2. PHYSICALLY INSPIRED LIGHT SCATTERING & COLOUR HELPERS
 // ============================================================================
 
-export interface VolumetricCloudProps {
-  /** Layer master opacity (0..1 Animated.Value). */
-  opacity: Animated.Value;
-  /** Cloud cover / density (0..1). */
-  cover: number;
-  /** Normalised wind speed (0 calm .. 1 gale). */
-  wind: number;
-  /** Horizontal wind direction (1 = left->right, -1 = right->left). */
-  windDir: 1 | -1;
-  /** Wind compass angle in degrees (optional, used for upper-air shear). */
-  windAngleDeg?: number;
-  /** Lit cloud highlight hex color. */
-  light: string;
-  /** Shadowed cloud base hex color. */
-  shade: string;
-  /** Sun elevation (0 at horizon/night .. 1 at solar noon). */
-  sunElevation?: number;
-  /** Color temperature (-1 cool deep night .. +1 warm golden hour). */
-  colorTemp?: number;
-  /** Storm / thunderstorm intensity (0..1) for nimbostratus darkening + lightning pulses. */
-  storm?: number;
-  /** Base cloud cluster count. */
-  count: number;
-}
+export type RgbTuple = [number, number, number];
 
-const hexToRgb = (hex: string): [number, number, number] => {
+export function hexToRgb(hex: string): RgbTuple {
   const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const f = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
   return [
-    parseInt(full.slice(0, 2), 16) || 0,
-    parseInt(full.slice(2, 4), 16) || 0,
-    parseInt(full.slice(4, 6), 16) || 0,
+    parseInt(f.slice(0, 2), 16),
+    parseInt(f.slice(2, 4), 16),
+    parseInt(f.slice(4, 6), 16),
   ];
-};
+}
 
-const rgbToCss = (rgb: [number, number, number], alpha = 1) =>
-  `rgba(${Math.round(rgb[0])},${Math.round(rgb[1])},${Math.round(rgb[2])},${clamp01(alpha).toFixed(3)})`;
+export function rgbToHex([r, g, b]: RgbTuple): string {
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
+  return `#${clamp(r)}${clamp(g)}${clamp(b)}`;
+}
 
-const lerpRgb = (a: [number, number, number], b: [number, number, number], t: number): [number, number, number] => [
-  lerp(a[0], b[0], t),
-  lerp(a[1], b[1], t),
-  lerp(a[2], b[2], t),
-];
+export function lerpRgb(a: RgbTuple, b: RgbTuple, t: number): RgbTuple {
+  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+}
 
 /**
- * Henyey-Greenstein phase function: models strong forward scattering (silver lining)
- * when light passes through thin cloud fringes at grazing angles.
- * `g` in [0.55, 0.75] produces characteristic silver-lining rim glow.
+ * Henyey-Greenstein Phase Function:
+ *   p(cosTheta, g) = (1 - g^2) / (4 * pi * (1 + g^2 - 2 * g * cosTheta)^(3/2))
+ * Models strong forward scattering (silver-lining rim effect) in water-droplet aerosols
+ * where anisotropy g ≈ 0.72. Normalized to [0, 1] for shader/canvas color mixing.
  */
-export function henyeyGreenstein(cosTheta: number, g = 0.62): number {
+export function henyeyGreensteinNormalized(cosTheta: number, g = 0.72): number {
   const g2 = g * g;
-  const denom = Math.pow(1 + g2 - 2 * g * cosTheta, 1.5);
-  return (1 - g2) / (4 * Math.PI * Math.max(0.001, denom));
+  const denom = Math.pow(Math.max(0.001, 1 + g2 - 2 * g * cosTheta), 1.5);
+  const raw = (1 - g2) / denom;
+  const maxForward = (1 - g2) / Math.pow(1 - g, 3);
+  return Math.min(1, raw / maxForward);
+}
+
+export interface VolumetricPalette {
+  /** Sun-facing subsurface scattering / silver-lining rim highlight. */
+  rimLight: RgbTuple;
+  /** Primary sunlit diffuse cloud body. */
+  sunlitCore: RgbTuple;
+  /** Mid-tone internal folds & ambient occlusion. */
+  midOcclusion: RgbTuple;
+  /** Cloud base shadow tinted with atmospheric sky bounce light (never muddy black). */
+  bounceShadow: RgbTuple;
+  /** Internal lightning scattering tint during storms. */
+  lightningCore: RgbTuple;
+  /** Normalized sun vector [sx, sy] in screen space. */
+  sunDir: [number, number];
 }
 
 /**
- * Beer-Lambert-Powder transmittance model (Schneider / Guerrilla Games Nubis model):
- * combines exponential optical-depth attenuation exp(-tau) with the "powder sugar"
- * dark-edge-to-bright-rim term (1 - exp(-2 * tau)).
+ * Computes physically inspired volumetric scattering colors based on the active solar state,
+ * sun elevation, rain density, and thunderstorm intensity.
  */
-export function beerPowderEnergy(opticalDepth: number, cosTheta: number): number {
-  const beer = Math.exp(-opticalDepth);
-  const powder = 1 - Math.exp(-opticalDepth * 2.1);
-  const phase = henyeyGreenstein(cosTheta, 0.62);
-  return 2.0 * beer * powder * (0.45 + 0.55 * phase);
-}
-
-interface VolumetricPalette {
-  /** High-intensity rim / silver lining RGB (golden at sunset, crisp white at noon, indigo-silver at night) */
-  rimRgb: [number, number, number];
-  /** Primary lit cloud body RGB */
-  litRgb: [number, number, number];
-  /** Mid-tone internal fold RGB */
-  midRgb: [number, number, number];
-  /** Self-shadowed ambient occlusion base RGB tinted with sky bounce light */
-  aoBounceRgb: [number, number, number];
-  /** Deep storm core RGB for nimbostratus/mammatus clouds */
-  stormCoreRgb: [number, number, number];
-}
-
-function computeVolumetricPalette(
-  lightHex: string,
-  shadeHex: string,
+export function resolveVolumetricPalette(
+  solar: SolarState,
   sunElevation: number,
-  colorTemp: number,
   storm: number,
+  rain: number,
 ): VolumetricPalette {
-  const lightRgb = hexToRgb(lightHex);
-  const shadeRgb = hexToRgb(shadeHex);
+  let rimHex = '#ffffff';
+  let coreHex = '#f3f7ff';
+  let midHex = '#9bb0d1';
+  let bounceHex = '#627ba6'; // cool slate-blue sky bounce
 
-  // 1. Subsurface Rim / Silver-Lining Color:
-  // Warm golden-amber at golden hour / dawn, pure white at midday, moonlit silver-indigo at night
-  const warmFactor = clamp01(colorTemp);
-  const nightFactor = clamp01(-colorTemp);
-  const dayRim: [number, number, number] = lerpRgb([255, 255, 255], [255, 218, 158], warmFactor * 0.85);
-  const rimRgb: [number, number, number] = lerpRgb(dayRim, [186, 208, 255], nightFactor * 0.78);
+  switch (solar) {
+    case 'dawn':
+      rimHex = '#ffdfeb';
+      coreHex = '#f5c2d1';
+      midHex = '#8d658c';
+      bounceHex = '#483863';
+      break;
+    case 'sunrise':
+      rimHex = '#fff0c4';
+      coreHex = '#ffd2ad';
+      midHex = '#9c5f78';
+      bounceHex = '#52385c';
+      break;
+    case 'morning':
+      rimHex = '#fffdf2';
+      coreHex = '#f7f9ff';
+      midHex = '#9bb4d6';
+      bounceHex = '#6684b0';
+      break;
+    case 'high-sun':
+      rimHex = '#ffffff';
+      coreHex = '#f8fbff';
+      midHex = '#98b2d6';
+      bounceHex = '#5e7ca8';
+      break;
+    case 'afternoon':
+      rimHex = '#fffcf0';
+      coreHex = '#f2f7ff';
+      midHex = '#8fa9cf';
+      bounceHex = '#58749e';
+      break;
+    case 'golden-hour':
+      rimHex = '#ffe299';
+      coreHex = '#ffc58c';
+      midHex = '#995b63';
+      bounceHex = '#543854';
+      break;
+    case 'sunset':
+      rimHex = '#ffc285';
+      coreHex = '#f59373';
+      midHex = '#7d405e';
+      bounceHex = '#3d2647';
+      break;
+    case 'dusk':
+      rimHex = '#b8b0eb';
+      coreHex = '#7268a1';
+      midHex = '#433b6b';
+      bounceHex = '#252142'; // dusty lavender/indigo bounce
+      break;
+    case 'night':
+      rimHex = '#c8d8ff'; // moonlit silver-indigo rim
+      coreHex = '#465380';
+      midHex = '#283152';
+      bounceHex = '#141930';
+      break;
+  }
 
-  // 2. Sky Bounce Light for Self-Shadowing & Ambient Occlusion:
-  // Prevents undersides from turning muddy black by tinting with cool slate-blue (day) or dusty lavender (dusk/dawn)
-  const dayBounce: [number, number, number] = [94, 124, 168]; // cool atmospheric slate blue
-  const duskBounce: [number, number, number] = [112, 82, 134]; // dusty twilight lavender
-  const nightBounce: [number, number, number] = [26, 36, 68]; // deep lunar indigo
-  const bounceBase = lerpRgb(
-    lerpRgb(dayBounce, duskBounce, warmFactor * 0.85),
-    nightBounce,
-    nightFactor,
-  );
-  const aoBounceRgb = lerpRgb(shadeRgb, bounceBase, 0.42);
+  let rimLight = hexToRgb(rimHex);
+  let sunlitCore = hexToRgb(coreHex);
+  let midOcclusion = hexToRgb(midHex);
+  let bounceShadow = hexToRgb(bounceHex);
 
-  // 3. Storm / Nimbostratus Darkening:
-  const stormUnder: [number, number, number] = [24, 30, 46];
-  const litRgb = lerpRgb(lightRgb, [76, 86, 110], storm * 0.72);
-  const midRgb = lerpRgb(lerpRgb(lightRgb, shadeRgb, 0.52), [44, 52, 74], storm * 0.75);
-  const finalAo = lerpRgb(aoBounceRgb, stormUnder, storm * 0.82);
+  // Shift toward heavy nimbostratus / mammatus charcoal-indigo during rain & storms
+  // while preserving sky-bounce chromaticity so undersides never turn flat black.
+  const heavy = Math.min(1, storm * 0.85 + rain * 0.45);
+  if (heavy > 0.01) {
+    rimLight = lerpRgb(rimLight, [175, 192, 222], heavy * 0.65);
+    sunlitCore = lerpRgb(sunlitCore, [82, 94, 122], heavy * 0.8);
+    midOcclusion = lerpRgb(midOcclusion, [42, 49, 70], heavy * 0.88);
+    bounceShadow = lerpRgb(bounceShadow, [22, 27, 44], heavy * 0.9);
+  }
+
+  // Sun direction vector: angled from upper-right during day, or upper-left moon at night
+  const sx = solar === 'night' || solar === 'dusk' ? -0.55 : 0.62;
+  const sy = -Math.max(0.35, sunElevation);
+  const len = Math.hypot(sx, sy) || 1;
 
   return {
-    rimRgb,
-    litRgb,
-    midRgb,
-    aoBounceRgb: finalAo,
-    stormCoreRgb: stormUnder,
+    rimLight,
+    sunlitCore,
+    midOcclusion,
+    bounceShadow,
+    lightningCore: [215, 228, 255],
+    sunDir: [sx / len, sy / len],
   };
 }
 
 // ============================================================================
-// 3. OFFSCREEN CANVAS VOLUMETRIC PUFF ATLAS (WEB 60 FPS HARDWARE PATH)
+// 3. OFFSCREEN CANVAS VOLUMETRIC PUFF ATLAS (Web 60 FPS Hardware Acceleration)
 // ============================================================================
 
-type PuffArchetype = 'cirrus' | 'altocumulus' | 'stratocumulus' | 'mammatus';
+type PlaneKind = 'cirrus' | 'altocumulus' | 'stratocumulus';
 
-interface SubLobe {
-  ox: number;
-  oy: number;
-  rx: number;
-  ry: number;
-  density: number;
+interface OffscreenPuffSprite {
+  canvas: HTMLCanvasElement;
+  kind: PlaneKind;
+  width: number;
+  height: number;
 }
 
 /**
- * Generates an offscreen `HTMLCanvasElement` containing a pre-lit, fBm-sculpted
- * volumetric cloud puff sprite. During the 60 FPS animation loop, these sprites
- * are blitted with `ctx.drawImage()` and deformed slightly over time.
+ * Synthesizes a volumetric cloud puff texture onto a detached Offscreen HTMLCanvasElement.
+ *
+ * Physics & Noise Pipeline per texel (u, v):
+ *  1. Compute radial falloff + domain-warped 5-octave fBm density field `d(u, v)`.
+ *  2. Carve high-density billowy core and feathered wispy fringes via smoothstep thresholds.
+ *  3. Estimate directional optical depth `tau` toward `sunDir` via finite-difference density
+ *     sampling along the sun vector, then apply Beer-Lambert transmittance:
+ *       T = exp(-extinction * tau) * (1 - exp(-2 * extinction * tau))  (powder-sugar effect)
+ *  4. Combine Henyey-Greenstein silver-lining rim scattering on low-density sunlit fringes
+ *     with vertical self-shadowing / ambient occlusion on the cloud underside.
  */
-function createOffscreenPuffSprite(
-  archetype: PuffArchetype,
+function buildVolumetricPuffSprite(
+  kind: PlaneKind,
   seed: number,
   palette: VolumetricPalette,
-  sunElevation: number,
   storm: number,
-): HTMLCanvasElement | null {
-  if (typeof document === 'undefined') return null;
-
-  const size = archetype === 'cirrus' ? 220 : 256;
+): OffscreenPuffSprite {
+  // Coarse pixel grid upscaled smoothly by GPU drawImage filtering -> 60 FPS on mobile/laptop
+  const width = kind === 'cirrus' ? 160 : 128;
+  const height = kind === 'cirrus' ? 64 : 96;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = Math.round(size * (archetype === 'cirrus' ? 0.42 : 0.66));
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
+  if (!ctx) return { canvas, kind, width, height };
 
-  const w = canvas.width;
-  const h = canvas.height;
-  const r = seeded(seed);
+  const img = ctx.createImageData(width, height);
+  const data = img.data;
+  const [sx, sy] = palette.sunDir;
+  const stepX = sx * 0.14;
+  const stepY = sy * 0.14;
 
-  // Sun vector: higher sun illuminates from top-right; low sun illuminates rims from horizon side
-  const sunDirX = 0.38;
-  const sunDirY = -0.35 - 0.55 * sunElevation;
+  const sampleDensity = (nx: number, ny: number): number => {
+    // Elliptical envelope with flattened cumulus base for altocumulus/stratocumulus
+    const dy = ny > 0 && kind !== 'cirrus' ? ny * 1.35 : ny;
+    const dist = Math.sqrt(nx * nx + dy * dy);
+    if (dist >= 1.0) return 0;
 
-  if (archetype === 'cirrus') {
-    // High-altitude sheared cirrus streaks using elongated anisotropic radial washes + fBm offsets
-    const strands = 9;
-    for (let i = 0; i < strands; i++) {
-      const fx = 0.18 + (i / strands) * 0.64 + (r() - 0.5) * 0.08;
-      const fy = 0.35 + (noise2D(i * 0.9 + seed, seed * 0.3) * 0.5 + 0.5) * 0.3;
-      const rx = w * (0.22 + r() * 0.22);
-      const ry = h * (0.08 + r() * 0.11);
+    const radialMask = Math.pow(1 - dist * dist, kind === 'cirrus' ? 1.8 : 1.35);
+    const freq = kind === 'cirrus' ? 3.4 : kind === 'altocumulus' ? 2.5 : 2.1;
+    const stretchX = kind === 'cirrus' ? 0.55 : 1.0;
 
-      ctx.save();
-      ctx.translate(w * fx, h * fy);
-      ctx.rotate((r() - 0.5) * 0.14);
-      ctx.scale(1, ry / rx);
-
-      const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, rx);
-      grad.addColorStop(0, rgbToCss(palette.rimRgb, 0.26 * (1 - storm * 0.5)));
-      grad.addColorStop(0.45, rgbToCss(palette.litRgb, 0.14));
-      grad.addColorStop(1, rgbToCss(palette.litRgb, 0));
-
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(0, 0, rx, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+    let n = warpedFbm2D((nx * stretchX + 1.5) * freq, (ny + 1.5) * freq, 4, seed);
+    // Mammatus / nimbostratus bulbous underside pockets during storms
+    if (storm > 0.2 && ny > 0.1) {
+      const mammatus = Math.sin(nx * 9.0) * Math.cos(ny * 7.0) * 0.12 * storm;
+      n += mammatus;
     }
-    return canvas;
-  }
 
-  // Build organic cumulus/stratocumulus/mammatus silhouette from fBm-perturbed sub-lobes:
-  // Higher lobes form the cauliflower crown; lower lobes form the flat/undulating condensation base.
-  const lobeCount = archetype === 'mammatus' ? 22 : 18;
-  const lobes: SubLobe[] = [];
+    const raw = (n * 0.78 + 0.28) * radialMask;
+    const edgeLow = kind === 'cirrus' ? 0.22 : 0.18;
+    if (raw <= edgeLow) return 0;
+    const norm = Math.min(1, (raw - edgeLow) / (0.72 - edgeLow));
+    return norm * norm * (3 - 2 * norm);
+  };
 
-  for (let i = 0; i < lobeCount; i++) {
-    const t = i / (lobeCount - 1);
-    const angle = t * Math.PI * 2;
-    const fbmVal = warpedFbm(Math.cos(angle) * 1.3 + seed * 0.1, Math.sin(angle) * 1.3 + seed * 0.2, 0.6, 4);
-    const ring = i < 5 ? 0.12 * r() : 0.22 + 0.2 * fbmVal;
-    const ox = (t - 0.5) * 0.62 + (r() - 0.5) * 0.14;
-    // Flatten underside for cumulus/stratocumulus; droop pouches downward for storm mammatus
-    const rawOy = Math.sin(angle) * ring * 0.85;
-    const oy =
-      archetype === 'mammatus'
-        ? rawOy * 0.9 + 0.05
-        : rawOy > 0.08
-          ? 0.08 + (rawOy - 0.08) * 0.32
-          : rawOy;
-    const radiusScale = 0.18 + 0.16 * fbmVal * (1 - Math.abs(ox) * 0.55);
-    lobes.push({
-      ox,
-      oy,
-      rx: w * radiusScale * (archetype === 'stratocumulus' ? 1.25 : 1.0),
-      ry: h * radiusScale * (archetype === 'stratocumulus' ? 0.95 : 1.12),
-      density: clamp01(0.55 + 0.45 * fbmVal),
-    });
-  }
+  for (let py = 0; py < height; py++) {
+    const ny = (py / (height - 1)) * 2 - 1; // -1 (top) .. +1 (bottom)
+    for (let px = 0; px < width; px++) {
+      const nx = (px / (width - 1)) * 2 - 1; // -1 (left) .. +1 (right)
+      const d = sampleDensity(nx, ny);
+      if (d <= 0.004) continue;
 
-  // Sort back-to-front (top-to-bottom so undersides & AO folds self-shadow naturally)
-  lobes.sort((a, b) => a.oy - b.oy);
+      // Sample optical thickness toward the light source (2-step raymarch)
+      const dSun1 = sampleDensity(nx + stepX, ny + stepY);
+      const dSun2 = sampleDensity(nx + stepX * 2.2, ny + stepY * 2.2);
+      const opticalDepth = (dSun1 * 0.6 + dSun2 * 0.4) * (kind === 'cirrus' ? 1.1 : 2.4);
 
-  // Pass 1: Subsurface Rim / Silver-Lining Halo on sun-facing crown edges
-  for (const lobe of lobes) {
-    const cx = w * (0.5 + lobe.ox);
-    const cy = h * (0.52 + lobe.oy);
-    // Cosine between lobe normal and sun vector drives Henyey-Greenstein forward scatter
-    const normLen = Math.hypot(lobe.ox, lobe.oy - 0.08) || 1;
-    const cosTheta = clamp01((lobe.ox * sunDirX + (lobe.oy - 0.08) * sunDirY) / normLen);
-    const scatter = beerPowderEnergy(lobe.density * 1.4, cosTheta);
+      // Beer-Lambert transmittance + "powder effect" for dark interior / bright rims
+      const beer = Math.exp(-opticalDepth);
+      const powder = 1.0 - Math.exp(-opticalDepth * 2.2) * 0.45;
+      const lightEnergy = Math.min(1, beer * powder);
 
-    if (lobe.oy <= 0.06) {
-      ctx.save();
-      ctx.translate(cx + sunDirX * 5, cy + sunDirY * 5);
-      ctx.scale(1, lobe.ry / lobe.rx);
-      const rimRadius = lobe.rx * 1.12;
-      const rimGrad = ctx.createRadialGradient(0, 0, lobe.rx * 0.15, 0, 0, rimRadius);
-      const rimAlpha = clamp01((0.28 + 0.34 * scatter) * (1 - storm * 0.35));
-      rimGrad.addColorStop(0, rgbToCss(palette.rimRgb, rimAlpha));
-      rimGrad.addColorStop(0.55, rgbToCss(palette.rimRgb, rimAlpha * 0.48));
-      rimGrad.addColorStop(1, rgbToCss(palette.rimRgb, 0));
-      ctx.fillStyle = rimGrad;
-      ctx.beginPath();
-      ctx.arc(0, 0, rimRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+      // Subsurface silver-lining rim boost on thin sunlit outer fringes
+      const cosTheta = Math.max(0, -(nx * sx + ny * sy));
+      const hgPhase = henyeyGreensteinNormalized(cosTheta, 0.68);
+      const rimFactor = Math.pow(1 - d, 1.35) * beer * (0.45 + 0.55 * hgPhase);
+
+      // Vertical ambient occlusion & self-shadowing (darker toward cloud base ny -> +1)
+      const verticalAo = Math.min(1, Math.max(0, (ny + 0.55) / 1.45));
+      const shadowMix = Math.min(1, verticalAo * 0.65 + (1 - lightEnergy) * 0.55);
+
+      // 3-way color blend: bounceShadow -> midOcclusion -> sunlitCore -> rimLight
+      const baseAndMid = lerpRgb(palette.midOcclusion, palette.bounceShadow, shadowMix);
+      const litColor = lerpRgb(baseAndMid, palette.sunlitCore, lightEnergy);
+      const finalRgb = lerpRgb(litColor, palette.rimLight, Math.min(1, rimFactor * 0.95));
+
+      const alphaScale = kind === 'cirrus' ? 0.52 : kind === 'altocumulus' ? 0.88 : 0.94;
+      const alpha = Math.min(1, Math.pow(d, 0.85) * alphaScale);
+
+      const idx = (py * width + px) * 4;
+      data[idx] = Math.round(finalRgb[0]);
+      data[idx + 1] = Math.round(finalRgb[1]);
+      data[idx + 2] = Math.round(finalRgb[2]);
+      data[idx + 3] = Math.round(alpha * 255);
     }
   }
 
-  // Pass 2: Volumetric Core + Internal Folds + Sky-Bounce Ambient Occlusion Undersides
-  for (const lobe of lobes) {
-    const cx = w * (0.5 + lobe.ox);
-    const cy = h * (0.52 + lobe.oy);
-    // Vertical height fraction within cloud: 0 = crown (sunlit), 1 = base (AO + sky bounce)
-    const verticalAo = smoothstep(-0.22, 0.22, lobe.oy);
-    const coreRgb = lerpRgb(palette.litRgb, palette.aoBounceRgb, verticalAo * 0.85);
-    const foldRgb = lerpRgb(palette.midRgb, palette.stormCoreRgb, storm * 0.65 + verticalAo * 0.35);
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(1, lobe.ry / lobe.rx);
-
-    // Offset gradient focal point toward the sun for 3D spherical volume
-    const focalX = sunDirX * lobe.rx * 0.28;
-    const focalY = sunDirY * lobe.rx * 0.28;
-    const grad = ctx.createRadialGradient(focalX, focalY, lobe.rx * 0.05, 0, 0, lobe.rx);
-
-    const alphaCore = clamp01(lobe.density * (0.52 + storm * 0.24));
-    grad.addColorStop(0, rgbToCss(coreRgb, alphaCore));
-    grad.addColorStop(0.48, rgbToCss(foldRgb, alphaCore * 0.72));
-    grad.addColorStop(0.78, rgbToCss(palette.aoBounceRgb, alphaCore * 0.32));
-    grad.addColorStop(1, rgbToCss(palette.aoBounceRgb, 0));
-
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(0, 0, lobe.rx, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  return canvas;
+  ctx.putImageData(img, 0, 0);
+  return { canvas, kind, width, height };
 }
 
 // ============================================================================
-// 4. MULTI-PLANE PARALLAX CLOUD DEFINITIONS (3 DEPTH PLANES + EDGE DEFORMATION)
+// 4. MULTI-PLANE PARALLAX CLOUD ENTITIES
 // ============================================================================
 
-type DepthPlane = 0 | 1 | 2; // 0 = High Cirrus, 1 = Mid Altocumulus, 2 = Low Stratocumulus
-
-interface CloudNodeLobe {
+interface PuffSubNode {
+  ox: number; // normalized offset X (-0.4 .. 0.4 of cloud width)
+  oy: number; // normalized offset Y
+  scaleW: number;
+  scaleH: number;
   spriteIdx: number;
-  dx: number;
-  dy: number;
-  scaleX: number;
-  scaleY: number;
-  phaseOffset: number;
-  deformAmp: number;
+  morphPhase: number;
+  morphSpeed: number;
+  alpha: number;
 }
 
 interface CloudCluster {
-  plane: DepthPlane;
-  archetype: PuffArchetype;
-  baseX: number; // 0..1 normalized horizontal start
-  baseY: number; // 0..1 normalized vertical position in upper sky
-  width: number;
-  height: number;
-  speedMul: number;
-  alpha: number;
-  lobes: CloudNodeLobe[];
+  plane: 0 | 1 | 2; // 0 = Cirrus (high), 1 = Altocumulus (mid), 2 = Stratocumulus (low)
+  baseW: number; // relative to screen width
+  baseH: number;
+  topFrac: number; // vertical anchor fraction of screen height
+  phase: number; // initial horizontal progress [0..1]
+  speedMult: number;
+  opacity: number;
+  subPuffs: PuffSubNode[];
 }
 
-function buildCloudClusters(count: number, W: number, H: number, storm: number): CloudCluster[] {
-  const r = seeded(901);
+function generateCloudClusters(seed = 701): CloudCluster[] {
   const clusters: CloudCluster[] = [];
+  let s = seed;
+  const rand = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
 
-  // Plane 0: High-Altitude Cirrus (slow, wispy, upper sky)
-  const cirrusCount = Math.max(3, Math.round(count * 0.45));
-  for (let i = 0; i < cirrusCount; i++) {
-    const w = W * (0.48 + r() * 0.42);
-    const h = w * 0.32;
-    clusters.push({
-      plane: 0,
-      archetype: 'cirrus',
-      baseX: (i / cirrusCount + r() * 0.15) % 1,
-      baseY: H * (0.01 + r() * 0.16),
-      width: w,
-      height: h,
-      speedMul: 0.22 + r() * 0.08,
-      alpha: 0.45 + r() * 0.35,
-      lobes: [
-        { spriteIdx: i % 2, dx: 0, dy: 0, scaleX: 1, scaleY: 1, phaseOffset: r() * 6.28, deformAmp: 0.04 },
-        { spriteIdx: (i + 1) % 2, dx: w * 0.22, dy: -h * 0.08, scaleX: 0.85, scaleY: 0.75, phaseOffset: r() * 6.28, deformAmp: 0.05 },
-      ],
-    });
-  }
-
-  // Plane 1: Mid-Ground Altocumulus / Cumulus (primary volumetric masses, medium speed, internal turbulence)
-  const midCount = Math.max(4, count);
-  for (let i = 0; i < midCount; i++) {
-    const w = W * (0.46 + r() * 0.44);
-    const h = w * 0.56;
-    const isMammatus = storm > 0.45 && i % 2 === 0;
-    const subLobes: CloudNodeLobe[] = Array.from({ length: 3 }, (_, l) => ({
-      spriteIdx: (i + l) % 3,
-      dx: (l - 1) * w * 0.24 + (r() - 0.5) * w * 0.06,
-      dy: (l === 1 ? -0.06 : 0.04) * h + (r() - 0.5) * h * 0.04,
-      scaleX: l === 1 ? 1.08 : 0.86 + r() * 0.18,
-      scaleY: l === 1 ? 1.05 : 0.84 + r() * 0.16,
-      phaseOffset: r() * Math.PI * 2,
-      deformAmp: 0.06 + r() * 0.04,
+  // Plane 0: High-Altitude Cirrus (very slow, wispy, sheared filaments)
+  for (let i = 0; i < 4; i++) {
+    const subPuffs: PuffSubNode[] = Array.from({ length: 3 }, (_, j) => ({
+      ox: (j - 1) * 0.24 + (rand() - 0.5) * 0.08,
+      oy: (rand() - 0.5) * 0.08,
+      scaleW: 0.65 + rand() * 0.45,
+      scaleH: 0.4 + rand() * 0.25,
+      spriteIdx: j % 2,
+      morphPhase: rand() * Math.PI * 2,
+      morphSpeed: 0.25 + rand() * 0.2,
+      alpha: 0.55 + rand() * 0.35,
     }));
     clusters.push({
-      plane: 1,
-      archetype: isMammatus ? 'mammatus' : 'altocumulus',
-      baseX: (i / midCount + r() * 0.12) % 1,
-      baseY: H * (0.02 + r() * 0.22),
-      width: w,
-      height: h,
-      speedMul: 0.54 + r() * 0.18,
-      alpha: 0.68 + r() * 0.28,
-      lobes: subLobes,
+      plane: 0,
+      baseW: 0.65 + rand() * 0.4,
+      baseH: 0.12 + rand() * 0.05,
+      topFrac: 0.01 + rand() * 0.14,
+      phase: (i / 4 + rand() * 0.12) % 1,
+      speedMult: 0.22 + rand() * 0.06,
+      opacity: 0.55 + rand() * 0.3,
+      subPuffs,
     });
   }
 
-  // Plane 2: Foreground / Low-Altitude Stratocumulus (fast, broad, pronounced motion stretch)
-  const lowCount = Math.max(3, Math.round(count * 0.55));
-  for (let i = 0; i < lowCount; i++) {
-    const w = W * (0.58 + r() * 0.48);
-    const h = w * 0.5;
+  // Plane 1: Mid-Ground Altocumulus / Cumulus (primary volumetric masses, billowy turbulence)
+  for (let i = 0; i < 5; i++) {
+    const subPuffs: PuffSubNode[] = Array.from({ length: 5 }, (_, j) => {
+      const t = j / 4 - 0.5;
+      return {
+        ox: t * 0.52 + (rand() - 0.5) * 0.08,
+        oy: Math.abs(t) * 0.12 + (rand() - 0.5) * 0.06,
+        scaleW: (1 - Math.abs(t) * 0.35) * (0.62 + rand() * 0.28),
+        scaleH: (1 - Math.abs(t) * 0.3) * (0.65 + rand() * 0.3),
+        spriteIdx: 2 + (j % 3),
+        morphPhase: rand() * Math.PI * 2,
+        morphSpeed: 0.45 + rand() * 0.35,
+        alpha: 0.75 + rand() * 0.25,
+      };
+    });
+    clusters.push({
+      plane: 1,
+      baseW: 0.58 + rand() * 0.38,
+      baseH: 0.22 + rand() * 0.08,
+      topFrac: 0.03 + rand() * 0.18,
+      phase: (i / 5 + rand() * 0.1) % 1,
+      speedMult: 0.52 + rand() * 0.14,
+      opacity: 0.78 + rand() * 0.22,
+      subPuffs,
+    });
+  }
+
+  // Plane 2: Foreground Low-Altitude Stratocumulus (faster drift, dense undersides, motion stretch)
+  for (let i = 0; i < 4; i++) {
+    const subPuffs: PuffSubNode[] = Array.from({ length: 4 }, (_, j) => {
+      const t = j / 3 - 0.5;
+      return {
+        ox: t * 0.56 + (rand() - 0.5) * 0.07,
+        oy: 0.05 + (rand() - 0.5) * 0.06,
+        scaleW: 0.72 + rand() * 0.32,
+        scaleH: 0.58 + rand() * 0.25,
+        spriteIdx: 5 + (j % 2),
+        morphPhase: rand() * Math.PI * 2,
+        morphSpeed: 0.65 + rand() * 0.4,
+        alpha: 0.8 + rand() * 0.2,
+      };
+    });
     clusters.push({
       plane: 2,
-      archetype: 'stratocumulus',
-      baseX: (i / lowCount + r() * 0.18) % 1,
-      baseY: H * (0.08 + r() * 0.24),
-      width: w,
-      height: h,
-      speedMul: 0.92 + r() * 0.22,
-      alpha: 0.74 + r() * 0.24,
-      lobes: [
-        { spriteIdx: i % 2, dx: -w * 0.18, dy: h * 0.03, scaleX: 1.05, scaleY: 0.9, phaseOffset: r() * 6.28, deformAmp: 0.07 },
-        { spriteIdx: (i + 1) % 2, dx: w * 0.16, dy: 0, scaleX: 1.12, scaleY: 0.94, phaseOffset: r() * 6.28, deformAmp: 0.08 },
-      ],
+      baseW: 0.68 + rand() * 0.42,
+      baseH: 0.2 + rand() * 0.07,
+      topFrac: 0.1 + rand() * 0.18,
+      phase: (i / 4 + rand() * 0.15) % 1,
+      speedMult: 0.92 + rand() * 0.18,
+      opacity: 0.82 + rand() * 0.18,
+      subPuffs,
     });
   }
 
   return clusters;
 }
 
+export interface VolumetricCloudLayerProps {
+  opacity: Animated.Value;
+  /** Cloud cover density in [0, 1]. */
+  cover: number;
+  /** Normalized wind speed in [0, 1]. */
+  wind: number;
+  /** Horizontal wind direction: 1 (left->right) or -1 (right->left). */
+  windDir: 1 | -1;
+  /** Active solar state for physically inspired scattering palette. */
+  solar?: SolarState;
+  /** Sun elevation in [0, 1]. */
+  sunElevation?: number;
+  /** Thunderstorm intensity in [0, 1]. */
+  storm?: number;
+  /** Rain intensity in [0, 1]. */
+  rain?: number;
+  /** Legacy fallback light hex. */
+  light?: string;
+  /** Legacy fallback shade hex. */
+  shade?: string;
+  /** Legacy count prop. */
+  count?: number;
+}
+
 // ============================================================================
-// 5. WEB HTML5 CANVAS 2D VOLUMETRIC RENDERER (OFFSCREEN BLIT + 60 FPS LOOP)
+// 5. WEB HTML5 CANVAS 2D OFF-SCREEN BLITTING RENDERER (60 FPS)
 // ============================================================================
 
 function WebVolumetricCloudCanvas({
   cover,
   wind,
   windDir,
-  light,
-  shade,
-  sunElevation = 0.6,
-  colorTemp = 0,
-  storm = 0,
-  count,
-}: Omit<VolumetricCloudProps, 'opacity'>) {
+  palette,
+  storm,
+}: {
+  cover: number;
+  wind: number;
+  windDir: 1 | -1;
+  palette: VolumetricPalette;
+  storm: number;
+}) {
   const { width: W, height: H } = useWindowDimensions();
-  const hostRef = useRef<React.ComponentRef<typeof View> | null>(null);
+  const hostRef = useRef<HTMLElement | null>(null);
+  const clusters = useMemo(() => generateCloudClusters(701), []);
 
-  // Keep live dynamic props in a ref so the 60 FPS RAF loop reads wind/cover without tearing down the canvas
-  const livePropsRef = useRef({ cover, wind, windDir, storm, sunElevation });
+  // Keep latest dynamic weather props in a ref so the 60fps rAF loop never restarts on prop ticks
+  const stateRef = useRef({ cover, wind, windDir, storm, palette });
   useEffect(() => {
-    livePropsRef.current = { cover, wind, windDir, storm, sunElevation };
-  }, [cover, wind, windDir, storm, sunElevation]);
+    stateRef.current = { cover, wind, windDir, storm, palette };
+  }, [cover, wind, windDir, storm, palette]);
 
-  const palette = useMemo(
-    () => computeVolumetricPalette(light, shade, sunElevation, colorTemp, storm),
-    [light, shade, sunElevation, colorTemp, storm],
+  // Pre-render the 7 offscreen volumetric fBm puff sprites whenever the lighting palette changes
+  const paletteKey = useMemo(
+    () =>
+      `${palette.rimLight.join(',')}-${palette.sunlitCore.join(',')}-${palette.bounceShadow.join(',')}-${Math.round(storm * 5)}`,
+    [palette, storm],
   );
 
-  const clusters = useMemo(
-    () => buildCloudClusters(count, Math.max(320, W), Math.max(480, H), storm),
-    [count, W, H, storm],
-  );
+  const spriteBankRef = useRef<OffscreenPuffSprite[]>([]);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const bank: OffscreenPuffSprite[] = [
+      buildVolumetricPuffSprite('cirrus', 101, palette, storm),
+      buildVolumetricPuffSprite('cirrus', 203, palette, storm),
+      buildVolumetricPuffSprite('altocumulus', 307, palette, storm),
+      buildVolumetricPuffSprite('altocumulus', 409, palette, storm),
+      buildVolumetricPuffSprite('altocumulus', 521, palette, storm),
+      buildVolumetricPuffSprite('stratocumulus', 613, palette, storm),
+      buildVolumetricPuffSprite('stratocumulus', 727, palette, storm),
+    ];
+    const previous = spriteBankRef.current;
+    spriteBankRef.current = bank;
+    return () => {
+      // Release detached offscreen canvas backing memory
+      previous.forEach((s) => {
+        s.canvas.width = 0;
+        s.canvas.height = 0;
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteKey]);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-    const hostNode = hostRef.current as unknown as HTMLElement | null;
-    if (!hostNode || typeof hostNode.appendChild !== 'function') return;
-
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
-    const cw = Math.max(1, Math.round(W));
-    const ch = Math.max(1, Math.round(H * 0.56)); // Cloud canopy covers upper 56% of viewport
+    const container = hostRef.current;
+    if (!container || typeof container.appendChild !== 'function') return;
 
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(cw * dpr);
-    canvas.height = Math.round(ch * dpr);
-    canvas.style.width = `${cw}px`;
-    canvas.style.height = `${ch}px`;
     canvas.style.position = 'absolute';
-    canvas.style.left = '0px';
-    canvas.style.top = '0px';
+    canvas.style.top = '0';
+    canvas.style.left = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
     canvas.style.pointerEvents = 'none';
-    hostNode.appendChild(canvas);
+    container.appendChild(canvas);
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      hostNode.removeChild(canvas);
-      return;
-    }
-
-    // Pre-render detached offscreen sprite atlas (2 cirrus, 3 altocumulus, 2 stratocumulus, 2 mammatus)
-    const offscreenSprites: Record<PuffArchetype, HTMLCanvasElement[]> = {
-      cirrus: [
-        createOffscreenPuffSprite('cirrus', 101, palette, sunElevation, storm),
-        createOffscreenPuffSprite('cirrus', 202, palette, sunElevation, storm),
-      ].filter((c): c is HTMLCanvasElement => c !== null),
-      altocumulus: [
-        createOffscreenPuffSprite('altocumulus', 303, palette, sunElevation, storm),
-        createOffscreenPuffSprite('altocumulus', 404, palette, sunElevation, storm),
-        createOffscreenPuffSprite('altocumulus', 505, palette, sunElevation, storm),
-      ].filter((c): c is HTMLCanvasElement => c !== null),
-      stratocumulus: [
-        createOffscreenPuffSprite('stratocumulus', 606, palette, sunElevation, storm),
-        createOffscreenPuffSprite('stratocumulus', 707, palette, sunElevation, storm),
-      ].filter((c): c is HTMLCanvasElement => c !== null),
-      mammatus: [
-        createOffscreenPuffSprite('mammatus', 808, palette, sunElevation, storm),
-        createOffscreenPuffSprite('mammatus', 909, palette, sunElevation, storm),
-      ].filter((c): c is HTMLCanvasElement => c !== null),
-    };
-
+    const ctx = canvas.getContext('2d', { alpha: true });
     let rafId = 0;
     let lastTime = performance.now();
-    let driftAccumulator = 0;
-    let morphTime = 0;
+    let elapsed = 0;
+    let driftProgress = 0;
     let lightningPulse = 0;
-    let nextLightningAt = performance.now() + 2400 + Math.random() * 4200;
+    let nextLightningAt = 2.2 + Math.random() * 3.5;
+
+    const handleResize = () => {
+      // Cap internal render resolution to 1.25x DPR to guarantee 60 FPS on mobile/laptop GPUs
+      const dpr = Math.min(1.25, window.devicePixelRatio || 1);
+      canvas.width = Math.max(1, Math.floor(W * dpr));
+      canvas.height = Math.max(1, Math.floor(H * dpr));
+      if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    handleResize();
 
     const renderFrame = (now: number) => {
-      const dt = Math.min(0.05, Math.max(0.001, (now - lastTime) / 1000));
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
       lastTime = now;
+      elapsed += dt;
 
-      const {
-        cover: curCover,
-        wind: curWind,
-        windDir: curDir,
-        storm: curStorm,
-      } = livePropsRef.current;
+      const { cover: cCover, wind: cWind, windDir: cDir, storm: cStorm, palette: cPal } = stateRef.current;
+      // Base angular velocity scales with wind speed (calm drift -> gale-force stream)
+      const baseVel = 0.0045 + cWind * 0.022;
+      driftProgress += dt * baseVel * cDir;
 
-      // Pixels per second base velocity scaled by active wind speed
-      const baseSpeedPx = 14 + curWind * 58;
-      driftAccumulator += dt * baseSpeedPx * curDir;
-      morphTime += dt * (0.45 + curWind * 0.75);
-
-      // Storm internal sheet-lightning illumination pulse
-      if (curStorm > 0.15 && now >= nextLightningAt) {
-        lightningPulse = 0.65 + Math.random() * 0.35;
-        nextLightningAt = now + (2800 + Math.random() * 5500) / (0.6 + curStorm);
+      // Internal thunderstorm subsurface lightning pulse
+      if (cStorm > 0.08) {
+        if (elapsed >= nextLightningAt) {
+          lightningPulse = 0.75 + Math.random() * 0.25;
+          nextLightningAt = elapsed + (2.5 + Math.random() * 5.0) / (0.6 + cStorm * 0.6);
+        }
+        lightningPulse = Math.max(0, lightningPulse - dt * 3.6);
+      } else {
+        lightningPulse = 0;
       }
-      lightningPulse = Math.max(0, lightningPulse - dt * 3.2);
 
-      ctx.save();
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, cw, ch);
+      if (ctx && spriteBankRef.current.length > 0) {
+        const skyH = H * 0.54; // Clouds live in the upper 54% of the viewport
+        ctx.clearRect(0, 0, W, skyH);
 
-      // Upper-sky atmospheric zenith veil so cloud tops fuse with the sky gradient
-      const veilGrad = ctx.createLinearGradient(0, 0, 0, ch * 0.72);
-      veilGrad.addColorStop(0, rgbToCss(palette.aoBounceRgb, 0.38 * curCover));
-      veilGrad.addColorStop(0.55, rgbToCss(palette.midRgb, 0.16 * curCover));
-      veilGrad.addColorStop(1, rgbToCss(palette.aoBounceRgb, 0));
-      ctx.fillStyle = veilGrad;
-      ctx.fillRect(0, 0, cw, ch * 0.72);
+        // Determine visible cluster count from cloud cover
+        const visibleRatio = Math.min(1, 0.35 + cCover * 0.65);
 
-      const coverVis = clamp01(0.32 + curCover * 0.78);
-      // Wind-velocity horizontal stretch & shear angle
-      const lowAltitudeStretch = 1 + curWind * 0.24;
-      const upperShear = curDir * (0.06 + curWind * 0.18);
+        for (let i = 0; i < clusters.length; i++) {
+          const cl = clusters[i];
+          const clusterWeight = Math.min(1, Math.max(0, (cCover * clusters.length - i * 0.55) / 2.2));
+          if (clusterWeight <= 0.02) continue;
 
-      for (const cluster of clusters) {
-        const sprites = offscreenSprites[cluster.archetype];
-        if (!sprites || sprites.length === 0) continue;
-
-        const spanW = cw + cluster.width * 1.6;
-        const rawX = cluster.baseX * spanW + driftAccumulator * cluster.speedMul;
-        const wrappedX = (((rawX % spanW) + spanW) % spanW) - cluster.width * 0.8;
-
-        // Plane-specific atmospheric blending:
-        // Plane 0 (Cirrus) uses 'screen' for translucent ice-crystal scatter;
-        // Plane 1 & 2 use 'source-over' with a soft-light/screen rim pass
-        ctx.globalCompositeOperation = cluster.plane === 0 ? 'screen' : 'source-over';
-
-        for (const lobe of cluster.lobes) {
-          const sprite = sprites[lobe.spriteIdx % sprites.length];
-          // Continuous procedural edge deformation (subtle boiling/breathing over time)
-          const phase = morphTime + lobe.phaseOffset;
-          const breatheX = 1 + Math.sin(phase) * lobe.deformAmp;
-          const breatheY = 1 + Math.cos(phase * 0.83) * lobe.deformAmp;
-          const driftLobeY = Math.sin(phase * 0.62) * 6;
-
-          const drawW =
-            cluster.width *
-            lobe.scaleX *
-            breatheX *
-            (cluster.plane === 2 ? lowAltitudeStretch : 1);
-          const drawH = cluster.height * lobe.scaleY * breatheY;
-          const cx = wrappedX + cluster.width * 0.5 + lobe.dx;
-          const cy = cluster.baseY + cluster.height * 0.42 + lobe.dy + driftLobeY;
+          const cw = W * cl.baseW * (0.85 + 0.25 * cCover);
+          const ch = H * cl.baseH * (0.85 + 0.2 * cCover);
+          const spanW = W + cw * 1.4;
+          const wrapped = (((cl.phase + driftProgress * cl.speedMult) % 1) + 1) % 1;
+          const cx = -cw * 0.7 + wrapped * spanW;
+          const cy = H * cl.topFrac + ch * 0.42;
 
           ctx.save();
-          ctx.translate(cx, cy);
-          if (cluster.plane === 0) {
-            ctx.transform(1, 0, upperShear, 1, 0, 0);
-          }
-          ctx.globalAlpha = clamp01(cluster.alpha * coverVis);
-          ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
-
-          // Internal subsurface lightning illumination pulse during thunderstorms
-          if (lightningPulse > 0.02 && cluster.plane >= 1) {
+          // Plane-specific atmospheric blending & upper-wind shear
+          if (cl.plane === 0) {
+            // High-altitude Cirrus: soft additive screen blend + wind shear slant
             ctx.globalCompositeOperation = 'screen';
-            ctx.globalAlpha = clamp01(lightningPulse * 0.42 * cluster.alpha);
-            ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
+            const shear = cDir * (0.18 + cWind * 0.35);
+            ctx.transform(1, 0, shear, 1, cx, cy);
+          } else if (cl.plane === 2) {
+            // Low-altitude Stratocumulus: subtle horizontal wind stretch (motion blur cue)
+            ctx.globalCompositeOperation = 'source-over';
+            const stretch = 1 + cWind * 0.16;
+            ctx.transform(stretch, 0, 0, 1, cx, cy);
+          } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.translate(cx, cy);
           }
+
+          // Render evolving sub-puffs (procedural edge deformation via continuous time `elapsed`)
+          const clusterAlpha = cl.opacity * visibleRatio * clusterWeight;
+          for (let j = 0; j < cl.subPuffs.length; j++) {
+            const p = cl.subPuffs[j];
+            const sprite = spriteBankRef.current[p.spriteIdx];
+            if (!sprite) continue;
+
+            const theta = elapsed * p.morphSpeed + p.morphPhase;
+            const deformX = Math.sin(theta) * cw * 0.035;
+            const deformY = Math.cos(theta * 0.85) * ch * 0.04;
+            const breatheW = 1 + Math.sin(theta * 0.7) * 0.06;
+            const breatheH = 1 + Math.cos(theta * 0.7) * 0.06;
+
+            const pw = cw * p.scaleW * breatheW;
+            const ph = ch * p.scaleH * breatheH;
+            const px = p.ox * cw + deformX - pw * 0.5;
+            const py = p.oy * ch + deformY - ph * 0.5;
+
+            ctx.globalAlpha = Math.min(1, clusterAlpha * p.alpha);
+            ctx.drawImage(sprite.canvas, px, py, pw, ph);
+          }
+
+          // Internal subsurface lightning illumination glow inside storm clouds
+          if (lightningPulse > 0.02 && cl.plane >= 1) {
+            ctx.globalCompositeOperation = 'screen';
+            ctx.globalAlpha = lightningPulse * 0.55 * clusterWeight;
+            const [lr, lg, lb] = cPal.lightningCore;
+            const grad = ctx.createRadialGradient(0, 0, cw * 0.04, 0, 0, cw * 0.45);
+            grad.addColorStop(0, `rgba(${lr},${lg},${lb},0.95)`);
+            grad.addColorStop(0.5, `rgba(${lr},${lg},${lb},0.35)`);
+            grad.addColorStop(1, `rgba(${lr},${lg},${lb},0)`);
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, cw * 0.45, ch * 0.42, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
           ctx.restore();
         }
+
+        // Edge Soft-Masking: vertical alpha feather so clouds dissipate organically above UI cards
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-in';
+        const maskGrad = ctx.createLinearGradient(0, 0, 0, skyH);
+        maskGrad.addColorStop(0, 'rgba(0,0,0,0.92)');
+        maskGrad.addColorStop(0.58, 'rgba(0,0,0,0.96)');
+        maskGrad.addColorStop(0.86, 'rgba(0,0,0,0.35)');
+        maskGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = maskGrad;
+        ctx.fillRect(0, 0, W, skyH);
+        ctx.restore();
       }
 
-      // Soft vertical dissipation mask so clouds fade out organically before reaching foreground UI
-      ctx.globalCompositeOperation = 'destination-in';
-      const maskGrad = ctx.createLinearGradient(0, 0, 0, ch);
-      maskGrad.addColorStop(0, 'rgba(0,0,0,0.96)');
-      maskGrad.addColorStop(0.62, 'rgba(0,0,0,0.88)');
-      maskGrad.addColorStop(0.86, 'rgba(0,0,0,0.32)');
-      maskGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = maskGrad;
-      ctx.fillRect(0, 0, cw, ch);
-
-      ctx.restore();
       rafId = requestAnimationFrame(renderFrame);
     };
 
     rafId = requestAnimationFrame(renderFrame);
 
-    // Complete cleanup on unmount or dimension/palette change
     return () => {
       cancelAnimationFrame(rafId);
-      Object.values(offscreenSprites).forEach((list) =>
-        list.forEach((s) => {
-          s.width = 0;
-          s.height = 0;
-        }),
-      );
       canvas.width = 0;
       canvas.height = 0;
-      if (canvas.parentNode === hostNode) {
-        hostNode.removeChild(canvas);
+      if (canvas.parentNode) {
+        canvas.parentNode.removeChild(canvas);
       }
     };
-  }, [W, H, palette, clusters, sunElevation, storm]);
-
-  return <View ref={hostRef} pointerEvents="none" style={StyleSheet.absoluteFill} />;
-}
-
-// ============================================================================
-// 6. NATIVE iOS / ANDROID VOLUMETRIC SVG FALLBACK (fBm LOBES + RADIAL SCATTER)
-// ============================================================================
-
-function NativeVolumetricPuff({
-  w,
-  seed,
-  plane,
-  palette,
-  storm,
-}: {
-  w: number;
-  seed: number;
-  plane: DepthPlane;
-  palette: VolumetricPalette;
-  storm: number;
-}) {
-  const h = w * (plane === 0 ? 0.36 : 0.56);
-  const lobes = useMemo(() => {
-    const r = seeded(seed);
-    if (plane === 0) {
-      return Array.from({ length: 5 }, (_, i) => ({
-        cx: 35 + i * 32 + (r() - 0.5) * 12,
-        cy: 45 + (r() - 0.5) * 16,
-        rx: 42 + r() * 28,
-        ry: 8 + r() * 6,
-        ao: 0.15,
-      }));
-    }
-    return Array.from({ length: 9 }, (_, i) => {
-      const t = i / 8;
-      const n = fbm2D(t * 2.4 + seed, seed * 0.37, 4);
-      const isCrown = i >= 2 && i <= 6;
-      return {
-        cx: 28 + t * 144 + (r() - 0.5) * 12,
-        cy: isCrown ? 38 + (1 - n) * 22 : 62 + (r() - 0.5) * 8,
-        rx: (26 + n * 28) * (plane === 2 ? 1.15 : 1),
-        ry: 22 + n * 24,
-        ao: isCrown ? 0.15 : 0.78,
-      };
-    });
-  }, [seed, plane]);
-
-  const idPrefix = `vpuff-${plane}-${seed}`;
-  const rimHex = rgbToCss(palette.rimRgb, 1);
-  const litHex = rgbToCss(palette.litRgb, 1);
-  const midHex = rgbToCss(palette.midRgb, 1);
-  const aoHex = rgbToCss(palette.aoBounceRgb, 1);
+  }, [W, H, clusters]);
 
   return (
-    <Svg width={w} height={h} viewBox="0 0 200 110">
-      <Defs>
-        {/* Subsurface scattering silver-lining radial gradient */}
-        <RadialGradient id={`${idPrefix}-crown`} cx="46%" cy="28%" r="62%">
-          <Stop offset="0%" stopColor={rimHex} stopOpacity={0.92 - storm * 0.25} />
-          <Stop offset="38%" stopColor={litHex} stopOpacity={0.82} />
-          <Stop offset="76%" stopColor={midHex} stopOpacity={0.45} />
-          <Stop offset="100%" stopColor={aoHex} stopOpacity={0} />
-        </RadialGradient>
-        {/* Self-shadowed sky-bounce ambient occlusion underside gradient */}
-        <RadialGradient id={`${idPrefix}-base`} cx="50%" cy="42%" r="58%">
-          <Stop offset="0%" stopColor={midHex} stopOpacity={0.78} />
-          <Stop offset="58%" stopColor={aoHex} stopOpacity={0.62} />
-          <Stop offset="100%" stopColor={aoHex} stopOpacity={0} />
-        </RadialGradient>
-      </Defs>
-      <G>
-        {lobes.map((l, idx) => (
-          <Ellipse
-            key={idx}
-            cx={l.cx}
-            cy={l.cy}
-            rx={l.rx}
-            ry={l.ry}
-            fill={l.ao > 0.5 ? `url(#${idPrefix}-base)` : `url(#${idPrefix}-crown)`}
-          />
-        ))}
-      </G>
-    </Svg>
+    <View
+      ref={(node) => {
+        hostRef.current = node as unknown as HTMLElement | null;
+      }}
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+    />
   );
 }
 
-function NativeVolumetricCloudLayer({
+// ============================================================================
+// 6. NATIVE MULTI-PLANE VOLUMETRIC SVG FALLBACK (iOS / Android)
+// ============================================================================
+
+function NativeVolumetricCloudPlane({
   cover,
   wind,
   windDir,
-  light,
-  shade,
-  sunElevation = 0.6,
-  colorTemp = 0,
-  storm = 0,
-  count,
-}: Omit<VolumetricCloudProps, 'opacity'>) {
+  palette,
+}: {
+  cover: number;
+  wind: number;
+  windDir: 1 | -1;
+  palette: VolumetricPalette;
+}) {
   const { width: W, height: H } = useWindowDimensions();
-  const speed = 1 - 0.65 * wind;
-  // 3 distinct parallax plane loops: Plane 0 (Cirrus), Plane 1 (Altocumulus), Plane 2 (Stratocumulus)
-  const loopCirrus = useLoop(240000 * speed);
-  const loopMid = useLoop(145000 * speed);
-  const loopLow = useLoop(88000 * speed);
+  const speedScale = 1 - 0.65 * wind;
+  // 3 distinct parallax depth loops: Cirrus (slowest), Altocumulus (mid), Stratocumulus (fastest)
+  const loopCirrus = useLoop(240000 * speedScale);
+  const loopAlto = useLoop(145000 * speedScale);
+  const loopStrato = useLoop(88000 * speedScale);
   const morphLoop = useLoop(9500, Easing.inOut(Easing.sin));
-  const loops = [loopCirrus, loopMid, loopLow];
 
-  const palette = useMemo(
-    () => computeVolumetricPalette(light, shade, sunElevation, colorTemp, storm),
-    [light, shade, sunElevation, colorTemp, storm],
-  );
+  const rimHex = rgbToHex(palette.rimLight);
+  const coreHex = rgbToHex(palette.sunlitCore);
+  const midHex = rgbToHex(palette.midOcclusion);
+  const bounceHex = rgbToHex(palette.bounceShadow);
 
-  const items = useParticles(count + 4, 73, (r, i) => {
-    const plane: DepthPlane = i % 4 === 0 ? 0 : i % 3 === 0 ? 2 : 1;
-    const wScale = plane === 0 ? 0.62 + r() * 0.35 : plane === 2 ? 0.68 + r() * 0.45 : 0.54 + r() * 0.42;
+  const items = useParticles(10, 701, (r, i) => {
+    const plane = (i % 3) as 0 | 1 | 2;
     return {
       plane,
-      seed: 100 + i * 17,
-      w: W * wScale,
-      top:
-        plane === 0
-          ? H * (0.01 + r() * 0.14)
-          : plane === 1
-            ? H * (0.03 + r() * 0.22)
-            : H * (0.08 + r() * 0.24),
-      phase: (i / (count + 4) + r() * 0.12) % 1,
-      alpha: (plane === 0 ? 0.52 : plane === 1 ? 0.78 : 0.86) * (0.7 + r() * 0.3),
-      morphAmp: 4 + r() * 6,
+      w: W * (plane === 0 ? 0.72 + r() * 0.35 : 0.58 + r() * 0.42),
+      top: H * (plane === 0 ? 0.01 + r() * 0.12 : plane === 1 ? 0.04 + r() * 0.16 : 0.1 + r() * 0.16),
+      phase: (i / 10 + r() * 0.08) % 1,
+      alpha: (plane === 0 ? 0.45 : plane === 1 ? 0.78 : 0.85) * (0.7 + r() * 0.3),
     };
-  });
+  }).sort((a, b) => a.plane - b.plane);
 
-  const morphScale = morphLoop.interpolate({
+  const loops = [loopCirrus, loopAlto, loopStrato];
+  const morphScaleX = morphLoop.interpolate({
     inputRange: [0, 0.5, 1],
     outputRange: [0.96, 1.05, 0.96],
   });
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <Svg width={W} height={H * 0.48} style={StyleSheet.absoluteFill}>
-        <Defs>
-          <SvgLinearGradient id="zenithCloudMask" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0%" stopColor={rgbToCss(palette.aoBounceRgb, 1)} stopOpacity={0.48 * cover} />
-            <Stop offset="100%" stopColor={rgbToCss(palette.aoBounceRgb, 1)} stopOpacity={0} />
-          </SvgLinearGradient>
-          <Circle id="dummy" r={1} />
-          <Mask id="fadeMask">
-            <Rect width={W} height={H * 0.48} fill="#fff" />
-          </Mask>
-        </Defs>
-        <Rect width={W} height={H * 0.42} fill="url(#zenithCloudMask)" />
-      </Svg>
-
-      <View style={[StyleSheet.absoluteFill, { transform: [{ scaleX: windDir }] }]}>
-        {items.map((c, i) => (
-          <Animated.View
-            key={i}
-            style={{
-              position: 'absolute',
-              top: c.top,
-              opacity: c.alpha * Math.min(1, 0.35 + cover * 0.75),
-              transform: [
-                { translateX: phased(loops[c.plane], c.phase, -c.w, W) },
-                { scaleX: morphScale },
-              ],
-            }}
-          >
-            <NativeVolumetricPuff
-              w={c.w}
-              seed={c.seed}
-              plane={c.plane}
-              palette={palette}
-              storm={storm}
-            />
-          </Animated.View>
-        ))}
-      </View>
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { transform: [{ scaleX: windDir }] }]}>
+      {items.map((c, idx) => (
+        <Animated.View
+          key={idx}
+          style={{
+            position: 'absolute',
+            top: c.top,
+            opacity: c.alpha * Math.min(1, 0.32 + cover * 0.68),
+            transform: [
+              { translateX: phased(loops[c.plane], c.phase, -c.w, W) },
+              { scaleX: morphScaleX },
+            ],
+          }}
+        >
+          <Svg width={c.w} height={c.w * 0.48} viewBox="0 0 240 115">
+            <Defs>
+              {/* Subsurface Rim & Sunlit Core Radial Gradient */}
+              <RadialGradient id={`vCore${idx}`} cx="52%" cy="28%" rx="54%" ry="54%">
+                <Stop offset="0%" stopColor={rimHex} stopOpacity={0.96} />
+                <Stop offset="32%" stopColor={coreHex} stopOpacity={0.88} />
+                <Stop offset="72%" stopColor={midHex} stopOpacity={0.48} />
+                <Stop offset="100%" stopColor={midHex} stopOpacity={0} />
+              </RadialGradient>
+              {/* Sky-Bounce Ambient Occlusion Underside Gradient */}
+              <RadialGradient id={`vBase${idx}`} cx="50%" cy="68%" rx="55%" ry="42%">
+                <Stop offset="0%" stopColor={bounceHex} stopOpacity={0.85} />
+                <Stop offset="62%" stopColor={midHex} stopOpacity={0.42} />
+                <Stop offset="100%" stopColor={bounceHex} stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            {c.plane === 0 ? (
+              /* High-Altitude Sheared Cirrus Filaments */
+              <G>
+                <Ellipse cx={120} cy={48} rx={108} ry={16} fill={`url(#vCore${idx})`} />
+                <Ellipse cx={86} cy={38} rx={76} ry={12} fill={`url(#vCore${idx})`} />
+                <Ellipse cx={154} cy={56} rx={72} ry={11} fill={`url(#vCore${idx})`} />
+              </G>
+            ) : (
+              /* Volumetric Altocumulus & Stratocumulus Multi-Puff Cluster */
+              <G>
+                <Ellipse cx={120} cy={78} rx={104} ry={28} fill={`url(#vBase${idx})`} />
+                <Circle cx={68} cy={64} r={38} fill={`url(#vBase${idx})`} />
+                <Circle cx={166} cy={68} r={36} fill={`url(#vBase${idx})`} />
+                <Circle cx={116} cy={48} r={46} fill={`url(#vCore${idx})`} />
+                <Circle cx={72} cy={56} r={36} fill={`url(#vCore${idx})`} />
+                <Circle cx={160} cy={58} r={34} fill={`url(#vCore${idx})`} />
+                <Ellipse cx={120} cy={68} rx={92} ry={24} fill={`url(#vCore${idx})`} />
+              </G>
+            )}
+          </Svg>
+        </Animated.View>
+      ))}
     </View>
   );
 }
@@ -896,14 +815,51 @@ function NativeVolumetricCloudLayer({
 // 7. EXPORTED VOLUMETRIC CLOUD LAYER COMPONENT
 // ============================================================================
 
-export function VolumetricCloudLayer(props: VolumetricCloudProps) {
-  const { opacity, ...rest } = props;
+export function CloudLayer({
+  opacity,
+  cover,
+  wind,
+  windDir,
+  solar = 'afternoon',
+  sunElevation = 0.7,
+  storm = 0,
+  rain = 0,
+}: VolumetricCloudLayerProps) {
+  const { height: H } = useWindowDimensions();
+
+  const palette = useMemo(
+    () => resolveVolumetricPalette(solar, sunElevation, storm, rain),
+    [solar, sunElevation, storm, rain],
+  );
+
+  const upperCanopyColor = useMemo(() => {
+    const [r, g, b] = palette.bounceShadow;
+    return `rgba(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)}, ${(0.42 * cover).toFixed(3)})`;
+  }, [palette.bounceShadow, cover]);
+
   return (
     <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity }]}>
+      {/* Upper-sky atmospheric canopy blend so cloud tops melt seamlessly into the zenith */}
+      <LinearGradient
+        colors={[upperCanopyColor, 'rgba(0,0,0,0)']}
+        style={[StyleSheet.absoluteFill, { height: H * 0.38 }]}
+      />
+
       {Platform.OS === 'web' ? (
-        <WebVolumetricCloudCanvas {...rest} />
+        <WebVolumetricCloudCanvas
+          cover={cover}
+          wind={wind}
+          windDir={windDir}
+          palette={palette}
+          storm={storm}
+        />
       ) : (
-        <NativeVolumetricCloudLayer {...rest} />
+        <NativeVolumetricCloudPlane
+          cover={cover}
+          wind={wind}
+          windDir={windDir}
+          palette={palette}
+        />
       )}
     </Animated.View>
   );

@@ -6,7 +6,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  AppState,
   Dimensions,
   Animated,
   Platform,
@@ -23,8 +22,6 @@ import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as Location from 'expo-location';
-import { profileApi } from '../lib/profile-api';
 import { CEBU_LOCATIONS } from '../lib/cebu-locations';
 import { WeatherBackdrop, compassToDeg } from '../components/sky';
 import {
@@ -48,7 +45,6 @@ const COLLAPSED_ENCLOSURE_HEIGHT = Math.max(
   Math.ceil(TAB_BAR_HEIGHT * 0.6 + 72),
 );
 const EXPANDED_ENCLOSURE_HEIGHT = Math.min(SCREEN_HEIGHT * 0.72, 620);
-const APP_LAUNCH_STARTED_AT = Date.now();
 
 const HOME_MENU_ITEMS = [
   { label: 'Home', image: require('../../assets/images/homepage/home.png') },
@@ -78,27 +74,6 @@ interface CityData {
   rainChance?: number;
   latitude: number;
   longitude: number;
-}
-
-interface HomeLocation {
-  id: string;
-  address: string;
-  latitude: number;
-  longitude: number;
-  city: string | null;
-  province: string | null;
-  barangay: string | null;
-}
-
-interface HomeHazardAlert {
-  id: string;
-  title: string;
-  hazard?: {
-    hazard_type: string;
-    risk_level: string;
-    safety_tips: string[];
-    created_at: string;
-  } | null;
 }
 
 const CITIES: CityData[] = CEBU_LOCATIONS.map((l) => ({
@@ -503,9 +478,6 @@ export default function HomeScreen() {
 
   const tempOffset = isLive ? 0 : selectedCity.temp - 29;
   const [selectedHourId, setSelectedHourId] = useState('2');
-  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
-  const [latestSafetyAlert, setLatestSafetyAlert] = useState<HomeHazardAlert | null>(null);
-  const [locationPromptPending, setLocationPromptPending] = useState(false);
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
@@ -556,86 +528,11 @@ export default function HomeScreen() {
   const menuAnim = useMemo(() => new Animated.Value(0), []);
   const welcomeAnim = useMemo(() => new Animated.Value(0), []);
 
-  const loadHomeProfile = useCallback(async () => {
-    try {
-      const { profile } = await profileApi<{
-        profile: {
-          home_location: HomeLocation | null;
-          location_prompt_dismissed_at: string | null;
-        };
-      }>('/profile');
-      setHomeLocation(profile.home_location);
-
-      try {
-        const { alerts } = await profileApi<{
-          alerts: HomeHazardAlert[];
-          last_updated: string | null;
-        }>('/alerts');
-        setLatestSafetyAlert(alerts.find((alert) => alert.hazard?.safety_tips?.length) ?? null);
-      } catch {
-        // Optional safety tips endpoint
-      }
-
-      const permission = await Location.getForegroundPermissionsAsync();
-      setLocationPromptPending(!permission.granted);
-      if (permission.granted && profile.location_prompt_dismissed_at) {
-        void profileApi('/profile/location-prompt', {
-          method: 'PATCH',
-          body: JSON.stringify({ dismissedAt: null }),
-        }).catch(() => {});
-      } else if (
-        !permission.granted &&
-        profile.location_prompt_dismissed_at &&
-        Date.parse(profile.location_prompt_dismissed_at) < APP_LAUNCH_STARTED_AT
-      ) {
-        router.push({
-          pathname: '/onboarding',
-          params: { startRegistration: 'true', promptOnly: 'true' },
-        });
-      }
-
-      if (profile.home_location) {
-        const name =
-          profile.home_location.city ||
-          profile.home_location.barangay ||
-          profile.home_location.address.split(',')[0] ||
-          'Home';
-        setSelectedCity((current) => ({
-          ...current,
-          name,
-          country: profile.home_location?.province || 'Philippines',
-          latitude: profile.home_location!.latitude,
-          longitude: profile.home_location!.longitude,
-        }));
-      }
-    } catch {
-      // Guest / offline fallback keeps CEBU_LOCATIONS active
-    }
-  }, [router]);
-
   useFocusEffect(
     useCallback(() => {
       void loadProfilePicture();
-      void loadHomeProfile();
-    }, [loadHomeProfile, loadProfilePicture]),
+    }, [loadProfilePicture]),
   );
-
-  useEffect(() => {
-    const checkLocationPermission = async () => {
-      try {
-        const permission = await Location.getForegroundPermissionsAsync();
-        setLocationPromptPending(!permission.granted);
-      } catch {
-        // Ignore if permission check unavailable
-      }
-    };
-
-    void checkLocationPermission();
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void checkLocationPermission();
-    });
-    return () => subscription.remove();
-  }, []);
 
   useEffect(() => {
     if (!welcomeName) return;
@@ -831,60 +728,6 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {locationPromptPending && (
-          <View style={styles.locationBanner}>
-            <View style={styles.locationBannerText}>
-              <Text style={styles.locationBannerTitle}>Enable location</Text>
-              <Text style={styles.locationBannerDescription}>
-                Turn on location access for more relevant local alerts.
-              </Text>
-            </View>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/onboarding',
-                  params: { startRegistration: 'true', promptOnly: 'true' },
-                })
-              }
-              style={styles.locationBannerButton}
-            >
-              <Text style={styles.locationBannerButtonText}>Enable</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {!homeLocation && !locationPromptPending && (
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={() => router.push('/settings_page/edit_profile')}
-            style={styles.locationBanner}
-          >
-            <View style={styles.locationBannerText}>
-              <Text style={styles.locationBannerTitle}>Add a home location</Text>
-              <Text style={styles.locationBannerDescription}>
-                Set a home location to load local weather.
-              </Text>
-            </View>
-            <Text style={styles.locationBannerButtonText}>Set up</Text>
-          </TouchableOpacity>
-        )}
-        {latestSafetyAlert?.hazard ? (
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={() => router.push('/alert_page/alert')}
-            style={styles.aiSummaryCard}
-          >
-            <Text style={styles.aiSummaryEyebrow}>AI WEATHER SAFETY TIPS</Text>
-            <Text style={styles.aiSummaryTitle}>
-              {latestSafetyAlert.hazard.hazard_type} · {latestSafetyAlert.hazard.risk_level}
-            </Text>
-            {latestSafetyAlert.hazard.safety_tips.slice(0, 3).map((tip) => (
-              <Text key={tip} style={styles.aiSummaryTip}>• {tip}</Text>
-            ))}
-            <Text style={styles.aiSummaryDisclaimer}>Follow official PAGASA/LGU advisories. View all alerts ›</Text>
-          </TouchableOpacity>
-        ) : null}
-
         <Animated.View style={[styles.headerSection, { opacity: fadeAnim }]}>
           <TouchableOpacity
             onPress={() => setCitySelectorVisible(true)}
@@ -1483,8 +1326,6 @@ export default function HomeScreen() {
                         pathname: '/settings_page/settings',
                         params: { profilePictureUrl: profilePictureUrl ?? '' },
                       });
-                    } else if (item.label === 'Alerts') {
-                      router.push('/alert_page/alert');
                     } else if (item.label === 'Profile') {
                       router.push('/Profile_page/profile');
                     }
@@ -1627,82 +1468,6 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'ios' ? 58 : 44,
     paddingBottom: 120,
     alignItems: 'center',
-  },
-  locationBanner: {
-    width: '90%',
-    maxWidth: 430,
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    marginBottom: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(18, 26, 52, 0.72)',
-  },
-  locationBannerText: {
-    flex: 1,
-  },
-  locationBannerTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  locationBannerDescription: {
-    color: 'rgba(255,255,255,0.78)',
-    fontSize: 11,
-    marginTop: 3,
-  },
-  locationBannerButton: {
-    minWidth: 58,
-    alignItems: 'center',
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#7000B8',
-  },
-  locationBannerButtonText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  aiSummaryCard: {
-    width: '90%',
-    maxWidth: 430,
-    padding: 15,
-    marginBottom: 14,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.24)',
-    backgroundColor: 'rgba(18, 26, 52, 0.76)',
-  },
-  aiSummaryEyebrow: {
-    color: '#D5B6FF',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-  },
-  aiSummaryTitle: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
-    marginTop: 6,
-    marginBottom: 8,
-  },
-  aiSummaryTip: {
-    color: '#F0E7F8',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 4,
-  },
-  aiSummaryDisclaimer: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 10,
-    marginTop: 10,
   },
   headerSection: {
     width: '100%',

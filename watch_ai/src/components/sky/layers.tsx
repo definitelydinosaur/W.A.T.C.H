@@ -3,7 +3,15 @@ import { Animated, Easing, StyleSheet, View, useWindowDimensions } from 'react-n
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Defs, Ellipse, Mask, Polygon, Polyline, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { phased, useLoop, useParticles } from './animation';
-import { VolumetricCloudLayer, VolumetricCloudProps } from './cloud-layer';
+export {
+  CloudLayer,
+  fbm2D,
+  henyeyGreensteinNormalized,
+  noise2D,
+  resolveVolumetricPalette,
+  warpedFbm2D,
+} from './cloud-layer';
+export type { VolumetricCloudLayerProps, VolumetricPalette } from './cloud-layer';
 
 // ---------- colour helpers ----------
 const toRgb = (hex: string): [number, number, number] => {
@@ -34,11 +42,6 @@ const Layer = ({ opacity, children }: LayerProps & { children: React.ReactNode }
 
 /** Round to a tier so particle counts only change (and remount) in coarse steps. */
 export const tier = (n: number, step = 8) => Math.max(step, Math.round(n / step) * step);
-
-// ---------- Clouds (Volumetric fBm + Henyey-Greenstein Multi-Plane System) ----------
-export function CloudLayer(props: VolumetricCloudProps) {
-  return <VolumetricCloudLayer {...props} />;
-}
 
 // ---------- Rain (+ ripples) ----------
 export function RainLayer({
