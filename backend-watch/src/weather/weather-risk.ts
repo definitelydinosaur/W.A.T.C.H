@@ -1,63 +1,58 @@
+// Review with PAGASA before deployment: rain 15/30 mm per hour represents orange/red,
+// heat index 42/52 C represents danger/extreme danger, and AQI uses US AQI bands.
 export const WEATHER_THRESHOLDS = {
-  rainMm: { advisory: 15, warning: 30, severe: 50 },
+  rainMm: { warning: 15, severe: 30 },
   windKph: { advisory: 39, warning: 62, severe: 88, tropicalCyclone: 118 },
-  heatIndexC: { advisory: 33, warning: 42, severe: 52 },
+  heatIndexC: { warning: 42, severe: 52 },
+  usAqi: { advisory: 101, warning: 151, severe: 201 },
   typhoonPressureMslHpa: 980,
 } as const;
+
+export type WeatherRiskLevel = 'Normal' | 'Advisory' | 'Warning' | 'Severe';
+
+export interface DetectedWeatherHazard {
+  type: string;
+  riskLevel: Exclude<WeatherRiskLevel, 'Normal'>;
+}
+
+const RISK_RANK: Record<WeatherRiskLevel, number> = {
+  Normal: 0,
+  Advisory: 1,
+  Warning: 2,
+  Severe: 3,
+};
+
+function maxRisk(...levels: WeatherRiskLevel[]): WeatherRiskLevel {
+  return levels.reduce(
+    (highest, level) =>
+      RISK_RANK[level] > RISK_RANK[highest] ? level : highest,
+    'Normal',
+  );
+}
 
 export function classifyWeatherRisk(
   rainMm: number,
   windKph: number,
   heatIndexC: number,
   weatherCode?: number,
-) {
-  if ([95, 96, 99].includes(weatherCode ?? -1)) {
-    return {
-      level: 'Warning',
-      reason: 'Thunderstorm conditions were reported by the weather provider.',
-    };
-  }
-  if (
-    windKph >= WEATHER_THRESHOLDS.windKph.severe ||
-    rainMm >= WEATHER_THRESHOLDS.rainMm.severe ||
-    heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.severe
-  ) {
-    return {
-      level: 'Severe',
-      reason:
-        'A measured weather value has reached the configured severe threshold.',
-    };
-  }
-  if (
-    windKph >= WEATHER_THRESHOLDS.windKph.warning ||
-    rainMm >= WEATHER_THRESHOLDS.rainMm.warning ||
-    heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.warning
-  ) {
-    return {
-      level: 'Warning',
-      reason: 'Weather conditions have crossed a configured warning threshold.',
-    };
-  }
-  if (
-    windKph >= WEATHER_THRESHOLDS.windKph.advisory ||
-    rainMm >= WEATHER_THRESHOLDS.rainMm.advisory ||
-    heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.advisory
-  ) {
-    return {
-      level: 'Advisory',
-      reason:
-        'Weather conditions have crossed a configured advisory threshold.',
-    };
-  }
+  aqi?: number | null,
+): { level: WeatherRiskLevel; reason: string } {
+  const hazards = detectWeatherHazards(
+    rainMm,
+    windKph,
+    heatIndexC,
+    weatherCode ?? -1,
+    undefined,
+    aqi,
+  );
+  const level = maxRisk(...hazards.map((hazard) => hazard.riskLevel));
   return {
-    level: 'Normal',
-    reason: 'No configured threshold is currently exceeded.',
+    level,
+    reason:
+      level === 'Normal'
+        ? 'No configured weather or air-quality threshold is currently exceeded.'
+        : 'A measured weather or air-quality value crossed a configured rule threshold.',
   };
-}
-
-export interface DetectedWeatherHazard {
-  type: string;
-  riskLevel: 'Advisory' | 'Warning' | 'Severe';
 }
 
 export function detectWeatherHazards(
@@ -66,6 +61,7 @@ export function detectWeatherHazards(
   heatIndexC: number,
   weatherCode: number,
   pressureMslHpa?: number,
+  aqi?: number | null,
 ): DetectedWeatherHazard[] {
   const hazards: DetectedWeatherHazard[] = [];
   if (
@@ -89,33 +85,42 @@ export function detectWeatherHazards(
             : 'Advisory',
     });
   }
-  if (rainMm >= WEATHER_THRESHOLDS.rainMm.advisory) {
+  if (rainMm >= WEATHER_THRESHOLDS.rainMm.warning) {
     hazards.push({
       type:
-        rainMm >= WEATHER_THRESHOLDS.rainMm.warning
+        rainMm >= WEATHER_THRESHOLDS.rainMm.severe
           ? 'Flooding risk'
           : 'Heavy rainfall',
       riskLevel:
-        rainMm >= WEATHER_THRESHOLDS.rainMm.severe
-          ? 'Severe'
-          : rainMm >= WEATHER_THRESHOLDS.rainMm.warning
-            ? 'Warning'
-            : 'Advisory',
+        rainMm >= WEATHER_THRESHOLDS.rainMm.severe ? 'Severe' : 'Warning',
     });
   }
-  if (heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.advisory) {
+  if (heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.warning) {
     hazards.push({
       type: 'Extreme heat',
       riskLevel:
         heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.severe
           ? 'Severe'
-          : heatIndexC >= WEATHER_THRESHOLDS.heatIndexC.warning
-            ? 'Warning'
-            : 'Advisory',
+          : 'Warning',
     });
   }
   if ([95, 96, 99].includes(weatherCode)) {
     hazards.push({ type: 'Thunderstorms', riskLevel: 'Warning' });
+  }
+  if (
+    aqi !== undefined &&
+    aqi !== null &&
+    aqi >= WEATHER_THRESHOLDS.usAqi.advisory
+  ) {
+    hazards.push({
+      type: 'Unhealthy air quality',
+      riskLevel:
+        aqi >= WEATHER_THRESHOLDS.usAqi.severe
+          ? 'Severe'
+          : aqi >= WEATHER_THRESHOLDS.usAqi.warning
+            ? 'Warning'
+            : 'Advisory',
+    });
   }
   return hazards;
 }

@@ -33,6 +33,10 @@ function isSavedLocationRecord(value: unknown): value is SavedLocationRecord {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 @Injectable()
 export class ProfileService {
   constructor(
@@ -220,7 +224,7 @@ export class ProfileService {
     const { data, error } = await this.supabase
       .from('user_info')
       .select(
-        'id, name, email, birthdate, country, home_location_id, location_prompt_dismissed_at',
+        'id, name, email, birthdate, country, institution_id, home_location_id, location_prompt_dismissed_at',
       )
       .eq('id', userId)
       .maybeSingle();
@@ -237,7 +241,7 @@ export class ProfileService {
       );
     }
 
-    let homeLocation = null;
+    let homeLocation: Record<string, unknown> | null = null;
     if (data.home_location_id) {
       const { data: location, error: locationError } = await this.supabase
         .from('locations')
@@ -253,36 +257,31 @@ export class ProfileService {
           `Failed to fetch home location: ${locationError.message}`,
         );
       }
-      homeLocation = location
-        ? {
-            ...location,
-            id: String(location.loc_id),
-            address: location.full_address,
-          }
-        : null;
+      const locationRecord: unknown = location;
+      if (locationRecord !== null && locationRecord !== undefined) {
+        if (!isRecord(locationRecord)) {
+          throw new InternalServerErrorException(
+            'Home location record is invalid.',
+          );
+        }
+        homeLocation = {
+          ...locationRecord,
+          id: String(locationRecord.loc_id),
+          address:
+            typeof locationRecord.full_address === 'string'
+              ? locationRecord.full_address
+              : '',
+        };
+      }
     }
 
-    const { data: userInstitution, error: userInstitutionError } =
-      await this.supabase
-        .from('user_institutions')
-        .select('institution_id')
-        .eq('user_id', userId)
-        .eq('is_default', true)
-        .maybeSingle();
-
-    if (userInstitutionError) {
-      throw new InternalServerErrorException(
-        `Failed to fetch institution link: ${userInstitutionError.message}`,
-      );
-    }
-
-    let institution = null;
-    if (userInstitution) {
+    let institution: Record<string, unknown> | null = null;
+    if (data.institution_id) {
       const { data: institutionData, error: institutionError } =
         await this.supabase
           .from('institutions')
           .select('id, name, short_name, city, province, is_verified')
-          .eq('id', userInstitution.institution_id)
+          .eq('id', data.institution_id)
           .maybeSingle();
 
       if (institutionError) {
@@ -290,7 +289,13 @@ export class ProfileService {
           `Failed to fetch institution: ${institutionError.message}`,
         );
       }
-      institution = institutionData;
+      const institutionRecord: unknown = institutionData;
+      if (!isRecord(institutionRecord)) {
+        throw new InternalServerErrorException(
+          'Institution record is invalid.',
+        );
+      }
+      institution = institutionRecord;
     }
 
     return {
@@ -310,7 +315,7 @@ export class ProfileService {
 
     const result = await this.supabase.rpc('save_home_location', {
       p_user_id: userId,
-      p_full_address: address,
+      p_address: address,
       p_latitude: location.latitude,
       p_longitude: location.longitude,
       p_city: location.city?.trim() || null,
@@ -324,7 +329,25 @@ export class ProfileService {
       );
     }
 
-    const savedLocation: unknown = result.data;
+    const savedLocationId = Number(result.data);
+    if (!Number.isSafeInteger(savedLocationId) || savedLocationId <= 0) {
+      throw new InternalServerErrorException(
+        'Home location was saved, but the database returned an invalid location ID.',
+      );
+    }
+    const { data: savedLocation, error: locationError } = await this.supabase
+      .from('locations')
+      .select(
+        'loc_id, label, full_address, latitude, longitude, city, province, barangay',
+      )
+      .eq('loc_id', savedLocationId)
+      .eq('user_id', userId)
+      .single();
+    if (locationError) {
+      throw new InternalServerErrorException(
+        `Home location was saved, but it could not be reloaded: ${locationError.message}`,
+      );
+    }
     if (!isSavedLocationRecord(savedLocation)) {
       throw new InternalServerErrorException(
         'Home location was saved, but the database returned an invalid location record.',
@@ -421,30 +444,13 @@ export class ProfileService {
   }
 
   async savePushToken(userId: string, token: string) {
-    const now = new Date().toISOString();
-    const { error: tokenError } = await this.supabase
-      .from('push_tokens')
-      .upsert(
-        {
-          user_id: userId,
-          expo_push_token: token,
-          is_active: true,
-          updated_at: now,
-        },
-        { onConflict: 'expo_push_token' },
-      );
-    if (tokenError) {
-      throw new InternalServerErrorException(
-        `Push token could not be saved: ${tokenError.message}`,
-      );
-    }
-    const { error: profileError } = await this.supabase
+    const { error } = await this.supabase
       .from('user_info')
       .update({ expo_push_token: token })
       .eq('id', userId);
-    if (profileError) {
+    if (error) {
       throw new InternalServerErrorException(
-        `Push token was saved, but the profile could not be updated: ${profileError.message}`,
+        `Push token could not be saved: ${error.message}`,
       );
     }
     return { saved: true };

@@ -66,33 +66,35 @@ In the output, you'll find options to open the app in a
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
-## Push notifications and local alerts
+## Alerts and push notifications
 
-Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL`,
-`EXPO_PUBLIC_SUPABASE_URL`, and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Link
-the app to its EAS project with `eas init` (which sets
-`expo.extra.eas.projectId`). The backend separately needs `EXPO_ACCESS_TOKEN`,
-`AI_API_KEY`, and (if Facebook Graph access is authorized) `FACEBOOK_ACCESS_TOKEN`.
-Never put server credentials in `EXPO_PUBLIC_*` variables.
+Copy `watch_ai/.env.example` to `watch_ai/.env` and set
+`EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_SUPABASE_URL`, and
+`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. For a physical phone, the API URL must
+use the computer's reachable LAN IP (for example
+`http://192.168.1.20:3000`), not `localhost`. The backend listens on
+`0.0.0.0`; allow port 3000 through the computer's firewall if needed.
 
-Notification permission is requested separately from location permission after
-sign-in. Remote push and notification-tap deep links must be tested in a
-development build, not Expo Go. Build Android with
-`eas build --profile development --platform android`, configure the EAS project
-ID and FCM credentials, then install that build on the test phone.
-Open the **Alerts** screen to see delivered announcements and weather safety
-tips. Tapping an announcement opens its source, original text, AI summary, and
-verification disclaimer.
+The **Alerts** screen displays the signed-in user's history, filters, refresh,
+pagination, and delete/undo controls. Opening an announcement marks it read and
+shows the attributed source, original text, AI summary, and verification
+disclaimer. Active hazards at the saved home location show grouped safety tips
+on Home. Supabase in-app history and realtime updates can be tested in Expo Go.
 
-For a physical Android phone, set `EXPO_PUBLIC_API_URL` in `watch_ai/.env` to
-the computer's reachable LAN address (for example `http://192.168.1.20:3000`),
-not `localhost`. The NestJS backend listens on `0.0.0.0`; allow port 3000
-through the computer's firewall if needed.
+Remote push and notification-tap routing require an installed iOS/Android
+development build, not Expo Go. Link the app to its EAS project, configure
+Android FCM credentials where applicable, enable notification permission, and
+set the backend's `EXPO_ACCESS_TOKEN`. The profile must have a valid Expo token
+and must not disable the corresponding notification preference.
 
-The backend alert job requires the Supabase migrations to be applied, a trusted
-source, an AI provider key, Expo push credentials, and a physical test device
-with notification permission. See `../backend-watch/README.md` for source
-registration and manual-entry examples.
+The backend needs its own `backend-watch/.env`; never put service-role, AI,
+Facebook, Expo, or admin secrets in `EXPO_PUBLIC_*` variables. Its alert worker
+polls active trusted sources. Facebook Graph requires access authorized for
+that page; the system does not scrape Facebook pages or access private content.
+An official RSS/Atom feed or admin-entered post can be used instead. See
+[`backend-watch/README.md`](../backend-watch/README.md) for migration review,
+source registration, manual announcement tests, and an admin-only test-hazard
+procedure. The alerts migration has not been run against the database.
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
