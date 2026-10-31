@@ -189,9 +189,7 @@ export default function LoginScreen() {
                 New to W.A.T.C.H.?{' '}
                 <Text
                   style={styles.createAccountText}
-                  onPress={() =>
-                    router.replace('/auth/register')
-                  }
+                  onPress={() => router.replace('/auth/register')}
                 >
                   Create Account
                 </Text>

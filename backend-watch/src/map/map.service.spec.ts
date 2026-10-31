@@ -9,22 +9,23 @@ describe('MapService', () => {
   it('returns coordinates and address parts for location suggestions', async () => {
     const response = {
       ok: true,
-      json: async () => ({
-        features: [
-          {
-            geometry: { coordinates: [123.8857, 10.3158] },
-            properties: {
-              name: 'Cebu City',
-              country: 'Philippines',
-              state: 'Cebu',
-              city: 'Cebu City',
-              suburb: 'Lahug',
-              type: 'city',
-              osm_key: 'place',
+      json: () =>
+        Promise.resolve({
+          features: [
+            {
+              geometry: { coordinates: [123.8857, 10.3158] },
+              properties: {
+                name: 'Cebu City',
+                country: 'Philippines',
+                state: 'Cebu',
+                city: 'Cebu City',
+                suburb: 'Lahug',
+                type: 'city',
+                osm_key: 'place',
+              },
             },
-          },
-        ],
-      }),
+          ],
+        }),
     } as Response;
     jest.spyOn(global, 'fetch').mockResolvedValue(response);
 

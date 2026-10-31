@@ -19,7 +19,9 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function RegisterScreen() {
-  const { email: routeEmail } = useLocalSearchParams<{ email?: string }>();
+  const { email: routeEmail } = useLocalSearchParams<{
+    email?: string;
+  }>();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState(
     typeof routeEmail === 'string' ? routeEmail : '',

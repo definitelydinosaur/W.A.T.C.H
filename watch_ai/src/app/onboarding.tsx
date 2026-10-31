@@ -154,7 +154,10 @@ export default function OnboardingScreen() {
   };
 
   useEffect(() => {
-    if (step !== 1 || startRegistration !== 'true') return;
+    if (
+      step !== 1 ||
+      startRegistration !== 'true'
+    ) return;
     let active = true;
 
     const checkPermission = async () => {
@@ -183,7 +186,7 @@ export default function OnboardingScreen() {
       active = false;
       subscription.remove();
     };
-  }, [completePermissionStep, step, startRegistration]);
+  }, [completePermissionStep, startRegistration, step]);
 
   const saveHomeLocation = async () => {
     if (!selectedLocation) return;
@@ -192,7 +195,7 @@ export default function OnboardingScreen() {
       await profileApi('/profile/home-location', {
         method: 'POST',
         body: JSON.stringify({
-          address: selectedLocation.address,
+          full_address: selectedLocation.address,
           latitude: selectedLocation.latitude,
           longitude: selectedLocation.longitude,
           city: selectedLocation.city,
@@ -216,7 +219,6 @@ export default function OnboardingScreen() {
       continueOnboarding();
       return;
     }
-
     setIsSaving(true);
     try {
       const body = selectedInstitution.id

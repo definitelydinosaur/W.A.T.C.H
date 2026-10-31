@@ -18,7 +18,9 @@ const OTP_LENGTH = 6;
 const RESEND_DELAY_SECONDS = 60;
 
 export default function ConfirmEmailScreen() {
-	const { email: routeEmail } = useLocalSearchParams<{ email?: string }>();
+	const { email: routeEmail } = useLocalSearchParams<{
+		email?: string;
+	}>();
 	const email = typeof routeEmail === 'string' ? routeEmail.trim().toLowerCase() : '';
 	const [code, setCode] = useState('');
 	const [isVerifying, setIsVerifying] = useState(false);
@@ -29,7 +31,11 @@ export default function ConfirmEmailScreen() {
 	const [resendNotice, setResendNotice] = useState('');
 
 	const returnToRegistration = useCallback(
-		() => safeBack({ pathname: '/auth/register', params: { email } }),
+		() =>
+			safeBack({
+				pathname: '/auth/register',
+				params: { email },
+			}),
 		[email],
 	);
 
@@ -57,29 +63,59 @@ export default function ConfirmEmailScreen() {
 		return `${email[0]}${'*'.repeat(Math.max(6, separator - 1))}${email.slice(separator)}`;
 	})();
 
-	const verifyCode = async () => {
-		if (code.length !== OTP_LENGTH || !email || isVerifying) return;
+const verifyCode = async () => {
+    if (code.length !== OTP_LENGTH || !email || isVerifying) return;
 
-		setIsVerifying(true);
-		setVerificationError('');
-		setResendNotice('');
-		try {
-			const { error } = await supabase.auth.verifyOtp({
-				email,
-				token: code,
-				type: 'signup',
-			});
-			if (error) throw error;
-			setIsVerified(true);
-		} catch (error) {
-			setVerificationError(
-				error instanceof Error ? error.message : 'That code could not be verified. Try again.',
-			);
-			setIsVerified(false);
-		} finally {
-			setIsVerifying(false);
-		}
-	};
+    setIsVerifying(true);
+    setVerificationError('');
+
+    try {
+        const response = await fetch(
+            `${process.env.EXPO_PUBLIC_API_URL}/auth/verify-otp`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email,
+                    token: code,
+                }),
+            },
+        );
+
+        const result: {
+            message?: string;
+            accessToken?: string;
+            refreshToken?: string;
+        } = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.message || 'Verification failed.');
+        }
+
+        if (!result.accessToken || !result.refreshToken) {
+            throw new Error('Email verified, but a login session was not returned.');
+        }
+
+        const { error: sessionError } = await supabase.auth.setSession({
+            access_token: result.accessToken,
+            refresh_token: result.refreshToken,
+        });
+        if (sessionError) throw sessionError;
+
+        setIsVerified(true);
+    } catch (error) {
+        setVerificationError(
+            error instanceof Error
+                ? error.message
+                : 'That code could not be verified. Try again.',
+        );
+        setIsVerified(false);
+    } finally {
+        setIsVerifying(false);
+    }
+};
 
 	const resendCode = async () => {
 		if (!email || resendCountdown > 0 || isResending) return;
