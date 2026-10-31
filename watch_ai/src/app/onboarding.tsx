@@ -63,7 +63,11 @@ export default function OnboardingScreen() {
   };
   const chooseRegistration = () => setStep(1);
   const chooseLogin = () => router.replace('/auth/login');
-  const finishOnboarding = () => router.replace('/auth/register');
+  const finishOnboarding = () =>
+    router.replace({
+      pathname: '/auth/register',
+      params: { onboardingComplete: 'true' },
+    });
 
   useLayoutEffect(() => {
     pageOffset.setValue(12);

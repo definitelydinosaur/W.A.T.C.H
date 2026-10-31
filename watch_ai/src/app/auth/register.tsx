@@ -10,7 +10,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { router } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import LoadingAuth from '../../components/loading-auth';
@@ -19,6 +19,7 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function RegisterScreen() {
+  const { onboardingComplete } = useLocalSearchParams<{ onboardingComplete?: string }>();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -95,6 +96,10 @@ export default function RegisterScreen() {
       setShowSlowLoading(false);
     }
   };
+
+  if (onboardingComplete !== 'true') {
+    return <Redirect href="/onboarding" />;
+  }
 
   return (
     <LinearGradient

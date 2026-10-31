@@ -38,28 +38,45 @@ export default function ConfirmEmailScreen() {
 		return `${email[0]}${'*'.repeat(Math.max(6, separator - 1))}${email.slice(separator)}`;
 	})();
 
-	const verifyCode = async () => {
-		if (code.length !== OTP_LENGTH || !email || isVerifying) return;
+const verifyCode = async () => {
+    if (code.length !== OTP_LENGTH || !email || isVerifying) return;
 
-		setIsVerifying(true);
-		setVerificationError('');
-		try {
-			const { error } = await supabase.auth.verifyOtp({
-				email,
-				token: code,
-				type: 'signup',
-			});
-			if (error) throw error;
-			setIsVerified(true);
-		} catch (error) {
-			setVerificationError(
-				error instanceof Error ? error.message : 'That code could not be verified. Try again.',
-			);
-			setIsVerified(false);
-		} finally {
-			setIsVerifying(false);
-		}
-	};
+    setIsVerifying(true);
+    setVerificationError('');
+
+    try {
+        const response = await fetch(
+            `${process.env.EXPO_PUBLIC_API_URL}/auth/verify-otp`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email,
+                    token: code,
+                }),
+            },
+        );
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.message || 'Verification failed.');
+        }
+
+        setIsVerified(true);
+    } catch (error) {
+        setVerificationError(
+            error instanceof Error
+                ? error.message
+                : 'That code could not be verified. Try again.',
+        );
+        setIsVerified(false);
+    } finally {
+        setIsVerifying(false);
+    }
+};
 
 	const resendCode = async () => {
 		if (!email || resendCountdown > 0 || isResending) return;
