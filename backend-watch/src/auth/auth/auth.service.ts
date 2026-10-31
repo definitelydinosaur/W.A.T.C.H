@@ -1,4 +1,3 @@
-
 import {
   BadRequestException,
   UnauthorizedException,
@@ -25,12 +24,11 @@ export class AuthService {
     const email = registerDto.email.trim().toLowerCase();
 
     // 1. Check whether a verified profile already exists
-    const { data: existingUser, error: checkError } =
-      await this.supabaseClient
-        .from('user_info')
-        .select('id')
-        .ilike('email', email)
-        .maybeSingle();
+    const { data: existingUser, error: checkError } = await this.supabaseClient
+      .from('user_info')
+      .select('id')
+      .ilike('email', email)
+      .maybeSingle();
 
     if (checkError) {
       throw new InternalServerErrorException(
@@ -86,25 +84,20 @@ export class AuthService {
   async verifyRegistrationOtp(email: string, token: string) {
     const normalizedEmail = email.trim().toLowerCase();
 
-    const { data, error } =
-      await this.supabaseClient.auth.verifyOtp({
-        email: normalizedEmail,
-        token: token.trim(),
-        type: 'signup',
-      });
+    const { data, error } = await this.supabaseClient.auth.verifyOtp({
+      email: normalizedEmail,
+      token: token.trim(),
+      type: 'signup',
+    });
 
     if (error) {
-      throw new BadRequestException(
-        'Invalid or expired verification code.',
-      );
+      throw new BadRequestException('Invalid or expired verification code.');
     }
 
     const user = data.user;
 
     if (!user || !user.email_confirmed_at) {
-      throw new BadRequestException(
-        'Email verification was unsuccessful.',
-      );
+      throw new BadRequestException('Email verification was unsuccessful.');
     }
 
     // 5. Create profile only after successful verification
@@ -124,14 +117,14 @@ export class AuthService {
       );
 
     if (profileError) {
-  console.error('PROFILE CREATION ERROR:', profileError);
+      console.error('PROFILE CREATION ERROR:', profileError);
 
-  throw new InternalServerErrorException({
-    message: 'Email verified, but profile creation failed.',
-    details: profileError.message,
-    code: profileError.code,
-  });
-}
+      throw new InternalServerErrorException({
+        message: 'Email verified, but profile creation failed.',
+        details: profileError.message,
+        code: profileError.code,
+      });
+    }
 
     if (!data.session) {
       throw new UnauthorizedException(
@@ -150,11 +143,10 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const { data, error } =
-      await this.supabaseClient.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { data, error } = await this.supabaseClient.auth.signInWithPassword({
+      email,
+      password,
+    });
 
     if (error) {
       throw new BadRequestException(error.message);
@@ -166,18 +158,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    const { data: profile, error: profileError } =
-      await this.supabaseClient
-        .from('user_info')
-        .select('name')
-        .eq('id', user.id)
-        .maybeSingle()
-        .overrideTypes<{ name: string | null }, { merge: false }>();
+    const { data: profile, error: profileError } = await this.supabaseClient
+      .from('user_info')
+      .select('name')
+      .eq('id', user.id)
+      .maybeSingle()
+      .overrideTypes<{ name: string | null }, { merge: false }>();
 
     if (profileError) {
-      throw new BadRequestException(
-        'Unable to load your account profile.',
-      );
+      throw new BadRequestException('Unable to load your account profile.');
     }
 
     if (!profile) {

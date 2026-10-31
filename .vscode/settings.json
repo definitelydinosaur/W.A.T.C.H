@@ -1,0 +1,8 @@
+{
+  "eslint.workingDirectories": [
+    "watch_ai",
+    "backend-watch"
+  ],
+  "typescript.tsdk": "watch_ai/node_modules/typescript/lib"
+}
+

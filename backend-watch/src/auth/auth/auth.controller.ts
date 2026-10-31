@@ -12,17 +12,13 @@ export class AuthController {
     return this.authService.register(registerDto);
   }
 
-
   @Post('login')
   login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
 
   @Post('verify-otp')
-verifyOtp(
-  @Body('email') email: string,
-  @Body('token') token: string,
-) {
-  return this.authService.verifyRegistrationOtp(email, token);
-}
+  verifyOtp(@Body('email') email: string, @Body('token') token: string) {
+    return this.authService.verifyRegistrationOtp(email, token);
+  }
 }

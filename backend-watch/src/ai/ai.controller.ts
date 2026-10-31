@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Headers,
@@ -38,7 +37,6 @@ class AnnouncementSummaryDto {
 
   @IsUrl({ require_protocol: true })
   sourceUrl!: string;
-
 }
 
 @Controller('ai')

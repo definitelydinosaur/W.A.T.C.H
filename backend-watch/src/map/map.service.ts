@@ -157,10 +157,12 @@ export class MapService {
           ]
             .filter((part, index, parts) => {
               if (!part) return false;
-              return parts.findIndex(
-                (candidate) =>
-                  candidate?.toLocaleLowerCase() === part.toLocaleLowerCase(),
-              ) === index;
+              return (
+                parts.findIndex(
+                  (candidate) =>
+                    candidate?.toLocaleLowerCase() === part.toLocaleLowerCase(),
+                ) === index
+              );
             })
             .join(', ');
 
@@ -178,28 +180,36 @@ export class MapService {
               (kind === 'location' ? isLocation : isInstitution),
           };
         })
-        .filter(
-          (
-            suggestion,
-          ): suggestion is MapSuggestion & { matches: true } =>
-            Boolean(
-              suggestion.name &&
-                suggestion.matches &&
-                Number.isFinite(suggestion.latitude) &&
-                Number.isFinite(suggestion.longitude),
-            ),
+        .filter((suggestion): suggestion is MapSuggestion & { matches: true } =>
+          Boolean(
+            suggestion.name &&
+            suggestion.matches &&
+            Number.isFinite(suggestion.latitude) &&
+            Number.isFinite(suggestion.longitude),
+          ),
         )
         .slice(0, 7)
-        .map(({ name, detail, address, latitude, longitude, city, province, barangay }) => ({
-          name,
-          detail,
-          address,
-          latitude,
-          longitude,
-          city,
-          province,
-          barangay,
-        }));
+        .map(
+          ({
+            name,
+            detail,
+            address,
+            latitude,
+            longitude,
+            city,
+            province,
+            barangay,
+          }) => ({
+            name,
+            detail,
+            address,
+            latitude,
+            longitude,
+            city,
+            province,
+            barangay,
+          }),
+        );
 
       this.suggestionCache.set(cacheKey, suggestions);
       return suggestions;

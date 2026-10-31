@@ -257,7 +257,7 @@ export class ProfileService {
         ? {
             ...location,
             id: String(location.loc_id),
-            address: location.full_address,
+            address: String(location.full_address ?? ''),
           }
         : null;
     }
