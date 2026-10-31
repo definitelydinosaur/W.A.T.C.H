@@ -1,6 +1,12 @@
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
-  ActivityIndicator,
+  AppState,
   Animated,
   Image,
   Linking,
@@ -10,43 +16,50 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
+import * as Location from 'expo-location';
+import ProfileSelectionModal, {
+  HomeLocationInput,
+  InstitutionOption,
+} from '../components/profile-selection-modal';
+import { profileApi } from '../lib/profile-api';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
-const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const PREFERENCES = [
   { id: 'weather', title: 'Severe weather alerts', description: 'Warnings for dangerous weather near you' },
   { id: 'safety', title: 'Community safety updates', description: 'Important hazards and local announcements' },
   { id: 'school', title: 'School announcements', description: 'Closures and updates from your institution' },
 ];
 
-interface LocationSuggestion {
-  name: string;
-  detail: string;
-}
-
 export default function OnboardingScreen() {
-  const { startRegistration } = useLocalSearchParams<{ startRegistration?: string }>();
+  const { registrationFlow, startRegistration, promptOnly } = useLocalSearchParams<{
+    registrationFlow?: string;
+    startRegistration?: string;
+    promptOnly?: string;
+  }>();
   const { width, height } = useWindowDimensions();
   const horizontalGutter = Math.min(24, Math.max(16, width * 0.055));
   const verticalGutter = Math.min(36, Math.max(24, height * 0.045));
   const compactLayout = height < 680 || width < 360;
-  const [step, setStep] = useState(startRegistration === 'true' ? 1 : 0);
-  const [locationQuery, setLocationQuery] = useState('');
-  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false);
-  const [filteredLocations, setFilteredLocations] = useState<LocationSuggestion[]>([]);
-  const [locationsLoading, setLocationsLoading] = useState(false);
-  const [locationsError, setLocationsError] = useState('');
-  const [institutionQuery, setInstitutionQuery] = useState('');
-  const [showInstitutionSuggestions, setShowInstitutionSuggestions] = useState(false);
-  const [filteredInstitutions, setFilteredInstitutions] = useState<LocationSuggestion[]>([]);
-  const [institutionsLoading, setInstitutionsLoading] = useState(false);
-  const [institutionsError, setInstitutionsError] = useState('');
+  const [step, setStep] = useState(
+    registrationFlow === 'true' || startRegistration === 'true' ? 1 : 0,
+  );
+  const [registrationRequested, setRegistrationRequested] = useState(
+    registrationFlow === 'true',
+  );
+  const [permissionBlocked, setPermissionBlocked] = useState(false);
+  const [permissionError, setPermissionError] = useState('');
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [institutionModalVisible, setInstitutionModalVisible] = useState(false);
+  const [selectedLocation, setSelectedLocation] = useState<HomeLocationInput | null>(null);
+  const [selectedInstitution, setSelectedInstitution] =
+    useState<InstitutionOption | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const permissionTransitionStarted = useRef(false);
   const [selectedPreferences, setSelectedPreferences] = useState<string[]>([
     'weather',
     'safety',
@@ -54,20 +67,87 @@ export default function OnboardingScreen() {
   ]);
   const [pageOffset] = useState(() => new Animated.Value(0));
 
-  const continueOnboarding = () => {
-    setShowLocationSuggestions(false);
-    setShowInstitutionSuggestions(false);
-    setLocationsLoading(false);
-    setInstitutionsLoading(false);
-    setStep((current) => Math.min(current + 1, 4));
+  const continueOnboarding = () => setStep((current) => Math.min(current + 1, 4));
+  const chooseRegistration = () => {
+    setRegistrationRequested(true);
+    setStep(1);
   };
-  const chooseRegistration = () => setStep(1);
   const chooseLogin = () => router.replace('/auth/login');
-  const finishOnboarding = () =>
-    router.replace({
-      pathname: '/auth/register',
-      params: { onboardingComplete: 'true' },
-    });
+  const finishOnboarding = () => {
+    if (registrationRequested && promptOnly !== 'true') {
+      router.replace({
+        pathname: '/auth/register',
+        params: { onboardingComplete: 'true' },
+      });
+      return;
+    }
+
+    router.replace('/home');
+  };
+
+  const completePermissionStep = useCallback(async () => {
+    if (permissionTransitionStarted.current) return;
+    permissionTransitionStarted.current = true;
+    try {
+      await profileApi('/profile/location-prompt', {
+        method: 'PATCH',
+        body: JSON.stringify({ dismissedAt: null }),
+      });
+      setPermissionError('');
+      if (promptOnly === 'true') {
+        router.replace('/home');
+      } else {
+        setStep(2);
+      }
+    } catch (error) {
+      permissionTransitionStarted.current = false;
+      setPermissionError(
+        error instanceof Error ? error.message : 'Unable to update your location settings.',
+      );
+    }
+  }, [promptOnly]);
+
+  const requestLocationPermission = async () => {
+    setPermissionError('');
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      setPermissionBlocked(!permission.granted && !permission.canAskAgain);
+      if (permission.granted) {
+        await completePermissionStep();
+      } else {
+        setPermissionError(
+          permission.canAskAgain
+            ? 'Location access was not granted. You can try again or continue later.'
+            : 'Location access is blocked. Open device settings to allow it.',
+        );
+      }
+    } catch (error) {
+      setPermissionError(
+        error instanceof Error ? error.message : 'Unable to request location access.',
+      );
+    }
+  };
+
+  const remindLater = async () => {
+    setIsSaving(true);
+    try {
+      await profileApi('/profile/location-prompt', {
+        method: 'PATCH',
+        body: JSON.stringify({ dismissedAt: new Date().toISOString() }),
+      });
+      if (promptOnly === 'true') {
+        router.replace('/home');
+      } else {
+        setStep(2);
+      }
+    } catch (error) {
+      setPermissionError(
+        error instanceof Error ? error.message : 'Unable to save this preference.',
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useLayoutEffect(() => {
     pageOffset.setValue(12);
@@ -81,84 +161,104 @@ export default function OnboardingScreen() {
     return () => transition.stop();
   }, [pageOffset, step]);
 
-  useEffect(() => {
-    const query = locationQuery.trim();
-    if (step !== 2 || !showLocationSuggestions || query.length < 2) {
-      return;
-    }
-    if (!API_URL) return;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(async () => {
-      setLocationsLoading(true);
-      try {
-        const response = await fetch(
-          `${API_URL}/map/suggest?kind=location&query=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
-        );
-        const result = (await response.json()) as LocationSuggestion[] & { message?: string };
-        if (!response.ok) throw new Error(result.message ?? 'Location search failed.');
-        setFilteredLocations(result);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setLocationsError(error instanceof Error ? error.message : 'Location search failed.');
-        }
-      } finally {
-        if (!controller.signal.aborted) setLocationsLoading(false);
-      }
-    }, 650);
-
-    return () => {
-      clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [locationQuery, showLocationSuggestions, step]);
-
-  useEffect(() => {
-    const query = institutionQuery.trim();
-    if (step !== 3 || !showInstitutionSuggestions || query.length < 2) {
-      return;
-    }
-    if (!API_URL) return;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(async () => {
-      setInstitutionsLoading(true);
-      try {
-        const response = await fetch(
-          `${API_URL}/map/suggest?kind=institution&query=${encodeURIComponent(query)}`,
-          { signal: controller.signal },
-        );
-        const result = (await response.json()) as LocationSuggestion[] & { message?: string };
-        if (!response.ok) throw new Error(result.message ?? 'Institution search failed.');
-        setFilteredInstitutions(result);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setInstitutionsError(error instanceof Error ? error.message : 'Institution search failed.');
-        }
-      } finally {
-        if (!controller.signal.aborted) setInstitutionsLoading(false);
-      }
-    }, 650);
-
-    return () => {
-      clearTimeout(timeout);
-      controller.abort();
-    };
-  }, [institutionQuery, showInstitutionSuggestions, step]);
-
   const openSettings = async () => {
     try {
       await Linking.openSettings();
     } catch {
-      if (Platform.OS === 'web') {
-        window.alert('Please allow location access in your browser settings.');
-        return;
-      }
       Alert.alert(
         'Unable to open settings',
         'Please enable location access in your device settings.',
       );
+    }
+  };
+
+  useEffect(() => {
+    if (
+      step !== 1 ||
+      (registrationFlow !== 'true' && startRegistration !== 'true')
+    ) return;
+    let active = true;
+
+    const checkPermission = async () => {
+      try {
+        const permission = await Location.getForegroundPermissionsAsync();
+        if (!active) return;
+        setPermissionBlocked(!permission.granted && !permission.canAskAgain);
+        if (permission.granted) await completePermissionStep();
+      } catch (error) {
+        if (active) {
+          setPermissionError(
+            error instanceof Error
+              ? error.message
+              : 'Unable to check location permission.',
+          );
+        }
+      }
+    };
+
+    void checkPermission();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void checkPermission();
+    });
+
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, [completePermissionStep, registrationFlow, startRegistration, step]);
+
+  const saveHomeLocation = async () => {
+    if (!selectedLocation) return;
+    setIsSaving(true);
+    try {
+      await profileApi('/profile/home-location', {
+        method: 'POST',
+        body: JSON.stringify({
+          address: selectedLocation.address,
+          latitude: selectedLocation.latitude,
+          longitude: selectedLocation.longitude,
+          city: selectedLocation.city,
+          province: selectedLocation.province,
+          barangay: selectedLocation.barangay,
+        }),
+      });
+      continueOnboarding();
+    } catch (error) {
+      Alert.alert(
+        'Could not save home location',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const saveInstitution = async () => {
+    if (!selectedInstitution) {
+      continueOnboarding();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const body = selectedInstitution.id
+        ? { institutionId: selectedInstitution.id }
+        : {
+            name: selectedInstitution.name,
+            facebookPageUrl: selectedInstitution.facebook_page_url,
+          };
+      await profileApi('/profile/institution', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      continueOnboarding();
+    } catch (error) {
+      Alert.alert(
+        'Could not save institution',
+        error instanceof Error ? error.message : 'Please try again.',
+      );
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -247,134 +347,81 @@ export default function OnboardingScreen() {
                   />
                 </View>
                 <Text style={[styles.description, compactLayout && styles.compactDescription]}>
-                  Your location will be used to show people near you relevant weather and safety alerts.
+                  Allow location access for weather and safety alerts near your home. Approximate-only access is supported; alerts may cover a wider area.
                 </Text>
-                <PrimaryButton label="Open Settings" onPress={openSettings} />
-                <Pressable onPress={continueOnboarding} hitSlop={10}>
-                  <Text style={styles.textLink}>Remind me later</Text>
+                <PrimaryButton
+                  label="Enable precise location"
+                  onPress={() => void requestLocationPermission()}
+                  disabled={isSaving}
+                />
+                {permissionBlocked && !permissionError && (
+                  <Text style={styles.permissionError}>
+                    Location permission is blocked. Enable it in device settings to use current-location features.
+                  </Text>
+                )}
+                {permissionError ? (
+                  <Text accessibilityRole="alert" style={styles.permissionError}>
+                    {permissionError}
+                  </Text>
+                ) : null}
+                <PrimaryButton label="Open settings" onPress={() => void openSettings()} />
+                <Pressable
+                  disabled={isSaving}
+                  onPress={() => void remindLater()}
+                  hitSlop={10}
+                >
+                  <Text style={styles.textLink}>
+                    {isSaving ? 'Saving...' : 'Remind me later'}
+                  </Text>
                 </Pressable>
               </>
             )}
 
             {step === 2 && (
               <>
-                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add Home Location</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="⌕   Enter location"
-                  placeholderTextColor="#82798E"
-                  value={locationQuery}
-                  onChangeText={(value) => {
-                    setLocationQuery(value);
-                    setFilteredLocations([]);
-                    setLocationsError('');
-                    setLocationsLoading(false);
-                    setShowLocationSuggestions(value.trim().length >= 2);
-                  }}
-                  autoCapitalize="words"
-                  returnKeyType="search"
-                  onSubmitEditing={() => {
-                    if (filteredLocations[0]) {
-                      setLocationQuery(filteredLocations[0].name);
-                      setShowLocationSuggestions(false);
-                      setLocationsLoading(false);
-                    } else if (locationQuery.trim()) {
-                      setLocationQuery(locationQuery.trim());
-                      setShowLocationSuggestions(false);
-                      setLocationsLoading(false);
-                    }
-                  }}
-                  accessibilityLabel="Home location"
-                />
-                {showLocationSuggestions && locationQuery.trim().length >= 2 && (
-                  <SuggestionList
-                    suggestions={filteredLocations}
-                    query={locationQuery}
-                    loading={locationsLoading}
-                    error={
-                      locationsError ||
-                      (!API_URL ? 'Location search is unavailable. Check the backend URL.' : '')
-                    }
-                    emptyLabel="No matching places found."
-                    onSelect={(suggestion) => {
-                      setLocationQuery(suggestion.name);
-                      setShowLocationSuggestions(false);
-                      setLocationsLoading(false);
-                    }}
-                    onCustomSelect={(query) => {
-                      setLocationQuery(query);
-                      setShowLocationSuggestions(false);
-                      setLocationsLoading(false);
-                    }}
-                  />
-                )}
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add home location</Text>
                 <Text style={styles.helperText}>
-                  Add a city or neighborhood to get local alerts.
+                  Your home location is used for local weather and community alerts.
                 </Text>
-                <Text style={styles.notice}>
-                  {privacyNoteForStep(1)}
-                </Text>
+                {selectedLocation ? (
+                  <View style={styles.selectedCard}>
+                    <Text style={styles.selectedTitle}>{selectedLocation.name}</Text>
+                    <Text style={styles.selectedDetail}>{selectedLocation.address}</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.notice}>Choose a place or use your current location.</Text>
+                )}
+                <PrimaryButton
+                  label={selectedLocation ? 'Change home location' : 'Search home location'}
+                  onPress={() => setLocationModalVisible(true)}
+                />
               </>
             )}
 
             {step === 3 && (
               <>
-                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add Institution</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="⌕   Enter institution name"
-                  placeholderTextColor="#82798E"
-                  value={institutionQuery}
-                  onChangeText={(value) => {
-                    setInstitutionQuery(value);
-                    setFilteredInstitutions([]);
-                    setInstitutionsError('');
-                    setInstitutionsLoading(false);
-                    setShowInstitutionSuggestions(value.trim().length >= 2);
-                  }}
-                  autoCapitalize="words"
-                  returnKeyType="search"
-                  onSubmitEditing={() => {
-                    if (filteredInstitutions[0]) {
-                      setInstitutionQuery(filteredInstitutions[0].name);
-                      setShowInstitutionSuggestions(false);
-                      setInstitutionsLoading(false);
-                    } else if (institutionQuery.trim()) {
-                      setInstitutionQuery(institutionQuery.trim());
-                      setShowInstitutionSuggestions(false);
-                      setInstitutionsLoading(false);
-                    }
-                  }}
-                  accessibilityLabel="Institution name"
-                />
-                {showInstitutionSuggestions && institutionQuery.trim().length >= 2 && (
-                  <SuggestionList
-                    suggestions={filteredInstitutions}
-                    query={institutionQuery}
-                    loading={institutionsLoading}
-                    error={
-                      institutionsError ||
-                      (!API_URL ? 'Institution search is unavailable. Check the backend URL.' : '')
-                    }
-                    emptyLabel="No matching institutions found."
-                    onSelect={(suggestion) => {
-                      setInstitutionQuery(suggestion.name);
-                      setShowInstitutionSuggestions(false);
-                      setInstitutionsLoading(false);
-                    }}
-                    onCustomSelect={(query) => {
-                      setInstitutionQuery(query);
-                      setShowInstitutionSuggestions(false);
-                      setInstitutionsLoading(false);
-                    }}
-                  />
-                )}
+                <Text style={[styles.heading, compactLayout && styles.compactHeading]}>Add your institution</Text>
                 <Text style={styles.helperText}>
-                  Add your school or institution for relevant announcements.
+                  Class-suspension alerts are matched to your selected institution.
                 </Text>
-                <Text style={styles.notice}>
-                  {privacyNoteForStep(2)}
-                </Text>
+                {selectedInstitution ? (
+                  <View style={styles.selectedCard}>
+                    <Text style={styles.selectedTitle}>{selectedInstitution.name}</Text>
+                    <Text style={styles.selectedDetail}>
+                      {selectedInstitution.is_verified === false
+                        ? 'Pending admin review'
+                        : [selectedInstitution.city, selectedInstitution.province]
+                            .filter(Boolean)
+                            .join(', ')}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.notice}>This step is optional.</Text>
+                )}
+                <PrimaryButton
+                  label={selectedInstitution ? 'Change institution' : 'Search institutions'}
+                  onPress={() => setInstitutionModalVisible(true)}
+                />
               </>
             )}
 
@@ -411,26 +458,67 @@ export default function OnboardingScreen() {
           </View>
 
           {step === 2 && (
-            <PrimaryButton label="Continue" onPress={continueOnboarding} />
+            <PrimaryButton
+              label={isSaving ? 'Saving...' : 'Save home location'}
+              onPress={() => void saveHomeLocation()}
+              disabled={!selectedLocation || isSaving}
+            />
           )}
           {step === 3 && (
-            <PrimaryButton label="Continue" onPress={continueOnboarding} />
+            <PrimaryButton
+              label={isSaving ? 'Saving...' : selectedInstitution ? 'Save and continue' : 'Skip institution'}
+              onPress={() => void saveInstitution()}
+              disabled={isSaving}
+            />
           )}
           {step === 4 && (
             <PrimaryButton label="Continue onboarding" onPress={finishOnboarding} />
           )}
         </Animated.View>
       </ScrollView>
+      <ProfileSelectionModal
+        visible={locationModalVisible}
+        kind="location"
+        includeCurrentLocation
+        onClose={() => setLocationModalVisible(false)}
+        onSelectLocation={(location) => {
+          setSelectedLocation(location);
+          setLocationModalVisible(false);
+        }}
+      />
+      <ProfileSelectionModal
+        visible={institutionModalVisible}
+        kind="institution"
+        onClose={() => setInstitutionModalVisible(false)}
+        onSelectInstitution={(institution) => {
+          setSelectedInstitution(institution);
+          setInstitutionModalVisible(false);
+        }}
+      />
     </LinearGradient>
   );
 }
 
-function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+function PrimaryButton({
+  label,
+  onPress,
+  disabled = false,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
+      style={({ pressed }) => [
+        styles.button,
+        pressed && styles.buttonPressed,
+        disabled && styles.buttonDisabled,
+      ]}
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
     >
       <Text style={styles.buttonText}>{label}</Text>
     </Pressable>
@@ -463,96 +551,6 @@ function ProgressIndicator({ currentStep }: { currentStep: 1 | 2 | 3 }) {
           </React.Fragment>
         );
       })}
-    </View>
-  );
-}
-
-function privacyNoteForStep(stepNumber: 1 | 2) {
-  if (stepNumber === 1) {
-    return 'W.A.T.C.H. will only use your location to show alerts near you.';
-  }
-  return 'W.A.T.C.H. will only use your institution information to show alerts near you.';
-}
-
-function SuggestionList({
-  suggestions,
-  query,
-  loading,
-  error,
-  emptyLabel,
-  onSelect,
-  onCustomSelect,
-}: {
-  suggestions: LocationSuggestion[];
-  query: string;
-  loading: boolean;
-  error: string;
-  emptyLabel: string;
-  onSelect: (suggestion: LocationSuggestion) => void;
-  onCustomSelect: (query: string) => void;
-}) {
-  return (
-    <View style={styles.suggestionList}>
-      <ScrollView
-        style={styles.suggestionResults}
-        keyboardShouldPersistTaps="handled"
-        nestedScrollEnabled
-      >
-        {loading && (
-          <View style={styles.suggestionStatus}>
-            <ActivityIndicator size="small" color="#7000B8" />
-            <Text style={styles.suggestionStatusText}>Searching…</Text>
-          </View>
-        )}
-        {!loading && error !== '' && (
-          <Text style={styles.suggestionStatusText}>{error}</Text>
-        )}
-        {!loading && error === '' && suggestions.length === 0 && (
-          <Text style={styles.suggestionStatusText}>{emptyLabel}</Text>
-        )}
-        {suggestions.map((suggestion, index) => (
-          <Pressable
-            key={`${suggestion.name}-${suggestion.detail}-${index}`}
-            style={({ pressed, hovered }) => [
-              styles.suggestionRow,
-              (pressed || hovered) && styles.suggestionRowPressed,
-            ]}
-            onPress={() => onSelect(suggestion)}
-            accessibilityRole="button"
-          >
-            <Image
-              source={require('../../utilities/pin icon.png')}
-              style={styles.suggestionPin}
-              resizeMode="contain"
-              accessibilityLabel="Location pin"
-            />
-            <View style={styles.suggestionText}>
-              <Text style={styles.suggestionName} numberOfLines={1}>
-                {suggestion.name}
-              </Text>
-              {suggestion.detail !== '' && (
-                <Text style={styles.suggestionDetail} numberOfLines={1}>
-                  {suggestion.detail}
-                </Text>
-              )}
-            </View>
-          </Pressable>
-        ))}
-        {!loading && query.trim() !== '' && (
-          <Pressable
-            style={({ pressed, hovered }) => [
-              styles.customSuggestion,
-              (pressed || hovered) && styles.suggestionRowPressed,
-            ]}
-            onPress={() => onCustomSelect(query.trim())}
-            accessibilityRole="button"
-          >
-            <Text style={styles.customSuggestionText}>
-              Can’t find it? Add custom: {query.trim()}
-            </Text>
-          </Pressable>
-        )}
-      </ScrollView>
     </View>
   );
 }
@@ -673,6 +671,9 @@ const styles = StyleSheet.create({
   buttonPressed: {
     opacity: 0.82,
   },
+  buttonDisabled: {
+    opacity: 0.45,
+  },
   buttonText: {
     color: '#FFFFFF',
     fontSize: 15,
@@ -684,81 +685,31 @@ const styles = StyleSheet.create({
     marginTop: 18,
     textAlign: 'center',
   },
-  input: {
+  permissionError: {
     width: '100%',
-    minHeight: 46,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    color: '#221632',
-    fontSize: 14,
-  },
-  suggestionList: {
-    width: '100%',
-    marginTop: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(112,0,184,0.16)',
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
-    zIndex: 2,
-    elevation: 4,
-  },
-  suggestionResults: {
-    maxHeight: 220,
-  },
-  suggestionRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E9E3EF',
-  },
-  suggestionRowPressed: {
-    backgroundColor: '#F1E7FA',
-  },
-  suggestionPin: {
-    width: 18,
-    height: 18,
-  },
-  suggestionText: {
-    flex: 1,
-  },
-  suggestionName: {
-    color: '#221632',
+    color: '#FFD4DF',
     fontSize: 12,
-    fontWeight: '600',
+    lineHeight: 17,
+    marginTop: 10,
+    textAlign: 'center',
   },
-  suggestionDetail: {
-    color: '#82798E',
-    fontSize: 10,
-    marginTop: 2,
+  selectedCard: {
+    width: '100%',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.94)',
+    marginTop: 12,
   },
-  suggestionStatus: {
-    minHeight: 42,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
+  selectedTitle: {
+    color: '#221632',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  suggestionStatusText: {
-    color: '#82798E',
-    fontSize: 11,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  customSuggestion: {
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    backgroundColor: '#F8F3FC',
-  },
-  customSuggestionText: {
-    color: '#7000B8',
-    fontSize: 11,
-    fontWeight: '600',
+  selectedDetail: {
+    color: '#62576F',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 5,
   },
   helperText: {
     width: '100%',

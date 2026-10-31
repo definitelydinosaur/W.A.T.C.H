@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-	Alert,
+	BackHandler,
 	KeyboardAvoidingView,
 	Platform,
 	Pressable,
@@ -12,19 +12,45 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import supabase from '../../lib/supabase';
+import { safeBack } from '../../utils/safeBack';
 
 const OTP_LENGTH = 6;
-const RESEND_DELAY_SECONDS = 10;
+const RESEND_DELAY_SECONDS = 60;
 
 export default function ConfirmEmailScreen() {
-	const { email: routeEmail } = useLocalSearchParams<{ email?: string }>();
-	const email = typeof routeEmail === 'string' ? routeEmail : '';
+	const { email: routeEmail, onboardingComplete } = useLocalSearchParams<{
+		email?: string;
+		onboardingComplete?: string;
+	}>();
+	const email = typeof routeEmail === 'string' ? routeEmail.trim().toLowerCase() : '';
 	const [code, setCode] = useState('');
 	const [isVerifying, setIsVerifying] = useState(false);
 	const [isVerified, setIsVerified] = useState(false);
 	const [verificationError, setVerificationError] = useState('');
 	const [isResending, setIsResending] = useState(false);
 	const [resendCountdown, setResendCountdown] = useState(RESEND_DELAY_SECONDS);
+	const [resendNotice, setResendNotice] = useState('');
+
+	const returnToRegistration = useCallback(
+		() =>
+			safeBack({
+				pathname: '/auth/register',
+				params: { email, onboardingComplete },
+			}),
+		[email, onboardingComplete],
+	);
+
+	useEffect(() => {
+		if (Platform.OS !== 'android') return;
+		const subscription = BackHandler.addEventListener(
+			'hardwareBackPress',
+			() => {
+				returnToRegistration();
+				return true;
+			},
+		);
+		return () => subscription.remove();
+	}, [returnToRegistration]);
 
 	useEffect(() => {
 		if (resendCountdown === 0) return;
@@ -83,16 +109,19 @@ const verifyCode = async () => {
 
 		setIsResending(true);
 		setVerificationError('');
+		setResendNotice('');
 		try {
 			const { error } = await supabase.auth.resend({ type: 'signup', email });
 			if (error) throw error;
 			setCode('');
 			setIsVerified(false);
 			setResendCountdown(RESEND_DELAY_SECONDS);
+			setResendNotice('A new code was sent.');
 		} catch (error) {
-			Alert.alert(
-				'Could not resend code',
-				error instanceof Error ? error.message : 'Please try again in a moment.',
+			setVerificationError(
+				error instanceof Error
+					? error.message
+					: 'Please try again in a moment.',
 			);
 		} finally {
 			setIsResending(false);
@@ -143,6 +172,11 @@ const verifyCode = async () => {
 							{verificationError}
 						</Text>
 					) : null}
+					{resendNotice ? (
+						<Text accessibilityRole="text" style={styles.successText}>
+							{resendNotice}
+						</Text>
+					) : null}
 
 					<Pressable
 						accessibilityRole="button"
@@ -151,10 +185,10 @@ const verifyCode = async () => {
 						style={styles.resendButton}
 					>
 						<Text style={styles.resendText}>
-							{resendCountdown > 0
-								? `I haven't received a code (${String(Math.floor(resendCountdown / 60)).padStart(2, '0')}:${String(resendCountdown % 60).padStart(2, '0')})`
-								: isResending
-									? 'Sending code...'
+							{isResending
+								? 'Sending code...'
+								: resendCountdown > 0
+									? `I haven't received a code (${String(Math.floor(resendCountdown / 60)).padStart(2, '0')}:${String(resendCountdown % 60).padStart(2, '0')})`
 									: 'I haven\'t received a code? Resend'}
 						</Text>
 					</Pressable>
@@ -162,11 +196,16 @@ const verifyCode = async () => {
 					<Pressable
 						accessibilityRole="button"
 						disabled={!isVerified}
-						onPress={() => router.replace('/auth/login')}
+						onPress={() =>
+							router.replace({
+								pathname: '/onboarding',
+								params: { startRegistration: 'true' },
+							})
+						}
 						style={[styles.passwordButton, !isVerified && styles.disabledPasswordButton]}
 					>
 						<Text style={[styles.passwordButtonText, !isVerified && styles.disabledPasswordText]}>
-							Log in with the password
+							Continue setup
 						</Text>
 					</Pressable>
 				</View>
@@ -175,7 +214,7 @@ const verifyCode = async () => {
 					<Pressable
 						accessibilityLabel="Back to registration"
 						accessibilityRole="button"
-						onPress={() => router.back()}
+						onPress={returnToRegistration}
 						style={styles.backButton}
 					>
 						<Text style={styles.backIcon}>‹</Text>
@@ -260,6 +299,12 @@ const styles = StyleSheet.create({
 	},
 	errorText: {
 		color: '#b42318',
+		fontSize: 14,
+		marginTop: 10,
+		textAlign: 'center',
+	},
+	successText: {
+		color: '#217a42',
 		fontSize: 14,
 		marginTop: 10,
 		textAlign: 'center',

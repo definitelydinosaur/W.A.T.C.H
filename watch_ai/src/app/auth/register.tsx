@@ -19,9 +19,14 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function RegisterScreen() {
-  const { onboardingComplete } = useLocalSearchParams<{ onboardingComplete?: string }>();
+  const { email: routeEmail, onboardingComplete } = useLocalSearchParams<{
+    email?: string;
+    onboardingComplete?: string;
+  }>();
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(
+    typeof routeEmail === 'string' ? routeEmail : '',
+  );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
@@ -29,7 +34,7 @@ export default function RegisterScreen() {
   const { AnimatedView, animatedStyle, navigateTo, isTransitioning } = useAuthCardTransition();
   const handleRegister = async () => {
     const trimmedName = fullName.trim();
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
     if (trimmedName.length < 3) {
@@ -81,9 +86,9 @@ export default function RegisterScreen() {
         throw new Error(message);
       }
 
-      router.replace({
+      router.push({
         pathname: '/auth/confirm-email',
-        params: { email: trimmedEmail },
+        params: { email: trimmedEmail, onboardingComplete: 'true' },
       });
     } catch (error) {
       Alert.alert(
