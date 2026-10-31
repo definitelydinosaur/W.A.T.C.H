@@ -226,6 +226,7 @@ function isHazardState(value: unknown): value is HazardState {
 @Injectable()
 export class WeatherService {
   private readonly logger = new Logger(WeatherService.name);
+  private readonly memoryCache = new Map<string, WeatherCacheEntry>();
 
   constructor(
     @Inject(SUPABASE_CLIENT)
@@ -246,16 +247,17 @@ export class WeatherService {
       .maybeSingle();
 
     if (cacheResult.error) {
-      this.logger.error(
-        `Weather cache lookup failed: ${cacheResult.error.message}`,
-      );
-      throw new ServiceUnavailableException(
-        'Weather cache is unavailable. Apply the backend Supabase migration.',
+      this.logger.warn(
+        `Weather cache lookup failed (falling back to in-memory cache): ${cacheResult.error.message}`,
       );
     }
 
-    const cacheValue: unknown = cacheResult.data;
-    const cached = isWeatherCacheEntry(cacheValue) ? cacheValue : null;
+    const cacheValue: unknown = cacheResult.error
+      ? this.memoryCache.get(cacheKey)
+      : cacheResult.data;
+    const cached = isWeatherCacheEntry(cacheValue)
+      ? cacheValue
+      : (this.memoryCache.get(cacheKey) ?? null);
     if (cached && Date.now() - Date.parse(cached.fetched_at) < CACHE_TTL_MS) {
       return cached.data;
     }
@@ -376,6 +378,11 @@ export class WeatherService {
       },
     };
 
+    this.memoryCache.set(cacheKey, {
+      data: payload,
+      fetched_at: payload.updatedAt,
+    });
+
     const { error: writeError } = await this.supabase
       .from('weather_cache')
       .upsert(
@@ -383,9 +390,8 @@ export class WeatherService {
         { onConflict: 'cache_key' },
       );
     if (writeError) {
-      this.logger.error(`Weather cache write failed: ${writeError.message}`);
-      throw new ServiceUnavailableException(
-        'Weather cache could not save the forecast. Apply the backend Supabase migration.',
+      this.logger.warn(
+        `Weather cache write failed (using in-memory cache): ${writeError.message}`,
       );
     }
 

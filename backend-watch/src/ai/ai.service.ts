@@ -19,6 +19,10 @@ const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
+  private readonly memoryCache = new Map<
+    string,
+    { result: Record<string, unknown>; created_at: string }
+  >();
 
   constructor(
     private readonly config: ConfigService,
@@ -272,18 +276,20 @@ export class AiService {
     const cacheKey = createHash('sha256')
       .update(`${cacheType}:${prompt}`)
       .digest('hex');
-    const { data: cached, error: readError } = await this.supabase
+    const { data: cachedRow, error: readError } = await this.supabase
       .from('ai_cache')
       .select('result, created_at')
       .eq('cache_key', cacheKey)
       .maybeSingle();
 
     if (readError) {
-      this.logger.error(`AI cache lookup failed: ${readError.message}`);
-      throw new ServiceUnavailableException(
-        'AI cache is unavailable. Apply the backend Supabase migration.',
+      this.logger.warn(
+        `AI cache lookup failed (falling back to in-memory cache): ${readError.message}`,
       );
     }
+    const cached = readError
+      ? (this.memoryCache.get(cacheKey) ?? null)
+      : (cachedRow ?? this.memoryCache.get(cacheKey) ?? null);
     const cachedCreatedAt =
       typeof cached?.created_at === 'string' ? cached.created_at : null;
     if (
@@ -317,16 +323,17 @@ export class AiService {
       );
       return { ...fallback, aiUnavailable: true };
     }
+    const createdAt = new Date().toISOString();
+    this.memoryCache.set(cacheKey, { result, created_at: createdAt });
     const { error: writeError } = await this.supabase
       .from('ai_cache')
       .upsert(
-        { cache_key: cacheKey, result, created_at: new Date().toISOString() },
+        { cache_key: cacheKey, result, created_at: createdAt },
         { onConflict: 'cache_key' },
       );
     if (writeError) {
-      this.logger.error(`AI cache write failed: ${writeError.message}`);
-      throw new ServiceUnavailableException(
-        'AI result could not be cached. Apply the backend Supabase migration.',
+      this.logger.warn(
+        `AI cache write failed (using in-memory cache): ${writeError.message}`,
       );
     }
     return result;
