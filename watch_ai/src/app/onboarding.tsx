@@ -36,8 +36,7 @@ const PREFERENCES = [
 ];
 
 export default function OnboardingScreen() {
-  const { registrationFlow, startRegistration, promptOnly } = useLocalSearchParams<{
-    registrationFlow?: string;
+  const { startRegistration, promptOnly } = useLocalSearchParams<{
     startRegistration?: string;
     promptOnly?: string;
   }>();
@@ -45,12 +44,7 @@ export default function OnboardingScreen() {
   const horizontalGutter = Math.min(24, Math.max(16, width * 0.055));
   const verticalGutter = Math.min(36, Math.max(24, height * 0.045));
   const compactLayout = height < 680 || width < 360;
-  const [step, setStep] = useState(
-    registrationFlow === 'true' || startRegistration === 'true' ? 1 : 0,
-  );
-  const [registrationRequested, setRegistrationRequested] = useState(
-    registrationFlow === 'true',
-  );
+  const [step, setStep] = useState(startRegistration === 'true' ? 1 : 0);
   const [permissionBlocked, setPermissionBlocked] = useState(false);
   const [permissionError, setPermissionError] = useState('');
   const [locationModalVisible, setLocationModalVisible] = useState(false);
@@ -68,22 +62,9 @@ export default function OnboardingScreen() {
   const [pageOffset] = useState(() => new Animated.Value(0));
 
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 4));
-  const chooseRegistration = () => {
-    setRegistrationRequested(true);
-    setStep(1);
-  };
+  const chooseRegistration = () => router.replace('/auth/register');
   const chooseLogin = () => router.replace('/auth/login');
-  const finishOnboarding = () => {
-    if (registrationRequested && promptOnly !== 'true') {
-      router.replace({
-        pathname: '/auth/register',
-        params: { onboardingComplete: 'true' },
-      });
-      return;
-    }
-
-    router.replace('/home');
-  };
+  const finishOnboarding = () => router.replace('/home');
 
   const completePermissionStep = useCallback(async () => {
     if (permissionTransitionStarted.current) return;
@@ -175,7 +156,7 @@ export default function OnboardingScreen() {
   useEffect(() => {
     if (
       step !== 1 ||
-      (registrationFlow !== 'true' && startRegistration !== 'true')
+      startRegistration !== 'true'
     ) return;
     let active = true;
 
@@ -205,7 +186,7 @@ export default function OnboardingScreen() {
       active = false;
       subscription.remove();
     };
-  }, [completePermissionStep, registrationFlow, startRegistration, step]);
+  }, [completePermissionStep, startRegistration, step]);
 
   const saveHomeLocation = async () => {
     if (!selectedLocation) return;
@@ -214,7 +195,7 @@ export default function OnboardingScreen() {
       await profileApi('/profile/home-location', {
         method: 'POST',
         body: JSON.stringify({
-          address: selectedLocation.address,
+          full_address: selectedLocation.address,
           latitude: selectedLocation.latitude,
           longitude: selectedLocation.longitude,
           city: selectedLocation.city,
@@ -238,7 +219,6 @@ export default function OnboardingScreen() {
       continueOnboarding();
       return;
     }
-
     setIsSaving(true);
     try {
       const body = selectedInstitution.id

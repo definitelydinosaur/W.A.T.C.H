@@ -11,9 +11,9 @@ import { LocationPromptDto } from './dto/location-prompt.dto';
 import { SelectInstitutionDto } from './dto/select-institution.dto';
 
 export interface SavedLocationRecord {
-  id: string;
+  loc_id: number | string;
   label: string;
-  address: string;
+  full_address: string;
   latitude: number;
   longitude: number;
   city: string | null;
@@ -25,9 +25,9 @@ function isSavedLocationRecord(value: unknown): value is SavedLocationRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
-    typeof record.id === 'string' &&
+    (typeof record.loc_id === 'number' || typeof record.loc_id === 'string') &&
     typeof record.label === 'string' &&
-    typeof record.address === 'string' &&
+    typeof record.full_address === 'string' &&
     typeof record.latitude === 'number' &&
     typeof record.longitude === 'number'
   );
@@ -242,9 +242,9 @@ export class ProfileService {
       const { data: location, error: locationError } = await this.supabase
         .from('locations')
         .select(
-          'id, label, address, latitude, longitude, city, province, barangay',
+          'loc_id, label, full_address, latitude, longitude, city, province, barangay',
         )
-        .eq('id', data.home_location_id)
+        .eq('loc_id', data.home_location_id)
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -253,7 +253,13 @@ export class ProfileService {
           `Failed to fetch home location: ${locationError.message}`,
         );
       }
-      homeLocation = location;
+      homeLocation = location
+        ? {
+            ...location,
+            id: String(location.loc_id),
+            address: location.full_address,
+          }
+        : null;
     }
 
     const { data: userInstitution, error: userInstitutionError } =
@@ -297,14 +303,14 @@ export class ProfileService {
   }
 
   async saveHomeLocation(userId: string, location: SaveHomeLocationDto) {
-    const address = location.address.trim();
+    const address = location.full_address.trim();
     if (address.length < 2) {
       throw new BadRequestException('Enter a complete home address.');
     }
 
     const result = await this.supabase.rpc('save_home_location', {
       p_user_id: userId,
-      p_address: address,
+      p_full_address: address,
       p_latitude: location.latitude,
       p_longitude: location.longitude,
       p_city: location.city?.trim() || null,
@@ -324,7 +330,13 @@ export class ProfileService {
         'Home location was saved, but the database returned an invalid location record.',
       );
     }
-    return { location: savedLocation };
+    return {
+      location: {
+        ...savedLocation,
+        id: String(savedLocation.loc_id),
+        address: savedLocation.full_address,
+      },
+    };
   }
 
   async updateLocationPrompt(userId: string, prompt: LocationPromptDto) {

@@ -133,9 +133,17 @@ export class AuthService {
   });
 }
 
+    if (!data.session) {
+      throw new UnauthorizedException(
+        'Email was verified, but no login session was created. Please log in.',
+      );
+    }
+
     return {
       message: 'Email verified and account created successfully.',
       userId: user.id,
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
     };
   }
 

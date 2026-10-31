@@ -226,7 +226,7 @@ const saveHomeLocation = async (location: HomeLocationInput) => {
     await profileApi('/profile/home-location', {
       method: 'POST',
       body: JSON.stringify({
-        address: location.address,
+        full_address: location.address,
         latitude: location.latitude,
         longitude: location.longitude,
         city: location.city,

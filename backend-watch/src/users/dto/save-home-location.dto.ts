@@ -12,7 +12,7 @@ export class SaveHomeLocationDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(300)
-  address!: string;
+  full_address!: string;
 
   @IsNumber()
   @Min(-90)

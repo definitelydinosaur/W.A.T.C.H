@@ -100,10 +100,10 @@ interface HazardState {
 }
 
 interface SavedHomeLocation {
-  id: string;
+  loc_id: number;
   user_id: string;
   label: string | null;
-  address: string | null;
+  full_address: string | null;
   city: string | null;
   latitude: number;
   longitude: number;
@@ -396,7 +396,7 @@ export class WeatherService {
   async monitorSavedLocations() {
     const locationResult = await this.supabase
       .from('locations')
-      .select('id, user_id, label, address, city, latitude, longitude')
+      .select('loc_id, user_id, label, full_address, city, latitude, longitude')
       .eq('is_default', true);
     if (locationResult.error) {
       this.logger.error(
@@ -418,7 +418,7 @@ export class WeatherService {
         const previousResult = await this.supabase
           .from('weather_records')
           .select('risk_level, observed_at')
-          .eq('location_id', location.id)
+          .eq('location_id', location.loc_id)
           .order('observed_at', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -432,7 +432,7 @@ export class WeatherService {
         const { error: recordError } = await this.supabase
           .from('weather_records')
           .insert({
-            location_id: location.id,
+            location_id: location.loc_id,
             user_id: location.user_id,
             payload: forecast,
             risk_level: risk.level,
@@ -460,7 +460,7 @@ export class WeatherService {
           const lastHazardResult = await this.supabase
             .from('hazards')
             .select('created_at, risk_level')
-            .eq('location_id', location.id)
+            .eq('location_id', location.loc_id)
             .eq('user_id', location.user_id)
             .eq('hazard_type', hazard.type)
             .order('created_at', { ascending: false })
@@ -487,7 +487,7 @@ export class WeatherService {
           const place =
             location.label && location.label !== 'Home'
               ? location.label
-              : location.city || location.address || 'Home';
+              : location.city || location.full_address || 'Home';
           const safetyTips = await this.ai.generateWeatherSafetyTips({
             hazardType: hazard.type,
             riskLevel: hazard.riskLevel,
@@ -498,7 +498,7 @@ export class WeatherService {
           const hazardInsert = await this.supabase
             .from('hazards')
             .insert({
-              location_id: location.id,
+              location_id: location.loc_id,
               user_id: location.user_id,
               hazard_type: hazard.type,
               risk_level: hazard.riskLevel,
@@ -527,7 +527,7 @@ export class WeatherService {
         }
       } catch (error) {
         this.logger.error(
-          `Weather monitor failed for ${location.city ?? location.id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Weather monitor failed for ${location.city ?? location.loc_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
       }
     }

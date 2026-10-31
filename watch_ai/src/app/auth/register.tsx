@@ -10,7 +10,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import LoadingAuth from '../../components/loading-auth';
@@ -19,9 +19,8 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function RegisterScreen() {
-  const { email: routeEmail, onboardingComplete } = useLocalSearchParams<{
+  const { email: routeEmail } = useLocalSearchParams<{
     email?: string;
-    onboardingComplete?: string;
   }>();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState(
@@ -88,7 +87,7 @@ export default function RegisterScreen() {
 
       router.push({
         pathname: '/auth/confirm-email',
-        params: { email: trimmedEmail, onboardingComplete: 'true' },
+        params: { email: trimmedEmail },
       });
     } catch (error) {
       Alert.alert(
@@ -101,10 +100,6 @@ export default function RegisterScreen() {
       setShowSlowLoading(false);
     }
   };
-
-  if (onboardingComplete !== 'true') {
-    return <Redirect href="/onboarding" />;
-  }
 
   return (
     <LinearGradient

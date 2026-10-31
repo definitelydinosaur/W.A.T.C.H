@@ -18,9 +18,8 @@ const OTP_LENGTH = 6;
 const RESEND_DELAY_SECONDS = 60;
 
 export default function ConfirmEmailScreen() {
-	const { email: routeEmail, onboardingComplete } = useLocalSearchParams<{
+	const { email: routeEmail } = useLocalSearchParams<{
 		email?: string;
-		onboardingComplete?: string;
 	}>();
 	const email = typeof routeEmail === 'string' ? routeEmail.trim().toLowerCase() : '';
 	const [code, setCode] = useState('');
@@ -35,9 +34,9 @@ export default function ConfirmEmailScreen() {
 		() =>
 			safeBack({
 				pathname: '/auth/register',
-				params: { email, onboardingComplete },
+				params: { email },
 			}),
-		[email, onboardingComplete],
+		[email],
 	);
 
 	useEffect(() => {
@@ -85,11 +84,25 @@ const verifyCode = async () => {
             },
         );
 
-        const result = await response.json();
+        const result: {
+            message?: string;
+            accessToken?: string;
+            refreshToken?: string;
+        } = await response.json();
 
         if (!response.ok) {
             throw new Error(result.message || 'Verification failed.');
         }
+
+        if (!result.accessToken || !result.refreshToken) {
+            throw new Error('Email verified, but a login session was not returned.');
+        }
+
+        const { error: sessionError } = await supabase.auth.setSession({
+            access_token: result.accessToken,
+            refresh_token: result.refreshToken,
+        });
+        if (sessionError) throw sessionError;
 
         setIsVerified(true);
     } catch (error) {
