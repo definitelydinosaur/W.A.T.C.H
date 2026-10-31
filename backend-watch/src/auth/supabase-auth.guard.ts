@@ -33,8 +33,13 @@ export class SupabaseAuthGuard implements CanActivate {
     }
 
     // Attach the verified user to the request.
-    (request as Request & { user: { id: string } }).user = {
+    (
+      request as Request & {
+        user: { id: string; app_metadata: Record<string, unknown> };
+      }
+    ).user = {
       id: data.user.id,
+      app_metadata: data.user.app_metadata,
     };
 
     return true;

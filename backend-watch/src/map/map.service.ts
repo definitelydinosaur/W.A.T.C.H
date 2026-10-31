@@ -27,6 +27,8 @@ export interface MapSuggestion {
   city: string;
   province: string;
   barangay: string;
+  external_id?: string;
+  external_source?: string;
 }
 
 interface PhotonFeature {
@@ -47,6 +49,8 @@ interface PhotonFeature {
     type?: string;
     osm_key?: string;
     osm_value?: string;
+    osm_id?: number;
+    osm_type?: string;
   };
 }
 
@@ -72,13 +76,20 @@ export class MapService {
     if (cached) return cached;
 
     return this.enqueueProviderRequest(async () => {
-      const url = new URL('https://photon.komoot.io/api/');
-      url.search = new URLSearchParams({
+      const url = new URL(
+        process.env.PHOTON_API_URL ?? 'https://photon.komoot.io/api/',
+      );
+      const params = new URLSearchParams({
         q: query,
-        limit: '30',
+        limit: '50',
         lang: 'en',
         bbox: '116.9,4.5,126.6,21.5',
-      }).toString();
+      });
+      if (kind === 'institution') {
+        params.set('lat', '10.3157');
+        params.set('lon', '123.8854');
+      }
+      url.search = params.toString();
 
       let response: Response;
       try {
@@ -103,7 +114,7 @@ export class MapService {
 
       const result = (await response.json()) as { features?: PhotonFeature[] };
       const suggestions = (result.features ?? [])
-        .map(({ geometry, properties }) => {
+        .flatMap(({ geometry, properties }): MapSuggestion[] => {
           const name = properties.name?.trim();
           const isPhilippines =
             properties.country?.toLocaleLowerCase() === 'philippines';
@@ -126,6 +137,18 @@ export class MapService {
             ['school', 'university', 'college'].includes(
               properties.osm_value?.toLocaleLowerCase() ?? '',
             );
+          const latitude = geometry.coordinates[1];
+          const longitude = geometry.coordinates[0];
+          if (
+            !name ||
+            !isPhilippines ||
+            !(kind === 'location' ? isLocation : isInstitution) ||
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+          ) {
+            return [];
+          }
+
           const city =
             properties.city ??
             properties.county ??
@@ -143,7 +166,7 @@ export class MapService {
               province,
             ].find(
               (part) =>
-                part && part.toLocaleLowerCase() !== name?.toLocaleLowerCase(),
+                part && part.toLocaleLowerCase() !== name.toLocaleLowerCase(),
             ) ?? '';
           const address = [
             properties.housenumber,
@@ -157,49 +180,47 @@ export class MapService {
           ]
             .filter((part, index, parts) => {
               if (!part) return false;
-              return parts.findIndex(
-                (candidate) =>
-                  candidate?.toLocaleLowerCase() === part.toLocaleLowerCase(),
-              ) === index;
+              return (
+                parts.findIndex(
+                  (candidate) =>
+                    candidate?.toLocaleLowerCase() === part.toLocaleLowerCase(),
+                ) === index
+              );
             })
             .join(', ');
+          const osmType = properties.osm_type?.toLocaleLowerCase();
+          const externalType =
+            osmType === 'n'
+              ? 'node'
+              : osmType === 'w'
+                ? 'way'
+                : osmType === 'r'
+                  ? 'relation'
+                  : osmType;
 
-          return {
-            name,
-            detail,
-            address,
-            latitude: geometry.coordinates[1],
-            longitude: geometry.coordinates[0],
-            city,
-            province,
-            barangay,
-            matches:
-              isPhilippines &&
-              (kind === 'location' ? isLocation : isInstitution),
-          };
+          return [
+            {
+              name,
+              detail,
+              address,
+              latitude,
+              longitude,
+              city,
+              province,
+              barangay,
+              ...(kind === 'institution' &&
+              properties.osm_id &&
+              externalType &&
+              ['node', 'way', 'relation'].includes(externalType)
+                ? {
+                    external_id: `${externalType}:${properties.osm_id}`,
+                    external_source: 'photon',
+                  }
+                : {}),
+            },
+          ];
         })
-        .filter(
-          (
-            suggestion,
-          ): suggestion is MapSuggestion & { matches: true } =>
-            Boolean(
-              suggestion.name &&
-                suggestion.matches &&
-                Number.isFinite(suggestion.latitude) &&
-                Number.isFinite(suggestion.longitude),
-            ),
-        )
-        .slice(0, 7)
-        .map(({ name, detail, address, latitude, longitude, city, province, barangay }) => ({
-          name,
-          detail,
-          address,
-          latitude,
-          longitude,
-          city,
-          province,
-          barangay,
-        }));
+        .slice(0, 7);
 
       this.suggestionCache.set(cacheKey, suggestions);
       return suggestions;

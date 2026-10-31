@@ -178,6 +178,55 @@ export class AlertsService {
     }
   }
 
+  async refreshInstitutionSources(institutionId: string | null) {
+    if (!institutionId) return { refreshed: 0 };
+
+    const sourcesResult = await this.supabase
+      .from('sources')
+      .select('*')
+      .eq('institution_id', institutionId)
+      .eq('type', 'institution')
+      .eq('is_active', true)
+      .eq('is_trusted', true);
+    if (sourcesResult.error) {
+      throw new ServiceUnavailableException(
+        `Institution sources could not be loaded: ${sourcesResult.error.message}`,
+      );
+    }
+
+    const sources = (sourcesResult.data ?? []) as SourceRow[];
+    for (const source of sources) {
+      try {
+        const { posts, degraded } = await this.fetchSourcePosts(source);
+        for (const post of posts) await this.processPost(source, post);
+        const { error } = await this.supabase
+          .from('sources')
+          .update({
+            last_checked_at: new Date().toISOString(),
+            status: degraded ? 'degraded' : 'active',
+            last_error: degraded
+              ? 'Facebook access failed; a fallback feed was used.'
+              : null,
+          })
+          .eq('id', source.id);
+        if (error) {
+          throw new Error(`Source status update failed: ${error.message}`);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Unknown source error';
+        this.logger.error(
+          `Institution source ${source.name} could not be refreshed: ${message}`,
+        );
+        throw new ServiceUnavailableException(
+          'Institution sources could not be refreshed.',
+        );
+      }
+    }
+
+    return { refreshed: sources.length };
+  }
+
   async createSource(input: CreateSourceDto) {
     const sourceResult = await this.supabase
       .from('sources')

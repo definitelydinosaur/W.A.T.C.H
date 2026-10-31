@@ -36,10 +36,17 @@ export interface InstitutionOption {
   city?: string | null;
   province?: string | null;
   is_verified?: boolean;
+  result_type?: 'verified' | 'suggested';
+  external_id?: string;
+  external_source?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  website_url?: string | null;
   facebook_page_url?: string | null;
 }
 
 type LocationSuggestion = HomeLocationInput;
+const institutionSearchCache = new Map<string, InstitutionOption[]>();
 
 interface Props {
   visible: boolean;
@@ -97,17 +104,32 @@ export default function ProfileSelectionModal({
     if (!visible) return;
 
     const normalized = query.trim();
-    if (normalized.length < 2 || !API_URL) return;
+    const minimumLength = kind === 'institution' ? 3 : 2;
+    if (normalized.length < minimumLength) return;
+    if (!API_URL) return;
 
     const controller = new AbortController();
     const timeout = setTimeout(async () => {
+      if (controller.signal.aborted) return;
+      const cacheKey = normalized.toLocaleLowerCase();
+      const cached =
+        kind === 'institution'
+          ? institutionSearchCache.get(cacheKey)
+          : undefined;
+      if (cached) {
+        setInstitutions(cached);
+        setLoading(false);
+        setError('');
+        return;
+      }
+
       setLoading(true);
       setError('');
       try {
         const path =
           kind === 'location'
             ? `/map/suggest?kind=location&query=${encodeURIComponent(normalized)}`
-            : `/institutions?query=${encodeURIComponent(normalized)}`;
+            : `/institutions/search?q=${encodeURIComponent(normalized)}`;
         const response = await fetch(`${API_URL}${path}`, {
           signal: controller.signal,
         });
@@ -115,6 +137,7 @@ export default function ProfileSelectionModal({
           | LocationSuggestion[]
           | InstitutionOption[]
           | { message?: string | string[] };
+        if (controller.signal.aborted) return;
         if (!response.ok) {
           const message = (result as { message?: string | string[] }).message;
           throw new Error(
@@ -126,7 +149,9 @@ export default function ProfileSelectionModal({
         if (kind === 'location') {
           setLocations(result as LocationSuggestion[]);
         } else {
-          setInstitutions(result as InstitutionOption[]);
+          const matches = result as InstitutionOption[];
+          institutionSearchCache.set(cacheKey, matches);
+          setInstitutions(matches);
         }
       } catch (searchError) {
         if (!controller.signal.aborted) {
@@ -137,7 +162,7 @@ export default function ProfileSelectionModal({
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }, 350);
+    }, 400);
 
     return () => {
       clearTimeout(timeout);
@@ -223,6 +248,12 @@ export default function ProfileSelectionModal({
       facebook_page_url: facebookPageUrl.trim() || undefined,
     });
   };
+
+  const searchUnavailable =
+    !API_URL &&
+    (kind === 'location'
+      ? query.trim().length >= 2
+      : query.trim().length >= 3);
 
   const openLocationSettings = async () => {
     try {
@@ -322,7 +353,7 @@ export default function ProfileSelectionModal({
               </Pressable>
             )}
 
-            {error || (query.trim().length >= 2 && !API_URL) ? (
+            {error || searchUnavailable ? (
               <View>
                 <Text accessibilityRole="alert" style={styles.error}>
                   {error || 'Search is unavailable. Check the backend URL.'}
@@ -369,18 +400,31 @@ export default function ProfileSelectionModal({
                       {[institution.short_name, institution.city, institution.province]
                         .filter(Boolean)
                         .join(' · ')}
-                      {institution.is_verified === false ? ' · Pending review' : ''}
+                      {' · '}
+                      {institution.result_type === 'suggested'
+                        ? 'Suggested'
+                        : institution.is_verified === false
+                          ? 'Pending review'
+                          : 'Verified'}
                     </Text>
                   </Pressable>
                 ))
               )}
-              {!loading && query.trim().length >= 2 && !error && (
+              {!loading &&
+                ((kind === 'location' && query.trim().length >= 2) ||
+                  (kind === 'institution' && query.trim().length >= 3)) &&
+                !error && (
                 kind === 'location' ? (
                   locations.length === 0 ? (
                     <Text style={styles.empty}>No matching places found.</Text>
                   ) : null
                 ) : (
                   <>
+                    {institutions.length === 0 && (
+                      <Text style={styles.empty}>
+                        No matching institutions found.
+                      </Text>
+                    )}
                     <Text style={styles.customTitle}>Can’t find your institution?</Text>
                     <TextInput
                       accessibilityLabel="Institution Facebook page URL"
@@ -404,6 +448,13 @@ export default function ProfileSelectionModal({
                   </>
                 )
               )}
+              {kind === 'institution' &&
+                query.trim().length > 0 &&
+                query.trim().length < 3 && (
+                  <Text style={styles.empty}>
+                    Type at least 3 characters to search.
+                  </Text>
+                )}
             </ScrollView>
           </View>
         </View>

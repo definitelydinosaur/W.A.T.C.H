@@ -9,5 +9,6 @@ import { AlertsService } from './alerts.service';
   imports: [AiModule, NotificationsModule, SupabaseModule],
   controllers: [AdminAlertsController, AlertsController],
   providers: [AlertsService],
+  exports: [AlertsService],
 })
 export class AlertsModule {}

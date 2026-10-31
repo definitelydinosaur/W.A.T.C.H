@@ -9,6 +9,7 @@ import { InstitutionsService } from '../institutions/institutions.service';
 import { SaveHomeLocationDto } from './dto/save-home-location.dto';
 import { LocationPromptDto } from './dto/location-prompt.dto';
 import { SelectInstitutionDto } from './dto/select-institution.dto';
+import { AlertsService } from '../alerts/alerts.service';
 
 export interface SavedLocationRecord {
   id: string;
@@ -39,6 +40,7 @@ export class ProfileService {
     @Inject('SUPABASE_CLIENT')
     private readonly supabase: SupabaseClient,
     private readonly institutionsService: InstitutionsService,
+    private readonly alertsService: AlertsService,
   ) {}
 
   async uploadProfilePicture(userId: string, file: Express.Multer.File) {
@@ -220,7 +222,7 @@ export class ProfileService {
     const { data, error } = await this.supabase
       .from('user_info')
       .select(
-        'id, name, email, birthdate, country, home_location_id, location_prompt_dismissed_at',
+        'id, name, email, birthdate, country, institution_id, location_prompt_dismissed_at',
       )
       .eq('id', userId)
       .maybeSingle();
@@ -237,46 +239,47 @@ export class ProfileService {
       );
     }
 
-    let homeLocation = null;
-    if (data.home_location_id) {
-      const { data: location, error: locationError } = await this.supabase
+    let { data: homeLocation, error: locationError } = await this.supabase
+      .from('locations')
+      .select(
+        'id, label, address, latitude, longitude, city, province, barangay',
+      )
+      .eq('user_id', userId)
+      .eq('is_default', true)
+      .maybeSingle();
+    if (locationError) {
+      throw new InternalServerErrorException(
+        `Failed to fetch home location: ${locationError.message}`,
+      );
+    }
+    if (!homeLocation) {
+      const fallbackLocation = await this.supabase
         .from('locations')
         .select(
           'id, label, address, latitude, longitude, city, province, barangay',
         )
-        .eq('id', data.home_location_id)
         .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
-
+      homeLocation = fallbackLocation.data;
+      locationError = fallbackLocation.error;
       if (locationError) {
         throw new InternalServerErrorException(
           `Failed to fetch home location: ${locationError.message}`,
         );
       }
-      homeLocation = location;
-    }
-
-    const { data: userInstitution, error: userInstitutionError } =
-      await this.supabase
-        .from('user_institutions')
-        .select('institution_id')
-        .eq('user_id', userId)
-        .eq('is_default', true)
-        .maybeSingle();
-
-    if (userInstitutionError) {
-      throw new InternalServerErrorException(
-        `Failed to fetch institution link: ${userInstitutionError.message}`,
-      );
     }
 
     let institution = null;
-    if (userInstitution) {
+    if (data.institution_id) {
       const { data: institutionData, error: institutionError } =
         await this.supabase
           .from('institutions')
-          .select('id, name, short_name, city, province, is_verified')
-          .eq('id', userInstitution.institution_id)
+          .select(
+            'id, name, short_name, city, province, is_verified, website_url, facebook_page_url',
+          )
+          .eq('id', data.institution_id)
           .maybeSingle();
 
       if (institutionError) {
@@ -354,6 +357,7 @@ export class ProfileService {
       institutionId = await this.institutionsService.findOrCreateCustom(
         selection.name,
         selection.facebookPageUrl,
+        userId,
       );
     }
 
@@ -403,6 +407,8 @@ export class ProfileService {
         `Institution was selected, but the profile link could not be updated: ${profileError.message}`,
       );
     }
+
+    await this.alertsService.refreshInstitutionSources(institutionId);
 
     if (!institutionId) return { institution: null };
     return { institution };

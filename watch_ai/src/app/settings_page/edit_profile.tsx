@@ -87,10 +87,33 @@ export default function EditProfileScreen() {
   const [selectionPicker, setSelectionPicker] =
     useState<'location' | 'institution' | null>(null);
   const [isSavingSelection, setIsSavingSelection] = useState(false);
+  const [profileLoadError, setProfileLoadError] = useState(false);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(false);
 
 
 const loadProfile = useCallback(async () => {
+  setProfileLoadError(false);
+  setIsLoadingProfile(true);
   try {
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (user) {
+        const metadataName =
+          user.user_metadata?.full_name ?? user.user_metadata?.name;
+        if (typeof metadataName === 'string') {
+          setName((current) => current || metadataName);
+        }
+        const userEmail = user.email;
+        if (userEmail) setEmail((current) => current || userEmail);
+      }
+    } catch (error) {
+      if (__DEV__) console.warn('Profile auth fallback unavailable:', error);
+    }
+
     const { profile } = await profileApi<{
       profile: {
         name: string | null;
@@ -131,11 +154,10 @@ const loadProfile = useCallback(async () => {
       setDatePickerDraft(birthdate);
     }
   } catch (error) {
-    console.error('Load profile error:', error);
-    Alert.alert(
-      'Error',
-      error instanceof Error ? error.message : 'Failed to load profile.',
-    );
+    if (__DEV__) console.warn('Load profile error:', error);
+    setProfileLoadError(true);
+  } finally {
+    setIsLoadingProfile(false);
   }
 }, []);
 
@@ -251,12 +273,32 @@ const saveInstitution = async (selected: InstitutionOption | null) => {
   if (isSavingSelection) return;
   setIsSavingSelection(true);
   try {
-    const body = selected
-      ? selected.id
-        ? { institutionId: selected.id }
-        : {
+    let resolvedSelection = selected;
+    if (selected?.result_type === 'suggested') {
+      const imported = await profileApi<{ institution: InstitutionOption }>(
+        '/institutions/import',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            external_id: selected.external_id,
+            external_source: selected.external_source,
             name: selected.name,
-            facebookPageUrl: selected.facebook_page_url,
+            city: selected.city,
+            province: selected.province,
+            latitude: selected.latitude,
+            longitude: selected.longitude,
+          }),
+        },
+      );
+      resolvedSelection = imported.institution;
+    }
+
+    const body = resolvedSelection
+      ? resolvedSelection.id
+        ? { institutionId: resolvedSelection.id }
+        : {
+            name: resolvedSelection.name,
+            facebookPageUrl: resolvedSelection.facebook_page_url,
           }
       : { institutionId: null };
     const result = await profileApi<{ institution: InstitutionOption | null }>(
@@ -502,6 +544,39 @@ const changeProfilePicture = async () => {
                 <Text style={styles.headerTitle}>Edit Profile</Text>
               </View>
 
+              {profileLoadError && (
+                <View
+                  accessibilityLiveRegion="polite"
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: 12,
+                    marginBottom: 12,
+                    borderRadius: 12,
+                    backgroundColor: '#FFF0F0',
+                  }}
+                >
+                  <Text style={{ color: '#762F37', flex: 1 }}>
+                    Couldn&apos;t load your profile
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isLoadingProfile}
+                    onPress={() => void loadProfile()}
+                    style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                  >
+                    {isLoadingProfile ? (
+                      <ActivityIndicator color="#762F37" size="small" />
+                    ) : (
+                      <Text style={{ color: '#762F37', fontWeight: '700' }}>
+                        Retry
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              )}
+
               <View style={styles.avatarSection}>
                 <View style={styles.avatar}>
                   {displayedProfilePicture && (
@@ -634,6 +709,21 @@ const changeProfilePicture = async () => {
                     }
                   />
                 </ProfileField>
+                {institution &&
+                  !institution.facebook_page_url &&
+                  !institution.website_url && (
+                    <Text
+                      accessibilityRole="text"
+                      style={{
+                        color: '#62566E',
+                        fontSize: 12,
+                        marginTop: -8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      Announcements are not available for this school yet.
+                    </Text>
+                  )}
               </View>
 
               <Pressable
