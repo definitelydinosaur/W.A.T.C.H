@@ -1,10 +1,12 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
 uvicorn[standard]
 supabase
-sentence-transformers
 python-dotenv
-pandas
-openpyxl
-numpy
-google-genai
 openai
+
+numpy<2
+torch==2.5.1+cpu
+transformers==4.48.3
+sentence-transformers==3.4.1
