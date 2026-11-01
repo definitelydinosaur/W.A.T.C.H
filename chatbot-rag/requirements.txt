@@ -1,0 +1,10 @@
+
+fastapi
+uvicorn[standard]
+supabase
+sentence-transformers
+python-dotenv
+pandas
+openpyxl
+numpy
+google-genai
