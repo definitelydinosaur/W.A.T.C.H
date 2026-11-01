@@ -145,7 +145,15 @@ Use the retrieved FAQs to support application-related answers.
         max_tokens=300
     )
 
-    return response.choices[0].message.content
+    message = response.choices[0].message
+
+    print("Model used:", response.model)
+    print("Finish reason:", response.choices[0].finish_reason)
+    print("Response content:", message.content)
+
+    if not message.content:
+        raise ValueError("The AI model returned an empty response.")
+    return message.content
 
 
 def ask_chatbot(question: str, history: list = None):
