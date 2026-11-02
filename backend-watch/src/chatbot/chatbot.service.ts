@@ -14,14 +14,17 @@ export class ChatbotService {
   private readonly chatbotApiUrl: string;
 
   constructor(
-    private readonly httpService: HttpService,
-    private readonly configService: ConfigService,
-  ) {
-    this.chatbotApiUrl =
-      this.configService.get<string>('CHATBOT_API_URL') ||
-      'http://127.0.0.1:8000';
+  private readonly httpService: HttpService,
+  private readonly configService: ConfigService,
+) {
+  const apiUrl = this.configService.get<string>('CHATBOT_API_URL');
+
+  if (!apiUrl) {
+    throw new Error('CHATBOT_API_URL is not configured!');
   }
 
+  this.chatbotApiUrl = apiUrl.replace(/\/+$/, '');
+}
   async sendMessage(question: string, history: any[] = []) {
     try {
       const response = await firstValueFrom(
