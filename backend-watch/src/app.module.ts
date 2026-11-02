@@ -10,6 +10,7 @@ import { InstitutionsModule } from './institutions/institutions.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AlertsModule } from './alerts/alerts.module';
 import { HealthController } from './health/health.controller';
+import { ChatbotModule } from './chatbot/chatbot.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { HealthController } from './health/health.controller';
     ProfileModule,
     InstitutionsModule,
     AlertsModule,
+    ChatbotModule,
   ],
   controllers: [HealthController],
 })
