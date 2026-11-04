@@ -29,6 +29,28 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    the file. The backend has its own `.env` and needs `SUPABASE_URL` plus
    `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`.
 
+## Starting Expo Go over a tunnel
+
+The project includes `@expo/ngrok` as a local development dependency. From
+`watch_ai`, run:
+
+```powershell
+npm run start:tunnel
+```
+
+If port 8081 is already occupied, choose another port at the prompt or provide
+one explicitly:
+
+```powershell
+npm run start:tunnel -- --port 8083
+```
+
+Scan the QR code printed by that running server with Expo Go. If Expo Go still
+shows a remote-update download error, confirm the tunnel reports **Tunnel
+ready**, scan the newest QR code (not one from a previous server), and verify
+the phone can access the internet. On a shared Wi-Fi network, `npx expo start
+--lan` may be faster; phone and computer must be on the same network.
+
 ## Weather Watch and Map Overview
 
 After login, Weather Watch loads the live Cebu forecast from the NestJS
@@ -43,6 +65,34 @@ In the output, you'll find options to open the app in a
 - [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+
+## Push notifications and local alerts
+
+Copy `.env.example` to `.env` and set `EXPO_PUBLIC_API_URL`,
+`EXPO_PUBLIC_SUPABASE_URL`, and `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Link
+the app to its EAS project with `eas init` (which sets
+`expo.extra.eas.projectId`). The backend separately needs `EXPO_ACCESS_TOKEN`,
+`AI_API_KEY`, and (if Facebook Graph access is authorized) `FACEBOOK_ACCESS_TOKEN`.
+Never put server credentials in `EXPO_PUBLIC_*` variables.
+
+Notification permission is requested separately from location permission after
+sign-in. Remote push and notification-tap deep links must be tested in a
+development build, not Expo Go. Build Android with
+`eas build --profile development --platform android`, configure the EAS project
+ID and FCM credentials, then install that build on the test phone.
+Open the **Alerts** screen to see delivered announcements and weather safety
+tips. Tapping an announcement opens its source, original text, AI summary, and
+verification disclaimer.
+
+For a physical Android phone, set `EXPO_PUBLIC_API_URL` in `watch_ai/.env` to
+the computer's reachable LAN address (for example `http://192.168.1.20:3000`),
+not `localhost`. The NestJS backend listens on `0.0.0.0`; allow port 3000
+through the computer's firewall if needed.
+
+The backend alert job requires the Supabase migrations to be applied, a trusted
+source, an AI provider key, Expo push credentials, and a physical test device
+with notification permission. See `../backend-watch/README.md` for source
+registration and manual-entry examples.
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 

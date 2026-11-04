@@ -1,0 +1,27 @@
+# Python virtual environment
+chatbot-rag/.venv/
+chatbot-rag/venv/
+
+# Python cache files
+chatbot-rag/__pycache__/
+chatbot-rag/**/__pycache__/
+chatbot-rag/*.py[cod]
+chatbot-rag/**/*.py[cod]
+
+# Environment variables and secrets
+chatbot-rag/.env
+chatbot-rag/.env.*
+
+# Keep example environment template
+!chatbot-rag/.env.example
+
+# Jupyter Notebook checkpoints
+chatbot-rag/.ipynb_checkpoints/
+
+# Test and coverage cache
+chatbot-rag/.pytest_cache/
+chatbot-rag/.coverage
+chatbot-rag/htmlcov/
+
+# Model cache
+chatbot-rag/.cache/
