@@ -21,7 +21,9 @@ export class WeatherController {
       longitude < -180 ||
       longitude > 180
     ) {
-      throw new BadRequestException('Latitude or longitude is outside its valid range.');
+      throw new BadRequestException(
+        'Latitude or longitude is outside its valid range.',
+      );
     }
 
     return this.weatherService.getForecast(latitude, longitude);

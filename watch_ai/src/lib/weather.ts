@@ -20,6 +20,7 @@ export interface Forecast {
     time: string;
     temperatureC: number;
     precipitationProbability: number;
+    precipitationMm: number;
     weatherCode: number;
   }[];
   daily: {
@@ -99,7 +100,7 @@ export async function fetchForecast(
     'current',
     'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m,uv_index',
   );
-  weatherParams.set('hourly', 'temperature_2m,precipitation_probability,weather_code');
+  weatherParams.set('hourly', 'temperature_2m,precipitation_probability,precipitation,weather_code');
   weatherParams.set(
     'daily',
     'weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_sum,precipitation_probability_max,uv_index_max',
@@ -149,6 +150,7 @@ export async function fetchForecast(
     time,
     temperatureC: num(w.hourly.temperature_2m[startIdx + i]),
     precipitationProbability: num(w.hourly.precipitation_probability[startIdx + i]),
+    precipitationMm: num(w.hourly.precipitation?.[startIdx + i]),
     weatherCode: num(w.hourly.weather_code[startIdx + i]),
   }));
 

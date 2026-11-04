@@ -10,7 +10,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import LoadingAuth from '../../components/loading-auth';
@@ -19,8 +19,13 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function RegisterScreen() {
+  const { email: routeEmail } = useLocalSearchParams<{
+    email?: string;
+  }>();
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(
+    typeof routeEmail === 'string' ? routeEmail : '',
+  );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
@@ -80,7 +85,7 @@ export default function RegisterScreen() {
         throw new Error(message);
       }
 
-      router.replace({
+      router.push({
         pathname: '/auth/confirm-email',
         params: { email: trimmedEmail },
       });

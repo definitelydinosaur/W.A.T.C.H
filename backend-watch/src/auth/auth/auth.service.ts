@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   UnauthorizedException,
   Inject,
   Injectable,
@@ -71,6 +72,12 @@ export class AuthService {
 
     if (!user) {
       throw new BadRequestException('User registration failed');
+    }
+
+    if (user.identities && user.identities.length === 0) {
+      throw new ConflictException(
+        'This email is already registered. Please log in instead.',
+      );
     }
 
     const { error: profileError } = await this.saveProfile(
