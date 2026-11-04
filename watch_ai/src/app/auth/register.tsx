@@ -28,7 +28,7 @@ export default function RegisterScreen() {
   const { AnimatedView, animatedStyle, navigateTo, isTransitioning } = useAuthCardTransition();
   const handleRegister = async () => {
     const trimmedName = fullName.trim();
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
     if (trimmedName.length < 3) {

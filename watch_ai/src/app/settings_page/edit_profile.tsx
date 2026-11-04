@@ -17,6 +17,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useAppTheme } from '../../theme/theme-context';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
@@ -55,6 +56,7 @@ function parseBirthdate(value: string | null): Date | null {
 }
 
 export default function EditProfileScreen() {
+  const { displayed } = useAppTheme();
   const [isSaving, setIsSaving] = useState(false);
   const router = useRouter();
   const { profilePictureUrl: routeProfilePictureUrl } = useLocalSearchParams<{
@@ -365,7 +367,7 @@ const changeProfilePicture = async () => {
     initialProfilePictureUrl;
 
   return (
-    <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar style="dark" />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
@@ -390,14 +392,14 @@ const changeProfilePicture = async () => {
                     <Path
                       d="m15 4-8 8 8 8"
                       fill="none"
-                      stroke="#111111"
+                      stroke={displayed.text}
                       strokeWidth={2.5}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
                   </Svg>
                 </Pressable>
-                <Text style={styles.headerTitle}>Edit Profile</Text>
+                <Text style={[styles.headerTitle, { color: displayed.text }]}>Edit Profile</Text>
               </View>
 
               <View style={styles.avatarSection}>
@@ -426,22 +428,22 @@ const changeProfilePicture = async () => {
                     style={styles.cameraButton}
                   >
                     {isUploadingPicture ? (
-                      <ActivityIndicator color="#45466F" />
+                      <ActivityIndicator color={displayed.primary} />
                     ) : (
                       <Svg width={23} height={23} viewBox="0 0 24 24">
                         <Path
                           d="M4 7.5h3l1.5-2h7l1.5 2h3A1.5 1.5 0 0 1 21.5 9v9A1.5 1.5 0 0 1 20 19.5H4A1.5 1.5 0 0 1 2.5 18V9A1.5 1.5 0 0 1 4 7.5Z"
-                          fill="#45466F"
+                          fill={displayed.primary}
                         />
                         <Circle
                           cx={12}
                           cy={13.5}
                           r={3.5}
                           fill="none"
-                          stroke="#FFFFFF"
+                          stroke={displayed.onPrimary}
                           strokeWidth={1.8}
                         />
-                        <Circle cx={18.2} cy={9.7} r={0.9} fill="#FFFFFF" />
+                        <Circle cx={18.2} cy={9.7} r={0.9} fill={displayed.onPrimary} />
                       </Svg>
                     )}
                   </Pressable>
@@ -511,11 +513,12 @@ const changeProfilePicture = async () => {
                 onPress={saveChanges}
                 style={({ pressed }) => [
                   styles.saveButton,
+                  { backgroundColor: displayed.primary },
                   isSaving && styles.saveButtonPressed,
                   pressed && styles.saveButtonPressed,
                 ]}
               >
-                <Text style={styles.saveButtonText}>
+                <Text style={[styles.saveButtonText, { color: displayed.onPrimary }]}>
                   {isSaving ? 'Saving...' : 'Save changes'}
                 </Text>
               </Pressable>
@@ -644,7 +647,7 @@ function PickerButton({
         <Path
           d="m5 9 7 7 7-7"
           fill="none"
-          stroke="#111111"
+          stroke={displayed.text}
           strokeWidth={2}
           strokeLinecap="round"
           strokeLinejoin="round"

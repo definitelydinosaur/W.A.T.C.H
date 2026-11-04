@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { useAppTheme } from '../../theme/theme-context';
 import {
   CEBU,
   Forecast,
@@ -119,6 +120,7 @@ export default function WeatherWatchScreen() {
     };
   }, [loadForecast]);
 
+  const { displayed } = useAppTheme();
   const current = forecast?.current;
   const riskColor =
     forecast?.risk.level === 'Severe'
@@ -128,13 +130,13 @@ export default function WeatherWatchScreen() {
         : '#D2B0FF';
 
   return (
-    <LinearGradient colors={['#17113C', '#52117A', '#190B37']} style={styles.screen}>
+    <LinearGradient colors={displayed.gradient} style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            tintColor="#FFFFFF"
+            tintColor={displayed.onPrimary}
             onRefresh={() => {
               setRefreshing(true);
               void loadForecast();
@@ -147,14 +149,14 @@ export default function WeatherWatchScreen() {
             <Text style={styles.eyebrow}>WEATHER WATCH</Text>
             <Text style={styles.city}>{CEBU.name}</Text>
           </View>
-          <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
-            <Text style={styles.mapButtonText}>Map overview</Text>
+          <Pressable style={[styles.mapButton, { backgroundColor: displayed.primary }]} onPress={() => router.push('/map-overview')}>
+            <Text style={[styles.mapButtonText, { color: displayed.onPrimary }]}>Map overview</Text>
           </Pressable>
         </View>
 
         {loading && !forecast ? (
           <View style={styles.loading}>
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color={displayed.onPrimary} />
             <Text style={styles.muted}>Loading live forecast…</Text>
           </View>
         ) : (
@@ -184,9 +186,9 @@ export default function WeatherWatchScreen() {
                         accessibilityRole="tab"
                         accessibilityState={{ selected: tab === key }}
                         onPress={() => setTab(key)}
-                        style={[styles.tab, tab === key && styles.tabActive]}
+                        style={[styles.tab, tab === key && styles.tabActive, tab === key && { backgroundColor: displayed.primary }]}
                       >
-                        <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>
+                        <Text style={[styles.tabText, tab === key && styles.tabTextActive, tab === key && { color: displayed.onPrimary }]}>
                           {key === 'hourly' ? 'Hourly' : 'Weekly'}
                         </Text>
                       </Pressable>

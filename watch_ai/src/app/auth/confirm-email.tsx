@@ -18,7 +18,7 @@ const RESEND_DELAY_SECONDS = 10;
 
 export default function ConfirmEmailScreen() {
 	const { email: routeEmail } = useLocalSearchParams<{ email?: string }>();
-	const email = typeof routeEmail === 'string' ? routeEmail : '';
+	const email = typeof routeEmail === 'string' ? routeEmail.trim().toLowerCase() : '';
 	const [code, setCode] = useState('');
 	const [isVerifying, setIsVerifying] = useState(false);
 	const [isVerified, setIsVerified] = useState(false);
@@ -41,15 +41,27 @@ export default function ConfirmEmailScreen() {
 	const verifyCode = async () => {
 		if (code.length !== OTP_LENGTH || !email || isVerifying) return;
 
+		const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+		if (!apiUrl) {
+			setVerificationError('Set EXPO_PUBLIC_API_URL to your backend URL.');
+			return;
+		}
+
 		setIsVerifying(true);
 		setVerificationError('');
 		try {
-			const { error } = await supabase.auth.verifyOtp({
-				email,
-				token: code,
-				type: 'signup',
+			const response = await fetch(`${apiUrl}/auth/verify-otp`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ email, token: code }),
 			});
-			if (error) throw error;
+			const result: { message?: string | string[] } = await response.json();
+			if (!response.ok) {
+				const message = Array.isArray(result.message)
+					? result.message.join('\n')
+					: result.message ?? 'That code could not be verified. Try again.';
+				throw new Error(message);
+			}
 			setIsVerified(true);
 		} catch (error) {
 			setVerificationError(
@@ -145,7 +157,7 @@ export default function ConfirmEmailScreen() {
 					<Pressable
 						accessibilityRole="button"
 						disabled={!isVerified}
-						onPress={() => router.replace('/auth/login')}
+						onPress={() => router.replace({ pathname: '/auth/login', params: { email } })}
 						style={[styles.passwordButton, !isVerified && styles.disabledPasswordButton]}
 					>
 						<Text style={[styles.passwordButtonText, !isVerified && styles.disabledPasswordText]}>

@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { ThemeProvider } from '../theme/theme-context';
 
 export const unstable_settings = {
   anchor: 'onboarding',
@@ -6,6 +7,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   return (
+    <ThemeProvider>
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
@@ -16,6 +18,8 @@ export default function RootLayout() {
       <Stack.Screen name="home" />
       <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
       <Stack.Screen name="map-overview" options={{ animation: 'fade' }} />
+      <Stack.Screen name="settings_page/customize-theme" options={{ animation: 'fade' }} />
     </Stack>
+    </ThemeProvider>
   );
 }

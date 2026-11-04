@@ -16,6 +16,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useAppTheme } from '../theme/theme-context';
+import { filterUniversities, matchUniversity } from '../theme/universities';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
@@ -53,6 +55,9 @@ export default function OnboardingScreen() {
     'school',
   ]);
   const [pageOffset] = useState(() => new Animated.Value(0));
+  const { applyUniversity } = useAppTheme();
+  const [keepDefaultTheme, setKeepDefaultTheme] = useState(false);
+  const listedUniversities = filterUniversities(institutionQuery);
 
   const continueOnboarding = () => {
     setShowLocationSuggestions(false);
@@ -64,6 +69,15 @@ export default function OnboardingScreen() {
   const chooseRegistration = () => setStep(1);
   const chooseLogin = () => router.replace('/auth/login');
   const finishOnboarding = () => router.replace('/auth/register');
+  const continueFromInstitution = () => {
+    if (keepDefaultTheme) {
+      applyUniversity(null);
+    } else {
+      const match = matchUniversity(institutionQuery);
+      applyUniversity(match ? match.id : null);
+    }
+    continueOnboarding();
+  };
 
   useLayoutEffect(() => {
     pageOffset.setValue(12);
@@ -354,19 +368,60 @@ export default function OnboardingScreen() {
                     }
                     emptyLabel="No matching institutions found."
                     onSelect={(suggestion) => {
+                      const match = matchUniversity(suggestion.name);
+                      setKeepDefaultTheme(!match);
                       setInstitutionQuery(suggestion.name);
                       setShowInstitutionSuggestions(false);
                       setInstitutionsLoading(false);
+                      applyUniversity(match ? match.id : null);
                     }}
                     onCustomSelect={(query) => {
+                      setKeepDefaultTheme(true);
                       setInstitutionQuery(query);
                       setShowInstitutionSuggestions(false);
                       setInstitutionsLoading(false);
+                      applyUniversity(null);
                     }}
                   />
                 )}
+                <ScrollView style={styles.universityList} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                  {listedUniversities.map((university) => (
+                    <Pressable
+                      key={university.id}
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setKeepDefaultTheme(false);
+                        setInstitutionQuery(university.name);
+                        setShowInstitutionSuggestions(false);
+                        applyUniversity(university.id);
+                      }}
+                      style={styles.universityRow}
+                    >
+                      <View style={[styles.universitySwatch, { backgroundColor: university.primary }]} />
+                      <View style={styles.universityText}>
+                        <Text style={styles.universityName}>{university.shortName}</Text>
+                        <Text style={styles.universityDetail}>{university.name}</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setKeepDefaultTheme(true);
+                      setShowInstitutionSuggestions(false);
+                      applyUniversity(null);
+                    }}
+                    style={styles.universityRow}
+                  >
+                    <View style={[styles.universitySwatch]} />
+                    <View style={styles.universityText}>
+                      <Text style={styles.universityName}>My university is not listed</Text>
+                      <Text style={styles.universityDetail}>Keep the current W.A.T.C.H. theme</Text>
+                    </View>
+                  </Pressable>
+                </ScrollView>
                 <Text style={styles.helperText}>
-                  Add your school or institution for relevant announcements.
+                  Choosing a listed university updates the app colors. You can also upload a logo later in Settings.
                 </Text>
                 <Text style={styles.notice}>
                   {privacyNoteForStep(2)}
@@ -410,7 +465,7 @@ export default function OnboardingScreen() {
             <PrimaryButton label="Continue" onPress={continueOnboarding} />
           )}
           {step === 3 && (
-            <PrimaryButton label="Continue" onPress={continueOnboarding} />
+            <PrimaryButton label="Continue" onPress={continueFromInstitution} />
           )}
           {step === 4 && (
             <PrimaryButton label="Continue onboarding" onPress={finishOnboarding} />
@@ -843,5 +898,33 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
     marginTop: 3,
+  },
+  universityList: {
+    maxHeight: 180,
+    marginTop: 8,
+  },
+  universityRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  universitySwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  universityText: {
+    flex: 1,
+  },
+  universityName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  universityDetail: {
+    color: '#D7C8E5',
+    fontSize: 11,
   },
 });

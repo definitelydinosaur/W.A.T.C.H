@@ -10,7 +10,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import supabase from '../../lib/supabase';
@@ -20,14 +20,17 @@ import useAuthCardTransition from '../../hooks/use-auth-card-transition';
 const SLOW_LOADING_DELAY_MS = 600;
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
+  const { email: routeEmail } = useLocalSearchParams<{ email?: string }>();
+  const [email, setEmail] = useState(
+    typeof routeEmail === 'string' ? routeEmail : '',
+  );
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
   const { AnimatedView, animatedStyle, isTransitioning } = useAuthCardTransition();
 
   const handleLogin = async () => {
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
     if (!trimmedEmail.includes('@')) {
