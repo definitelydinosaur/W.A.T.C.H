@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useProfilePicture } from '../../hooks/loadprofilepicture';
 import supabase from '../../lib/supabase';
+import { useAppTheme } from '../../theme/theme-context';
 
 type ProfileDetails = {
   name: string | null;
@@ -23,6 +24,7 @@ type ProfileDetails = {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const { profilePictureUrl, loading: pictureLoading, loadProfilePicture } =
     useProfilePicture();
   const [profile, setProfile] = useState<ProfileDetails>({
@@ -84,7 +86,7 @@ export default function ProfileScreen() {
 
   return (
     <LinearGradient
-      colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']}
+      colors={displayed.settingsGradient}
       style={styles.background}
     >
       <StatusBar style="dark" />
@@ -104,27 +106,27 @@ export default function ProfileScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
               </Svg>
             </Pressable>
-            <Text style={styles.headerTitle}>Profile</Text>
+            <Text style={[styles.headerTitle, { color: displayed.text }]}>Profile</Text>
             <View style={styles.headerSpacer} />
           </View>
 
-          <View style={styles.heroCard}>
+          <View style={[styles.heroCard, { shadowColor: displayed.primaryDark }]}>
             <LinearGradient
-              colors={['#6D45B8', '#49328D', '#302364']}
+              colors={[displayed.primary, displayed.primaryDark, displayed.gradient[2]]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={StyleSheet.absoluteFill}
             />
             <View style={styles.avatar}>
               {pictureLoading && !profilePictureUrl ? (
-                <ActivityIndicator color="#FFFFFF" />
+                <ActivityIndicator color={displayed.onPrimary} />
               ) : profilePictureUrl ? (
                 <Image
                   accessibilityLabel="Profile picture"
@@ -133,25 +135,25 @@ export default function ProfileScreen() {
                   contentFit="cover"
                 />
               ) : (
-                <Text style={styles.avatarInitial}>
+                <Text style={[styles.avatarInitial, { color: displayed.onPrimary }]}>
                   {displayName.charAt(0).toUpperCase()}
                 </Text>
               )}
             </View>
-            <Text style={styles.name}>{loading ? 'Loading profile…' : displayName}</Text>
+            <Text style={[styles.name, { color: displayed.onPrimary }]}>{loading ? 'Loading profile…' : displayName}</Text>
             <Text style={styles.heroSubtitle}>W.A.T.C.H. member</Text>
           </View>
 
           <View style={styles.detailsCard}>
-            <Text style={styles.sectionTitle}>Account details</Text>
-            <ProfileDetail label="Full name" value={profile.name || 'Not provided'} />
+            <Text style={[styles.sectionTitle, { color: displayed.text }]}>Account details</Text>
+            <ProfileDetail label="Full name" value={profile.name || 'Not provided'} labelColor={displayed.muted} valueColor={displayed.text} />
             <View style={styles.divider} />
-            <ProfileDetail label="Email address" value={profile.email || 'Not available'} />
+            <ProfileDetail label="Email address" value={profile.email || 'Not available'} labelColor={displayed.muted} valueColor={displayed.text} />
           </View>
 
-          <View style={styles.noteCard}>
-            <Text style={styles.noteTitle}>Read-only profile</Text>
-            <Text style={styles.noteText}>
+          <View style={[styles.noteCard, { backgroundColor: displayed.primary + '22' }]}>
+            <Text style={[styles.noteTitle, { color: displayed.primaryDark }]}>Read-only profile</Text>
+            <Text style={[styles.noteText, { color: displayed.muted }]}>
               Your account information is shown here. To update your profile picture,
               use the Edit Profile option in Settings.
             </Text>
@@ -162,11 +164,21 @@ export default function ProfileScreen() {
   );
 }
 
-function ProfileDetail({ label, value }: { label: string; value: string }) {
+function ProfileDetail({
+  label,
+  value,
+  labelColor,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  labelColor: string;
+  valueColor: string;
+}) {
   return (
     <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+      <Text style={[styles.detailLabel, { color: labelColor }]}>{label}</Text>
+      <Text style={[styles.detailValue, { color: valueColor }]}>{value}</Text>
     </View>
   );
 }

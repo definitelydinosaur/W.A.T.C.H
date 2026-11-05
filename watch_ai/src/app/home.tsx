@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useProfilePicture } from '../hooks/loadprofilepicture';
+import { useAppTheme } from '../theme/theme-context';
 import {
   View,
   Text,
@@ -15,15 +16,28 @@ import {
   PanResponder,
   FlatList,
   TextInput,
+  useWindowDimensions,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
-import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, {
+  Circle,
+  Defs,
+  FeColorMatrix,
+  Filter,
+  G,
+  Image as SvgImage,
+  Line,
+  Polygon,
+  Text as SvgText,
+} from 'react-native-svg';
+import { hexToRgb, rgbToHsl } from '../theme/color';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { CEBU_LOCATIONS } from '../lib/cebu-locations';
 import { WeatherBackdrop, compassToDeg } from '../components/sky';
+import Chatbot from './chatbot/chatbot';
 import {
   getHourTheme,
   manilaIso,
@@ -379,12 +393,43 @@ function toCondition(code: number, hour: number): HourlyItem['condition'] {
   return 'cloud';
 }
 
+function GlassHomeDock({ primary }: { primary: string }) {
+  const sourceHue = rgbToHsl(hexToRgb('#6738C7'))[0];
+  const targetHue = rgbToHsl(hexToRgb(primary))[0];
+  const rotate = targetHue - sourceHue;
+  if (Math.abs(rotate) < 1) {
+    return (
+      <Image
+        source={require('../../assets/images/homepage/TabBar.png')}
+        style={StyleSheet.absoluteFill}
+        contentFit="fill"
+      />
+    );
+  }
+  return (
+    <Svg width="100%" height="100%" viewBox="0 0 1170 345">
+      <Defs>
+        <Filter id="dockHue">
+          <FeColorMatrix type="hueRotate" values={rotate} />
+        </Filter>
+      </Defs>
+      <SvgImage
+        href={require('../../assets/images/homepage/TabBar.png')}
+        width="1170"
+        height="345"
+        preserveAspectRatio="none"
+        filter="url(#dockHue)"
+      />
+    </Svg>
+  );
+}
 export default function HomeScreen() {
   const router = useRouter();
   const { welcomeName: routeWelcomeName } = useLocalSearchParams<{
     welcomeName?: string | string[];
   }>();
   const welcomeName = typeof routeWelcomeName === 'string' ? routeWelcomeName.trim() : '';
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [baseCity, setSelectedCity] = useState<CityData>(CITIES[0]);
   const [cityQuery, setCityQuery] = useState('');
   const filteredCities = useMemo(() => {
@@ -480,7 +525,91 @@ export default function HomeScreen() {
   const [selectedHourId, setSelectedHourId] = useState('2');
   const [menuExpanded, setMenuExpanded] = useState(false);
   const [citySelectorVisible, setCitySelectorVisible] = useState(false);
+  const [chatbotVisible, setChatbotVisible] = useState(false);
+  const initialChatbotPosition = {
+    x: Math.max(12, screenWidth - 82),
+    y: Math.max(12, screenHeight - TAB_BAR_HEIGHT - 84),
+  };
+  const chatbotPositionRef = useRef(initialChatbotPosition);
+  const chatbotDragOriginRef = useRef(initialChatbotPosition);
+  const [chatbotAnimatedPosition] = useState(
+    () => new Animated.ValueXY(initialChatbotPosition),
+  );
+  const [chatbotScale] = useState(() => new Animated.Value(1));
+  const [chatbotAnchor, setChatbotAnchor] = useState(initialChatbotPosition);
+  const [chatbotPanResponder, setChatbotPanResponder] = useState<
+    ReturnType<typeof PanResponder.create> | null
+  >(null);
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
+  const { displayed: appTheme } = useAppTheme();
+
+  useEffect(() => {
+    const position = {
+      x: Math.min(Math.max(12, chatbotPositionRef.current.x), Math.max(12, screenWidth - 74)),
+      y: Math.min(Math.max(12, chatbotPositionRef.current.y), Math.max(12, screenHeight - 74)),
+    };
+    chatbotPositionRef.current = position;
+    chatbotAnimatedPosition.setValue(position);
+  }, [screenWidth, screenHeight, chatbotAnimatedPosition]);
+
+  useEffect(() => {
+    const snapToNearestSide = () => {
+      const currentPosition = chatbotPositionRef.current;
+      const position = {
+        x:
+          currentPosition.x + 31 < screenWidth / 2
+            ? 12
+            : Math.max(12, screenWidth - 74),
+        y: currentPosition.y,
+      };
+      chatbotPositionRef.current = position;
+      Animated.spring(chatbotAnimatedPosition, {
+        toValue: position,
+        useNativeDriver: true,
+        tension: 90,
+        friction: 12,
+      }).start();
+      Animated.spring(chatbotScale, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 120,
+        friction: 8,
+      }).start();
+    };
+
+    setChatbotPanResponder(
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5,
+        onPanResponderGrant: () => {
+          chatbotDragOriginRef.current = chatbotPositionRef.current;
+          Animated.spring(chatbotScale, {
+            toValue: 0.94,
+            useNativeDriver: true,
+            tension: 180,
+            friction: 12,
+          }).start();
+        },
+        onPanResponderMove: (_, gestureState) => {
+          const position = {
+            x: Math.min(
+              Math.max(12, chatbotDragOriginRef.current.x + gestureState.dx),
+              Math.max(12, screenWidth - 74),
+            ),
+            y: Math.min(
+              Math.max(12, chatbotDragOriginRef.current.y + gestureState.dy),
+              Math.max(12, screenHeight - 74),
+            ),
+          };
+          chatbotPositionRef.current = position;
+          chatbotAnimatedPosition.setValue(position);
+        },
+        onPanResponderRelease: snapToNearestSide,
+        onPanResponderTerminate: snapToNearestSide,
+      }),
+    );
+  }, [screenWidth, screenHeight, chatbotAnimatedPosition, chatbotScale]);
 
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
   const [liveClock, setLiveClock] = useState(new Date());
@@ -1183,12 +1312,9 @@ export default function HomeScreen() {
 
       {/* Bottom TabBar */}
       <View style={styles.fixedTabBar} pointerEvents="box-none">
-        <Image
-          source={require('../../assets/images/homepage/TabBar.png')}
-          style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
-          contentFit="fill"
-          pointerEvents="none"
-        />
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <GlassHomeDock primary={appTheme.primary} />
+        </View>
         <TouchableOpacity
           style={styles.tabBarRadarButton}
           activeOpacity={0.65}
@@ -1228,7 +1354,7 @@ export default function HomeScreen() {
           ]}
         >
           <LinearGradient
-            colors={['#6738C7', '#382493']}
+            colors={[appTheme.primary, appTheme.primaryDark]}
             start={{ x: 0.1, y: 0 }}
             end={{ x: 0.9, y: 1 }}
             style={styles.homeMenuPillGradient}
@@ -1260,6 +1386,7 @@ export default function HomeScreen() {
                 <Image
                   source={HOME_MENU_ITEMS[0].image}
                   style={styles.homeMenuItemIcon}
+                  tintColor={appTheme.onPrimary}
                   contentFit="contain"
                 />
               </Animated.View>
@@ -1293,8 +1420,8 @@ export default function HomeScreen() {
                     />
                   ) : (
                     <View style={styles.homeMenuAvatarPlaceholder}>
-                      <View style={styles.homeMenuAvatarHead} />
-                      <View style={styles.homeMenuAvatarBody} />
+                      <View style={[styles.homeMenuAvatarHead, { backgroundColor: appTheme.primary }]} />
+                      <View style={[styles.homeMenuAvatarBody, { backgroundColor: appTheme.primary }]} />
                     </View>
                   )}
                 </View>
@@ -1345,6 +1472,7 @@ export default function HomeScreen() {
                   <Image
                     source={item.image}
                     style={styles.homeMenuItemIcon}
+                    tintColor={appTheme.onPrimary}
                     contentFit="contain"
                   />
                 </TouchableOpacity>
@@ -1353,6 +1481,44 @@ export default function HomeScreen() {
           </LinearGradient>
         </Animated.View>
       </View>
+
+      <Animated.View
+        {...(chatbotPanResponder?.panHandlers ?? {})}
+        style={[
+          styles.chatbotLauncher,
+          {
+            transform: [
+              ...chatbotAnimatedPosition.getTranslateTransform(),
+              { scale: chatbotScale },
+            ],
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.chatbotLauncherButton}
+          onPress={() => {
+            setChatbotAnchor(chatbotPositionRef.current);
+            setChatbotVisible(true);
+          }}
+          activeOpacity={0.82}
+          accessibilityRole="button"
+          accessibilityLabel="Open chatbot"
+          accessibilityHint="Drag to move the chatbot button"
+        >
+          <Image
+            source={require('../../assets/images/chatbot/chatbot.png')}
+            style={styles.chatbotLauncherImage}
+            contentFit="contain"
+          />
+        </TouchableOpacity>
+      </Animated.View>
+
+      <Chatbot
+        visible={chatbotVisible}
+        anchor={chatbotAnchor}
+        userAvatarUri={profilePictureUrl}
+        onClose={() => setChatbotVisible(false)}
+      />
 
       {/* Interactive Liquid Glass City Selector Modal */}
       <Modal visible={citySelectorVisible} transparent animationType="fade">
@@ -1961,6 +2127,33 @@ const styles = StyleSheet.create({
     height: TAB_BAR_HEIGHT,
     marginLeft: -TAB_BAR_WIDTH / 2,
     zIndex: 110,
+  },
+  chatbotLauncher: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: 62,
+    height: 62,
+    zIndex: 120,
+    elevation: 12,
+  },
+  chatbotLauncherButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 31,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: 'rgba(103, 56, 199, 0.22)',
+    shadowColor: '#1C1241',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.28,
+    shadowRadius: 9,
+  },
+  chatbotLauncherImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
   tabBarRadarButton: {
     position: 'absolute',

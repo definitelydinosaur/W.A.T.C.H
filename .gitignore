@@ -15,3 +15,16 @@ coverage/
 
 # Logs
 npm-debug.log*
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Python virtual environments
+.venv/
+venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
