@@ -30,29 +30,77 @@ describe('classifyWeatherRisk', () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: 'Strong winds',
+          eventType: 'GALE_WIND',
           riskLevel: 'Advisory',
+          severity: 'Advisory',
         }),
         expect.objectContaining({
           type: 'Heavy rainfall',
+          eventType: 'EXTREME_RAINFALL',
           riskLevel: 'Advisory',
+          severity: 'Advisory',
         }),
         expect.objectContaining({
           type: 'Extreme heat',
+          eventType: 'EXTREME_HEAT_INDEX',
           riskLevel: 'Advisory',
+          severity: 'Advisory',
         }),
         expect.objectContaining({
           type: 'Thunderstorms',
+          eventType: 'SEVERE_STORM_LIGHTNING',
           riskLevel: 'Warning',
+          severity: 'Warning',
         }),
       ]),
     );
-    expect(detectWeatherHazards(0, 118, 0, 0)).toContainEqual({
-      type: 'Typhoon / tropical cyclone conditions',
-      riskLevel: 'Severe',
-    });
-    expect(detectWeatherHazards(0, 62, 0, 0, 980)).toContainEqual({
-      type: 'Typhoon / tropical cyclone conditions',
-      riskLevel: 'Severe',
-    });
+    expect(detectWeatherHazards(0, 118, 0, 0)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'Typhoon / tropical cyclone conditions',
+          eventType: 'TYPHOON_WIND',
+          riskLevel: 'Severe',
+          severity: 'Extreme',
+        }),
+      ]),
+    );
+    expect(detectWeatherHazards(0, 62, 0, 0, 980)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'Typhoon / tropical cyclone conditions',
+          eventType: 'TYPHOON_WIND',
+          riskLevel: 'Severe',
+          severity: 'Extreme',
+        }),
+      ]),
+    );
+  });
+
+  it('detects gale/typhoon gusts and active provider weather alerts', () => {
+    const hazards = detectWeatherHazards(0, 30, 42.5, 0, 1008, 85, [
+      {
+        event: 'Red Rainfall Warning',
+        severity: 'Severe',
+        description: 'Serious flooding expected in low-lying areas.',
+      },
+    ]);
+
+    expect(hazards).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: 'GALE_WIND',
+          severity: 'Warning',
+        }),
+        expect.objectContaining({
+          eventType: 'EXTREME_HEAT_INDEX',
+          severity: 'Warning',
+        }),
+        expect.objectContaining({
+          eventType: 'API_WEATHER_ALERT',
+          type: 'Red Rainfall Warning',
+          severity: 'Severe',
+        }),
+      ]),
+    );
   });
 });
