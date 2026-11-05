@@ -1,4 +1,5 @@
 import { Stack, useRouter } from 'expo-router';
+import { ThemeProvider } from '../theme/theme-context';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
@@ -180,6 +181,7 @@ export default function RootLayout() {
   }, [router]);
 
   return (
+    <ThemeProvider>
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
@@ -191,8 +193,10 @@ export default function RootLayout() {
       <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
       <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
       <Stack.Screen name="map-overview" options={{ animation: 'fade' }} />
+      <Stack.Screen name="settings_page/customize-theme" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/alert" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/announcement" options={{ animation: 'fade' }} />
     </Stack>
+    </ThemeProvider>
   );
 }

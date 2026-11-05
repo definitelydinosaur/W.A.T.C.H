@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import supabase from '../../lib/supabase';
+import { useAppTheme } from '../../theme/theme-context';
 
 type IconName =
   | 'profile'
@@ -28,7 +29,8 @@ type IconName =
   | 'saver'
   | 'report'
   | 'account'
-  | 'logout';
+  | 'logout'
+  | 'theme';
 
 interface SettingItem {
   label: string;
@@ -40,6 +42,7 @@ const SECTIONS: { title: string; items: SettingItem[] }[] = [
     title: 'Account',
     items: [
       { label: 'Edit profile', icon: 'profile' },
+      { label: 'Customize Theme', icon: 'theme' },
       { label: 'Security', icon: 'security' },
       { label: 'Notifications', icon: 'notifications' },
       { label: 'Privacy', icon: 'privacy' },
@@ -74,10 +77,10 @@ const NAVIGATION_ITEMS = [
   { label: 'Home', href: '/home' as const },
 ];
 
-function SettingIcon({ name }: { name: IconName }) {
+function SettingIcon({ name, color = '#4B32B5' }: { name: IconName; color?: string }) {
   const shared = {
     fill: 'none' as const,
-    stroke: '#4B32B5',
+    stroke: color,
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
     strokeWidth: 2,
@@ -95,7 +98,7 @@ function SettingIcon({ name }: { name: IconName }) {
         <>
           <Path d="M12 2.5 20 5v6c0 5-3.4 8.4-8 10.5C7.4 19.4 4 16 4 11V5z" {...shared} />
           <Path d="M12 8v4" {...shared} />
-          <Circle cx={12} cy={15.5} r={0.7} fill="#4B32B5" stroke="none" />
+          <Circle cx={12} cy={15.5} r={0.7} fill={color} stroke="none" />
         </>
       )}
       {name === 'notifications' && (
@@ -121,14 +124,14 @@ function SettingIcon({ name }: { name: IconName }) {
         <>
           <Circle cx={12} cy={12} r={9} {...shared} />
           <Path d="M9.7 9a2.4 2.4 0 1 1 4.1 1.7c-1.2 1.1-1.8 1.4-1.8 3" {...shared} />
-          <Circle cx={12} cy={17} r={0.7} fill="#4B32B5" stroke="none" />
+          <Circle cx={12} cy={17} r={0.7} fill={color} stroke="none" />
         </>
       )}
       {name === 'terms' && (
         <>
           <Circle cx={12} cy={12} r={9} {...shared} />
           <Path d="M12 7v6" {...shared} />
-          <Circle cx={12} cy={17} r={0.7} fill="#4B32B5" stroke="none" />
+          <Circle cx={12} cy={17} r={0.7} fill={color} stroke="none" />
         </>
       )}
       {name === 'space' && (
@@ -151,6 +154,12 @@ function SettingIcon({ name }: { name: IconName }) {
           <Path d="M3 20v-1a6 6 0 0 1 6-6h2a6 6 0 0 1 5.5 3.6M16 7a3 3 0 0 1 0 6M17 16h5M19.5 13.5v5" {...shared} />
         </>
       )}
+      {name === 'theme' && (
+        <>
+          <Circle cx={12} cy={12} r={3} {...shared} />
+          <Path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" {...shared} />
+        </>
+      )}
       {name === 'logout' && (
         <>
           <Path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4M8 12h10" {...shared} />
@@ -167,6 +176,7 @@ export default function SettingsScreen() {
   }>();
   const profilePictureUrl =
     typeof routeProfilePictureUrl === 'string' ? routeProfilePictureUrl : '';
+  const { displayed } = useAppTheme();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -197,7 +207,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -213,7 +223,7 @@ export default function SettingsScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -230,7 +240,7 @@ export default function SettingsScreen() {
               hitSlop={6}
             >
               <LinearGradient
-                colors={['#6738C7', '#382493']}
+                colors={[displayed.primary, displayed.primaryDark]}
                 start={{ x: 0.1, y: 0 }}
                 end={{ x: 0.9, y: 1 }}
                 style={styles.navigationButtonGradient}
@@ -238,6 +248,7 @@ export default function SettingsScreen() {
                 <Image
                   source={require('../../../assets/images/homepage/3dots.png')}
                   style={styles.navigationDots}
+                  tintColor={displayed.onPrimary}
                   contentFit="contain"
                 />
               </LinearGradient>
@@ -268,11 +279,27 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>
                           {isLoggingOut ? 'Logging out...' : item.label}
                         </Text>
+                      </Pressable>
+                    ) : item.icon === 'theme' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() => router.push('/settings_page/customize-theme')}
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
                     ) : item.icon === 'profile' ? (
                       <Pressable
@@ -291,14 +318,14 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
                     ) : (
                       <View key={item.label} style={styles.settingRow}>
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </View>
