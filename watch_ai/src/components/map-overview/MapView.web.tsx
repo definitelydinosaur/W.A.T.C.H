@@ -1,25 +1,24 @@
-interface MapViewProps {
-  latitude: number;
-  longitude: number;
-  label: string;
-}
+import type { MapViewProps } from './types';
 
-export default function MapView({ latitude, longitude, label }: MapViewProps) {
-  const padding = 0.035;
+export default function MapView({
+  latitude,
+  longitude,
+  label,
+  focus,
+}: MapViewProps) {
+  const lat = focus?.latitude ?? latitude;
+  const lon = focus?.longitude ?? longitude;
+  const padding = (focus?.span ?? 0.04) / 2;
   const mapUrl = new URL('https://www.openstreetmap.org/export/embed.html');
   mapUrl.search = new URLSearchParams({
-    bbox: [
-      longitude - padding,
-      latitude - padding,
-      longitude + padding,
-      latitude + padding,
-    ].join(','),
+    bbox: [lon - padding, lat - padding, lon + padding, lat + padding].join(','),
     layer: 'mapnik',
-    marker: `${latitude},${longitude}`,
+    marker: `${lat},${lon}`,
   }).toString();
 
   return (
     <iframe
+      key={`${lat.toFixed(5)},${lon.toFixed(5)},${padding.toFixed(4)}`}
       title={`Map showing ${label}`}
       src={mapUrl.toString()}
       style={{

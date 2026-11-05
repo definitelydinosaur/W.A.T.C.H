@@ -780,6 +780,7 @@ function PickerButton({
   onPress: () => void;
   value: string;
 }) {
+  const { displayed } = useAppTheme();
   return (
     <Pressable
       accessibilityRole="button"
