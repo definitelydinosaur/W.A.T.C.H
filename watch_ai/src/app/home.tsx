@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useProfilePicture } from '../hooks/loadprofilepicture';
+import { useAppTheme } from '../theme/theme-context';
 import {
   View,
   Text,
@@ -21,7 +22,18 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
-import Svg, { Circle, G, Line, Polygon, Text as SvgText } from 'react-native-svg';
+import Svg, {
+  Circle,
+  Defs,
+  FeColorMatrix,
+  Filter,
+  G,
+  Image as SvgImage,
+  Line,
+  Polygon,
+  Text as SvgText,
+} from 'react-native-svg';
+import { hexToRgb, rgbToHsl } from '../theme/color';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { CEBU_LOCATIONS } from '../lib/cebu-locations';
 import { WeatherBackdrop, compassToDeg } from '../components/sky';
@@ -381,6 +393,36 @@ function toCondition(code: number, hour: number): HourlyItem['condition'] {
   return 'cloud';
 }
 
+function GlassHomeDock({ primary }: { primary: string }) {
+  const sourceHue = rgbToHsl(hexToRgb('#6738C7'))[0];
+  const targetHue = rgbToHsl(hexToRgb(primary))[0];
+  const rotate = targetHue - sourceHue;
+  if (Math.abs(rotate) < 1) {
+    return (
+      <Image
+        source={require('../../assets/images/homepage/TabBar.png')}
+        style={StyleSheet.absoluteFill}
+        contentFit="fill"
+      />
+    );
+  }
+  return (
+    <Svg width="100%" height="100%" viewBox="0 0 1170 345">
+      <Defs>
+        <Filter id="dockHue">
+          <FeColorMatrix type="hueRotate" values={rotate} />
+        </Filter>
+      </Defs>
+      <SvgImage
+        href={require('../../assets/images/homepage/TabBar.png')}
+        width="1170"
+        height="345"
+        preserveAspectRatio="none"
+        filter="url(#dockHue)"
+      />
+    </Svg>
+  );
+}
 export default function HomeScreen() {
   const router = useRouter();
   const { welcomeName: routeWelcomeName } = useLocalSearchParams<{
@@ -499,6 +541,7 @@ export default function HomeScreen() {
     ReturnType<typeof PanResponder.create> | null
   >(null);
   const { profilePictureUrl, loadProfilePicture } = useProfilePicture();
+  const { displayed: appTheme } = useAppTheme();
 
   useEffect(() => {
     const position = {
@@ -1253,12 +1296,9 @@ export default function HomeScreen() {
 
       {/* Bottom TabBar */}
       <View style={styles.fixedTabBar} pointerEvents="box-none">
-        <Image
-          source={require('../../assets/images/homepage/TabBar.png')}
-          style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
-          contentFit="fill"
-          pointerEvents="none"
-        />
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          <GlassHomeDock primary={appTheme.primary} />
+        </View>
         <TouchableOpacity
           style={styles.tabBarRadarButton}
           activeOpacity={0.65}
@@ -1303,7 +1343,7 @@ export default function HomeScreen() {
           ]}
         >
           <LinearGradient
-            colors={['#6738C7', '#382493']}
+            colors={[appTheme.primary, appTheme.primaryDark]}
             start={{ x: 0.1, y: 0 }}
             end={{ x: 0.9, y: 1 }}
             style={styles.homeMenuPillGradient}
@@ -1335,6 +1375,7 @@ export default function HomeScreen() {
                 <Image
                   source={HOME_MENU_ITEMS[0].image}
                   style={styles.homeMenuItemIcon}
+                  tintColor={appTheme.onPrimary}
                   contentFit="contain"
                 />
               </Animated.View>
@@ -1368,8 +1409,8 @@ export default function HomeScreen() {
                     />
                   ) : (
                     <View style={styles.homeMenuAvatarPlaceholder}>
-                      <View style={styles.homeMenuAvatarHead} />
-                      <View style={styles.homeMenuAvatarBody} />
+                      <View style={[styles.homeMenuAvatarHead, { backgroundColor: appTheme.primary }]} />
+                      <View style={[styles.homeMenuAvatarBody, { backgroundColor: appTheme.primary }]} />
                     </View>
                   )}
                 </View>
@@ -1420,6 +1461,7 @@ export default function HomeScreen() {
                   <Image
                     source={item.image}
                     style={styles.homeMenuItemIcon}
+                    tintColor={appTheme.onPrimary}
                     contentFit="contain"
                   />
                 </TouchableOpacity>

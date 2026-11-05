@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useAppTheme } from '../../theme/theme-context';
 import MapView from '../../components/map-overview/MapView';
 import { profileApi } from '../../lib/profile-api';
 
@@ -37,6 +38,7 @@ interface HomeHazard {
 }
 
 export default function MapOverviewScreen() {
+  const { displayed } = useAppTheme();
   const [location, setLocation] = useState<LocationResult>({
     name: 'Cebu City',
     latitude: 10.3157,
@@ -146,7 +148,7 @@ export default function MapOverviewScreen() {
         />
         <View style={styles.searchRow}>
           <Pressable style={styles.homeButton} onPress={() => router.replace('/weather-watch')}>
-            <Text style={styles.homeIcon}>⌂</Text>
+            <Text style={[styles.homeIcon, { color: displayed.primary }]}>⌂</Text>
           </Pressable>
           <TextInput
             value={query}
@@ -159,7 +161,7 @@ export default function MapOverviewScreen() {
             accessibilityLabel="Search map location"
           />
           <Pressable style={styles.searchButton} onPress={() => void searchLocation()}>
-            {searching ? <ActivityIndicator color="#6B21A8" /> : <Text style={styles.searchIcon}>⌕</Text>}
+            {searching ? <ActivityIndicator color={displayed.primary} /> : <Text style={[styles.searchIcon, { color: displayed.primary }]}>⌕</Text>}
           </Pressable>
         </View>
       </View>

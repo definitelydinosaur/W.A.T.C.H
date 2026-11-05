@@ -27,6 +27,8 @@ import ProfileSelectionModal, {
   InstitutionOption,
 } from '../components/profile-selection-modal';
 import { profileApi } from '../lib/profile-api';
+import { useAppTheme } from '../theme/theme-context';
+import { matchUniversity } from '../theme/universities';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
 const PREFERENCES = [
@@ -60,6 +62,7 @@ export default function OnboardingScreen() {
     'school',
   ]);
   const [pageOffset] = useState(() => new Animated.Value(0));
+  const { applyUniversity } = useAppTheme();
 
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 4));
   const chooseRegistration = () => router.replace('/auth/register');
@@ -216,9 +219,14 @@ export default function OnboardingScreen() {
 
   const saveInstitution = async () => {
     if (!selectedInstitution) {
+      applyUniversity(null);
       continueOnboarding();
       return;
     }
+    const match =
+      matchUniversity(selectedInstitution.name) ??
+      matchUniversity(selectedInstitution.short_name ?? '');
+    applyUniversity(match ? match.id : null);
     setIsSaving(true);
     try {
       const body = selectedInstitution.id

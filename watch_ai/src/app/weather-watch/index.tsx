@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { WeatherBackdrop } from '../../components/sky';
+import { useAppTheme } from '../../theme/theme-context';
 import { HourlyForecast, HourlyForecastItem } from '../../components/weather/hourly-forecast';
 import {
   getHourTheme,
@@ -126,6 +127,7 @@ export default function WeatherWatchScreen() {
     };
   }, [loadForecast]);
 
+  const { displayed } = useAppTheme();
   const hourlyItems = useMemo<HourlyForecastItem[]>(
     () =>
       (forecast?.hourly ?? []).map((h, i) => ({
@@ -182,7 +184,7 @@ export default function WeatherWatchScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            tintColor="#FFFFFF"
+            tintColor={displayed.onPrimary}
             onRefresh={() => {
               setRefreshing(true);
               void loadForecast();
@@ -197,14 +199,14 @@ export default function WeatherWatchScreen() {
             </Text>
             <Text style={styles.city}>{CEBU.name}</Text>
           </View>
-          <Pressable style={styles.mapButton} onPress={() => router.push('/map-overview')}>
-            <Text style={styles.mapButtonText}>Map overview</Text>
+          <Pressable style={[styles.mapButton, { backgroundColor: displayed.primary }]} onPress={() => router.push('/map-overview')}>
+            <Text style={[styles.mapButtonText, { color: displayed.onPrimary }]}>Map overview</Text>
           </Pressable>
         </View>
 
         {loading && !forecast ? (
           <View style={styles.loading}>
-            <ActivityIndicator color="#FFFFFF" />
+            <ActivityIndicator color={displayed.onPrimary} />
             <Text style={styles.muted}>Loading live forecast…</Text>
           </View>
         ) : (
@@ -241,9 +243,9 @@ export default function WeatherWatchScreen() {
                         accessibilityRole="tab"
                         accessibilityState={{ selected: tab === key }}
                         onPress={() => setTab(key)}
-                        style={[styles.tab, tab === key && styles.tabActive]}
+                        style={[styles.tab, tab === key && styles.tabActive, tab === key && { backgroundColor: displayed.primary }]}
                       >
-                        <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>
+                        <Text style={[styles.tabText, tab === key && styles.tabTextActive, tab === key && { color: displayed.onPrimary }]}>
                           {key === 'hourly' ? 'Hourly' : 'Weekly'}
                         </Text>
                       </Pressable>
