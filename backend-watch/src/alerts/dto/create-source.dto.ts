@@ -10,21 +10,35 @@ import {
 } from 'class-validator';
 
 export class CreateSourceDto {
-  @IsIn(['lgu_mayor', 'institution', 'barangay'])
-  type!: 'lgu_mayor' | 'institution' | 'barangay';
+  @IsIn(['lgu', 'institution'])
+  source_type!: 'lgu' | 'institution';
 
   @IsString()
   @MinLength(2)
   @MaxLength(120)
-  name!: string;
+  school_name!: string;
+
+  @IsUrl({ require_protocol: true })
+  facebook_url!: string;
 
   @IsOptional()
   @IsString()
-  facebook_page_id?: string;
+  @MaxLength(100)
+  city?: string;
 
   @IsOptional()
-  @IsUrl({ require_protocol: true })
-  facebook_page_url?: string;
+  @IsString()
+  @MaxLength(100)
+  province?: string;
+
+  @IsOptional()
+  @IsUUID()
+  institution_id?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  facebook_page_id?: string;
 
   @IsOptional()
   @IsUrl({ require_protocol: true })
@@ -35,15 +49,6 @@ export class CreateSourceDto {
   rss_url?: string;
 
   @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  city?: string;
-
-  @IsOptional()
-  @IsUUID()
-  institution_id?: string;
-
-  @IsOptional()
   @IsBoolean()
-  is_trusted?: boolean;
+  is_active?: boolean;
 }

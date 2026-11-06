@@ -3,30 +3,35 @@ import { classifyWeatherRisk, detectWeatherHazards } from './weather-risk';
 
 describe('classifyWeatherRisk', () => {
   it('keeps values below configured thresholds at Normal', () => {
-    expect(classifyWeatherRisk(14.9, 38.9, 32.9).level).toBe('Normal');
+    expect(classifyWeatherRisk(14.9, 38.9, 41.9, undefined, 100).level).toBe(
+      'Normal',
+    );
   });
 
-  const thresholds: [number, number, number, string][] = [
-    [15, 0, 0, 'Advisory'],
-    [30, 0, 0, 'Warning'],
-    [50, 0, 0, 'Severe'],
-    [0, 39, 0, 'Advisory'],
-    [0, 62, 0, 'Warning'],
-    [0, 88, 0, 'Severe'],
-    [0, 0, 33, 'Advisory'],
-    [0, 0, 42, 'Warning'],
-    [0, 0, 52, 'Severe'],
+  const thresholds: [number, number, number, number | undefined, string][] = [
+    [15, 0, 0, undefined, 'Warning'],
+    [30, 0, 0, undefined, 'Severe'],
+    [0, 39, 0, undefined, 'Advisory'],
+    [0, 62, 0, undefined, 'Warning'],
+    [0, 88, 0, undefined, 'Severe'],
+    [0, 0, 42, undefined, 'Warning'],
+    [0, 0, 52, undefined, 'Severe'],
+    [0, 0, 0, 101, 'Advisory'],
+    [0, 0, 0, 151, 'Warning'],
+    [0, 0, 0, 201, 'Severe'],
   ];
 
   it.each(thresholds)(
-    'classifies configured thresholds (%s, %s, %s)',
-    (rain, wind, heat, expected) => {
-      expect(classifyWeatherRisk(rain, wind, heat).level).toBe(expected);
+    'classifies configured thresholds (%s, %s, %s, %s)',
+    (rain, wind, heat, aqi, expected) => {
+      expect(classifyWeatherRisk(rain, wind, heat, undefined, aqi).level).toBe(
+        expected,
+      );
     },
   );
 
-  it('detects storm, rain, wind, heat, and thunder hazards at advisory thresholds', () => {
-    expect(detectWeatherHazards(15, 39, 33, 95)).toEqual(
+  it('detects rain, wind, heat, air quality, and thunder hazards at configured thresholds', () => {
+    expect(detectWeatherHazards(15, 39, 42, 95, undefined, 101)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'Strong winds',
@@ -34,10 +39,14 @@ describe('classifyWeatherRisk', () => {
         }),
         expect.objectContaining({
           type: 'Heavy rainfall',
-          riskLevel: 'Advisory',
+          riskLevel: 'Warning',
         }),
         expect.objectContaining({
           type: 'Extreme heat',
+          riskLevel: 'Warning',
+        }),
+        expect.objectContaining({
+          type: 'Unhealthy air quality',
           riskLevel: 'Advisory',
         }),
         expect.objectContaining({

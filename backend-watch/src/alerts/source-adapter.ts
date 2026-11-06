@@ -1,14 +1,13 @@
 export interface AlertSource {
-  id: string;
-  type: 'lgu_mayor' | 'institution' | 'barangay';
-  name: string;
-  facebook_page_id: string | null;
-  facebook_page_url: string | null;
+  id: number | string;
+  source_type: 'lgu' | 'institution';
+  school_name: string;
+  facebook_url: string | null;
+  facebook_page_id?: string | null;
   website_url: string | null;
   rss_url: string | null;
   city: string | null;
   institution_id: string | null;
-  is_trusted: boolean;
   is_active: boolean;
 }
 
@@ -27,9 +26,14 @@ export class FacebookGraphAdapter implements SourceAdapter {
   constructor(private readonly accessToken: string) {}
 
   async fetchLatest(source: AlertSource) {
-    if (!source.facebook_page_id) return [];
+    const pageId =
+      source.facebook_page_id ??
+      source.facebook_url
+        ?.replace(/^https?:\/\/(?:www\.)?facebook\.com\//i, '')
+        .split(/[/?#]/)[0];
+    if (!pageId || pageId.startsWith('REPLACE_')) return [];
     const url = new URL(
-      `https://graph.facebook.com/v21.0/${encodeURIComponent(source.facebook_page_id)}/posts`,
+      `https://graph.facebook.com/v21.0/${encodeURIComponent(pageId)}/posts`,
     );
     url.search = new URLSearchParams({
       fields: 'id,message,permalink_url,created_time',
@@ -52,7 +56,7 @@ export class FacebookGraphAdapter implements SourceAdapter {
       .map((post) => ({
         externalPostId: post.id ?? null,
         text: post.message!,
-        url: post.permalink_url ?? source.facebook_page_url,
+        url: post.permalink_url ?? source.facebook_url,
         postedAt: post.created_time!,
       }));
   }
