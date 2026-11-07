@@ -615,6 +615,7 @@ function GlassHomeDock({ primary }: { primary: string }) {
   );
 }
 export default function HomeScreen() {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const router = useRouter();
   const { welcomeName: routeWelcomeName, hazardId: routeHazardId } =
     useLocalSearchParams<{

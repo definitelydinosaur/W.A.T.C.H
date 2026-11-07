@@ -29,6 +29,10 @@ import ProfileSelectionModal, {
 import { profileApi } from '../lib/profile-api';
 import { useAppTheme } from '../theme/theme-context';
 import { matchUniversity } from '../theme/universities';
+import {
+  enablePushNotifications,
+  saveNotificationPreferences,
+} from '../lib/notification-settings';
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
 const PREFERENCES = [
@@ -55,6 +59,8 @@ export default function OnboardingScreen() {
   const [selectedInstitution, setSelectedInstitution] =
     useState<InstitutionOption | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [notificationError, setNotificationError] = useState('');
+  const [canContinueWithoutPush, setCanContinueWithoutPush] = useState(false);
   const permissionTransitionStarted = useRef(false);
   const [selectedPreferences, setSelectedPreferences] = useState<string[]>([
     'weather',
@@ -67,7 +73,57 @@ export default function OnboardingScreen() {
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 4));
   const chooseRegistration = () => router.replace('/auth/register');
   const chooseLogin = () => router.replace('/auth/login');
-  const finishOnboarding = () => router.replace('/home');
+  const finishOnboarding = async () => {
+    if (canContinueWithoutPush) {
+      router.replace('/home');
+      return;
+    }
+
+    setIsSaving(true);
+    setNotificationError('');
+    try {
+      await saveNotificationPreferences({
+        weather: selectedPreferences.includes('weather'),
+        safety: selectedPreferences.includes('safety'),
+        school: selectedPreferences.includes('school'),
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to save your notification preferences.';
+      console.error('[notifications] onboarding preferences failed:', error);
+      setNotificationError(message);
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      const result = await enablePushNotifications();
+      if (result.status !== 'enabled') {
+        setNotificationError(
+          result.status === 'denied'
+            ? 'Your preferences were saved, but push permission is off. You can enable it later in Settings.'
+            : `Your preferences were saved, but push notifications are unavailable: ${result.permissionStatus}.`,
+        );
+        setCanContinueWithoutPush(true);
+        return;
+      }
+      router.replace('/home');
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to register push notifications.';
+      console.error('[notifications] onboarding push registration failed:', error);
+      setNotificationError(
+        `Your preferences were saved, but push registration failed: ${message}`,
+      );
+      setCanContinueWithoutPush(true);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const completePermissionStep = useCallback(async () => {
     if (permissionTransitionStarted.current) return;
@@ -441,6 +497,11 @@ export default function OnboardingScreen() {
                     );
                   })}
                 </View>
+                {notificationError ? (
+                  <Text accessibilityRole="alert" style={styles.permissionError}>
+                    {notificationError}
+                  </Text>
+                ) : null}
               </>
             )}
           </View>
@@ -460,7 +521,17 @@ export default function OnboardingScreen() {
             />
           )}
           {step === 4 && (
-            <PrimaryButton label="Continue onboarding" onPress={finishOnboarding} />
+            <PrimaryButton
+              label={
+                isSaving
+                  ? 'Saving...'
+                  : canContinueWithoutPush
+                    ? 'Continue without push notifications'
+                    : 'Save preferences and continue'
+              }
+              onPress={() => void finishOnboarding()}
+              disabled={isSaving}
+            />
           )}
         </Animated.View>
       </ScrollView>

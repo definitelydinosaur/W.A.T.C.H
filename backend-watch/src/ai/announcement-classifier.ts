@@ -32,7 +32,11 @@ export interface AnnouncementAudience {
   homeCity?: string | null;
   homeBarangay?: string | null;
   institutionId?: string | null;
-  notificationPrefs?: { announcements?: boolean } | null;
+  notificationPrefs?: {
+    announcements?: boolean;
+    safety?: boolean;
+    school?: boolean;
+  } | null;
 }
 
 export interface AnnouncementSourceAudience {
@@ -145,7 +149,17 @@ export function matchesAnnouncementAudience(
   source: AnnouncementSourceAudience,
   audience: AnnouncementAudience,
 ) {
-  if (audience.notificationPrefs?.announcements === false) return false;
+  const specificPreference =
+    source.type === 'institution'
+      ? audience.notificationPrefs?.school
+      : audience.notificationPrefs?.safety;
+  if (
+    specificPreference === false ||
+    (specificPreference === undefined &&
+      audience.notificationPrefs?.announcements === false)
+  ) {
+    return false;
+  }
   if (source.type === 'institution') {
     return Boolean(
       source.institutionId && source.institutionId === audience.institutionId,
