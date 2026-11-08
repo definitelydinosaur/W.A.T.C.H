@@ -192,7 +192,7 @@ export default function RootLayout() {
       <Stack.Screen name="home" />
       <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
       <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
-      <Stack.Screen name="map-overview" options={{ animation: 'fade' }} />
+      <Stack.Screen name="map-overview" options={{ animation: 'slide_from_left' }} />
       <Stack.Screen name="settings_page/customize-theme" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/alert" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/announcement" options={{ animation: 'fade' }} />

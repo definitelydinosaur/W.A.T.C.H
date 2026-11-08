@@ -7,11 +7,17 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
-import { classifyWeatherRisk, detectWeatherHazards } from './weather-risk';
+import {
+  classifyWeatherRisk,
+  DetectedWeatherHazard,
+  detectWeatherHazards,
+  WeatherApiAlert,
+} from './weather-risk';
 import { AiService } from '../ai/ai.service';
 import { PushService } from '../notifications/push.service';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const HAZARD_DEDUPE_WINDOW_MS = 60 * 60 * 1000; // 1-hour deduplication window
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
 interface OpenMeteoResponse {
@@ -22,12 +28,14 @@ interface OpenMeteoResponse {
     relative_humidity_2m: number;
     precipitation: number;
     wind_speed_10m: number;
+    wind_gusts_10m?: number;
     wind_direction_10m: number;
     pressure_msl: number;
     weather_code: number;
     uv_index: number;
     us_aqi?: number;
   };
+  alerts?: WeatherApiAlert[];
   hourly: {
     time: string[];
     temperature_2m: number[];
@@ -56,12 +64,14 @@ export interface WeatherForecast {
     humidityPercent: number;
     precipitationMm: number;
     windKph: number;
+    windGustsKph?: number;
     windDirectionDegrees: number;
     pressureMslHpa: number;
     weatherCode: number;
     uvIndex: number;
     airQualityUsAqi: number | null;
   };
+  alerts?: WeatherApiAlert[];
   hourly: {
     time: string;
     temperatureC: number;
@@ -81,6 +91,7 @@ export interface WeatherForecast {
   riskMeasurements: {
     rainMm: number;
     windKph: number;
+    windGustsKph?: number;
     pressureMslHpa: number;
     heatIndexC: number;
     aqi: number | null;
@@ -90,6 +101,11 @@ export interface WeatherForecast {
 interface WeatherCacheEntry {
   data: WeatherForecast;
   fetched_at: string;
+}
+
+interface WeatherState {
+  risk_level: string;
+  observed_at?: string;
 }
 
 interface SavedHomeLocation {
@@ -224,6 +240,15 @@ function isWeatherCacheEntry(value: unknown): value is WeatherCacheEntry {
   );
 }
 
+function isWeatherState(value: unknown): value is WeatherState {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'risk_level' in value &&
+    typeof value.risk_level === 'string'
+  );
+}
+
 @Injectable()
 export class WeatherService {
   private readonly logger = new Logger(WeatherService.name);
@@ -268,7 +293,7 @@ export class WeatherService {
       latitude: String(latitude),
       longitude: String(longitude),
       current:
-        'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m,pressure_msl,weather_code,uv_index',
+        'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,pressure_msl,weather_code,uv_index',
       hourly: 'temperature_2m,precipitation_probability,weather_code',
       daily:
         'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,sunrise,sunset',
@@ -318,6 +343,11 @@ export class WeatherService {
     }
     const sourceData = responseData;
     const current = sourceData.current;
+    const windGustsKph =
+      typeof current.wind_gusts_10m === 'number' &&
+      Number.isFinite(current.wind_gusts_10m)
+        ? current.wind_gusts_10m
+        : undefined;
     const fetchedAqi = await this.fetchUsAqi(latitude, longitude);
     const airQualityAqi =
       fetchedAqi ?? cached?.data.current.airQualityUsAqi ?? null;
@@ -344,12 +374,14 @@ export class WeatherService {
         humidityPercent: current.relative_humidity_2m,
         precipitationMm: current.precipitation,
         windKph: current.wind_speed_10m,
+        windGustsKph,
         windDirectionDegrees: current.wind_direction_10m,
         pressureMslHpa: current.pressure_msl,
         weatherCode: current.weather_code,
         uvIndex: current.uv_index,
         airQualityUsAqi: airQualityAqi,
       },
+      alerts: Array.isArray(sourceData.alerts) ? sourceData.alerts : undefined,
       hourly: sourceData.hourly.time.slice(0, 24).map((time, index) => ({
         time,
         temperatureC: sourceData.hourly.temperature_2m[index],
@@ -377,6 +409,7 @@ export class WeatherService {
       riskMeasurements: {
         rainMm: current.precipitation,
         windKph: current.wind_speed_10m,
+        windGustsKph,
         pressureMslHpa: current.pressure_msl,
         heatIndexC,
         aqi: airQualityAqi,
@@ -401,6 +434,229 @@ export class WeatherService {
     }
 
     return payload;
+  }
+
+  /**
+   * Evaluates incoming weather metrics and active provider alerts against
+   * critical hazard thresholds, resolves cleared hazards for the area, and
+   * idempotently logs/upserts active hazards in the `hazards` table.
+   */
+  async evaluateAndLogHazards(
+    forecast: WeatherForecast,
+    context?: {
+      locationId?: number;
+      userId?: string;
+      placeName?: string;
+      previousRiskLevel?: string;
+    },
+  ): Promise<
+    { id: string; hazard: DetectedWeatherHazard; escalated: boolean }[]
+  > {
+    const { latitude, longitude } = forecast.location;
+    const areaKey = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+    const detectedAt = new Date().toISOString();
+    const measurements = forecast.riskMeasurements;
+    const rawMetrics = {
+      rainMm: measurements.rainMm,
+      windKph: measurements.windKph,
+      windGustsKph: measurements.windGustsKph ?? null,
+      heatIndexC: measurements.heatIndexC,
+      pressureMslHpa: measurements.pressureMslHpa,
+      temperatureC: forecast.current.temperatureC,
+      humidityPercent: forecast.current.humidityPercent,
+      weatherCode: forecast.current.weatherCode,
+      uvIndex: forecast.current.uvIndex,
+    };
+
+    const hazards = detectWeatherHazards(
+            measurements.rainMm,
+            measurements.windKph,
+            measurements.heatIndexC,
+            measurements.weatherCode,
+            measurements.pressureMslHpa,
+            measurements.windGustsKph ?? 0,
+            forecast?.alerts ?? [],
+            measurements.aqi,
+          );
+
+    const activeEventTypes = hazards.map((h) => h.eventType);
+
+    // Auto-resolve active hazards for this area that are no longer breaching thresholds
+    const resolveQuery = this.supabase
+      .from('hazards')
+      .update({ resolved_at: detectedAt })
+      .eq('area_key', areaKey)
+      .is('resolved_at', null);
+
+    const { error: resolveError } = activeEventTypes.length
+      ? await resolveQuery.not(
+          'event_type',
+          'in',
+          `(${activeEventTypes.join(',')})`,
+        )
+      : await resolveQuery;
+
+    if (resolveError) {
+      this.logger.warn(
+        `Could not auto-resolve cleared hazards for ${areaKey}: ${resolveError.message}`,
+      );
+    }
+
+    const severityRank: Record<string, number> = {
+      Normal: 0,
+      Advisory: 1,
+      Warning: 2,
+      Severe: 3,
+      Extreme: 4,
+    };
+
+    const recorded: {
+      id: string;
+      hazard: DetectedWeatherHazard;
+      escalated: boolean;
+    }[] = [];
+
+    for (const hazard of hazards) {
+      const existingResult = await this.supabase
+        .from('hazards')
+        .select('id, severity, risk_level, detected_at, created_at, resolved_at')
+        .eq('area_key', areaKey)
+        .eq('event_type', hazard.eventType)
+        .order('detected_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingResult.error) {
+        throw new Error(
+          `Hazard idempotency check failed: ${existingResult.error.message}`,
+        );
+      }
+
+      const existing = existingResult.data as {
+        id: string;
+        severity?: string | null;
+        risk_level?: string | null;
+        detected_at?: string | null;
+        created_at?: string | null;
+        resolved_at?: string | null;
+      } | null;
+
+      const lastTimestamp = existing?.detected_at ?? existing?.created_at;
+      const isCurrentlyActive = existing && existing.resolved_at === null;
+      const withinDedupeWindow =
+        Boolean(lastTimestamp) &&
+        Date.now() - Date.parse(lastTimestamp!) < HAZARD_DEDUPE_WINDOW_MS;
+
+      const priorSeverity =
+        existing?.severity ?? existing?.risk_level ?? 'Normal';
+      const escalated =
+        severityRank[hazard.severity] > (severityRank[priorSeverity] ?? 0) ||
+        context?.previousRiskLevel === 'Normal';
+
+      if (existing && (isCurrentlyActive || withinDedupeWindow)) {
+        // Idempotent update of existing active hazard in the same area/window
+        const nextSeverity = escalated ? hazard.severity : priorSeverity;
+        const nextRiskLevel =
+          nextSeverity === 'Extreme'
+            ? 'Severe'
+            : (nextSeverity as 'Advisory' | 'Warning' | 'Severe');
+
+        const { error: updateError } = await this.supabase
+          .from('hazards')
+          .update({
+            severity: nextSeverity,
+            risk_level: nextRiskLevel,
+            description: hazard.description,
+            explanation: hazard.description,
+            raw_metrics: rawMetrics,
+            measurements,
+            observed_at: detectedAt,
+            resolved_at: null,
+          })
+          .eq('id', existing.id);
+
+        if (updateError) {
+          throw new Error(
+            `Active hazard update failed: ${updateError.message}`,
+          );
+        }
+
+        if (escalated) {
+          recorded.push({ id: existing.id, hazard, escalated: true });
+        }
+        continue;
+      }
+
+      const place = context?.placeName ?? forecast.location.name;
+      const guidance = await this.ai.generateWeatherSafetyTips({
+        hazardType: hazard.type,
+        riskLevel: hazard.riskLevel,
+        location: place,
+        measurements: {
+          rainMm: measurements.rainMm,
+          windKph: measurements.windKph,
+          heatIndexC: measurements.heatIndexC,
+          temperatureC: forecast.current.temperatureC,
+          humidityPercent: forecast.current.humidityPercent,
+          aqi: measurements.aqi ?? 0,
+        },
+      });
+
+      const hazardInsert = await this.supabase
+        .from('hazards')
+        .insert({
+          event_type: hazard.eventType,
+          severity: hazard.severity,
+          description: hazard.description,
+          location_lat: latitude,
+          location_lon: longitude,
+          area_key: areaKey,
+          raw_metrics: rawMetrics,
+          detected_at: detectedAt,
+          resolved_at: null,
+          location_id: context?.locationId ?? null,
+          user_id: context?.userId ?? null,
+          hazard_type: hazard.type,
+          risk_level: hazard.riskLevel,
+          ai_summary: guidance.summary,
+          safety_tips: {
+            do: guidance.do,
+            prepare: guidance.prepare,
+            avoid: guidance.avoid,
+          },
+          explanation: hazard.description,
+          measurements,
+          observed_at: detectedAt,
+        })
+        .select('id')
+        .single();
+
+      const savedHazardId =
+        typeof hazardInsert.data?.id === 'string'
+          ? hazardInsert.data.id
+          : null;
+      if (hazardInsert.error || !savedHazardId) {
+        throw new Error(
+          `Hazard could not be saved: ${hazardInsert.error?.message ?? 'No row returned'}`,
+        );
+      }
+
+      if (context?.userId) {
+        await this.push.sendUserNotification({
+          userId: context.userId,
+          hazardId: savedHazardId,
+          kind: 'weather_hazard',
+          sourceName: 'Open-Meteo',
+          title: `${hazard.type} - ${hazard.severity} for ${place}`,
+          body: `${guidance.do[0] ?? guidance.summary}\nFollow official PAGASA/LGU advisories.`,
+          data: { type: 'hazard', hazardId: savedHazardId },
+        });
+      }
+
+      recorded.push({ id: savedHazardId, hazard, escalated: true });
+    }
+
+    return recorded;
   }
 
   private async fetchUsAqi(latitude: number, longitude: number) {
@@ -445,6 +701,7 @@ export class WeatherService {
       return null;
     }
   }
+  }
 
   @Cron('*/10 * * * *', { waitForCompletion: true })
   async monitorSavedLocations() {
@@ -479,6 +736,7 @@ export class WeatherService {
         measurements = {
           rainMm: forecast.riskMeasurements.rainMm,
           windKph: forecast.riskMeasurements.windKph,
+          windGustsKph: forecast.riskMeasurements.windGustsKph,
           heatIndexC: forecast.riskMeasurements.heatIndexC,
           temperatureC: forecast.current.temperatureC,
           humidityPercent: forecast.current.humidityPercent,
