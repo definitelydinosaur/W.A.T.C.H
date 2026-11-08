@@ -32,11 +32,20 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 ## Starting Expo Go over a tunnel
 
 The project includes `@expo/ngrok` as a local development dependency. From
-`watch_ai`, run:
+`watch_ai`, run this to start a tunnel and generate an Expo Go QR code:
 
 ```powershell
 npm run start:tunnel
 ```
+
+You can also run the equivalent command directly:
+
+```powershell
+npx expo start --tunnel --go
+```
+
+Do not add `ngrok` after `--tunnel`: Expo treats that extra word as a project
+directory. The installed `@expo/ngrok` package is used automatically.
 
 If port 8081 is already occupied, choose another port at the prompt or provide
 one explicitly:
@@ -86,6 +95,11 @@ development build, not Expo Go. Link the app to its EAS project, configure
 Android FCM credentials where applicable, enable notification permission, and
 set the backend's `EXPO_ACCESS_TOKEN`. The profile must have a valid Expo token
 and must not disable the corresponding notification preference.
+The onboarding Preferences step saves the `weather`, `safety`, and `school`
+preferences to the signed-in user's `user_info.notification_prefs`. Use
+**Settings > Notifications** to control this device's push token and adjust
+those preferences later. Token and preference updates require the authenticated
+user's own-row `user_info` UPDATE policy.
 
 The backend needs its own `backend-watch/.env`; never put service-role, AI,
 Facebook, Expo, or admin secrets in `EXPO_PUBLIC_*` variables. Its alert worker
