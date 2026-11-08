@@ -617,6 +617,7 @@ function GlassHomeDock({ primary }: { primary: string }) {
 export default function HomeScreen() {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const router = useRouter();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { welcomeName: routeWelcomeName, hazardId: routeHazardId } =
     useLocalSearchParams<{
       welcomeName?: string | string[];
@@ -1263,8 +1264,24 @@ export default function HomeScreen() {
     outputRange: [COLLAPSED_ENCLOSURE_HEIGHT, EXPANDED_ENCLOSURE_HEIGHT],
   });
 
+  // Swipe right (or left) anywhere on Home that a child scroller doesn't claim to open the map.
+  const openMap = useCallback(() => router.push('/map-overview'), [router]);
+  const swipeToMapResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 20 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onPanResponderRelease: (_, g) => {
+          if (Math.abs(g.dx) > 60 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5) {
+            openMap();
+          }
+        },
+      }),
+    [openMap],
+  );
+
   return (
-    <View style={styles.container}>
+    <View style={styles.container} {...swipeToMapResponder.panHandlers}>
       <StatusBar style="light" />
 
       {/* 1. Pure Procedural Time-of-Day Gradient Engine & Weather Condition Layers (No Pictures) */}
@@ -1883,13 +1900,8 @@ export default function HomeScreen() {
           style={styles.tabBarRadarButton}
           activeOpacity={0.65}
           accessibilityRole="button"
-          accessibilityLabel="Open live weather radar"
-          onPress={() =>
-            Alert.alert(
-              "Live Weather Radar",
-              `Doppler radar stream active for ${selectedCity.name}, ${selectedCity.country}. Wind ${selectedCity.wind} km/h ${selectedCity.windDir}.`,
-            )
-          }
+          accessibilityLabel="Open map"
+          onPress={openMap}
         />
         <TouchableOpacity
           style={styles.tabBarLocationButton}
