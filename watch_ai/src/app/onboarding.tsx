@@ -20,7 +20,12 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import { router, useLocalSearchParams } from 'expo-router';
+import {
+  CedarvilleCursive_400Regular,
+  useFonts,
+} from '@expo-google-fonts/cedarville-cursive';
 import * as Location from 'expo-location';
 import ProfileSelectionModal, {
   HomeLocationInput,
@@ -29,6 +34,18 @@ import ProfileSelectionModal, {
 import { profileApi } from '../lib/profile-api';
 import { useAppTheme } from '../theme/theme-context';
 import { matchUniversity } from '../theme/universities';
+
+const SF_PRO = Platform.select({
+  ios: 'SF Pro Text',
+  android: 'sans-serif',
+  default: 'SF Pro Text',
+});
+const SF_PRO_DISPLAY = Platform.select({
+  ios: 'SF Pro Display',
+  android: 'sans-serif',
+  default: 'SF Pro Display',
+});
+const LANDING_GRADIENT = ['#2E3056', '#242446', '#1B1B36'] as const;
 
 const STEPS = ['Home location', 'Institution', 'Preferences'];
 const PREFERENCES = [
@@ -63,6 +80,9 @@ export default function OnboardingScreen() {
   ]);
   const [pageOffset] = useState(() => new Animated.Value(0));
   const { applyUniversity } = useAppTheme();
+  const [fontsLoaded] = useFonts({
+    CedarvilleCursive_400Regular,
+  });
 
   const continueOnboarding = () => setStep((current) => Math.min(current + 1, 4));
   const chooseRegistration = () => router.replace('/auth/register');
@@ -260,10 +280,11 @@ export default function OnboardingScreen() {
 
   return (
     <LinearGradient
-      colors={['#351356', '#511079', '#17152D']}
-      locations={[0, 0.48, 1]}
+      colors={step === 0 ? LANDING_GRADIENT : ['#351356', '#511079', '#17152D']}
+      locations={step === 0 ? [0, 0.46, 1] : [0, 0.48, 1]}
       style={styles.screen}
     >
+      <StatusBar style="light" />
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={[
@@ -278,12 +299,14 @@ export default function OnboardingScreen() {
           style={[
             styles.card,
             (step === 0 || step === 6) && styles.welcomeCard,
+            step === 0 && styles.landingCard,
             step === 1 && styles.locationPermissionCard,
             compactLayout && styles.compactCard,
             {
-              width: Math.min(width - horizontalGutter * 2, 460),
+              width: step === 0 ? width : Math.min(width - horizontalGutter * 2, 460),
               minHeight: Math.max(0, height - verticalGutter * 2),
-              paddingHorizontal: Math.min(26, Math.max(16, width * 0.07)),
+              paddingHorizontal:
+                step === 0 ? 0 : Math.min(26, Math.max(16, width * 0.07)),
               transform: [{ translateX: pageOffset }],
             },
           ]}
@@ -302,11 +325,20 @@ export default function OnboardingScreen() {
               />
             )}
 
-            {step === 0 && (
+            {step === 0 && fontsLoaded && (
               <>
                 <Text style={styles.scriptTitle}>Welcome aboard</Text>
                 <Text style={styles.brand}>W.A.T.C.H.</Text>
-                <PrimaryButton label="Get started" onPress={() => setStep(6)} />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setStep(6)}
+                  style={({ pressed }) => [
+                    styles.landingButton,
+                    pressed && styles.buttonPressed,
+                  ]}
+                >
+                  <Text style={styles.landingButtonText}>Get started</Text>
+                </Pressable>
               </>
             )}
 
@@ -569,6 +601,13 @@ const styles = StyleSheet.create({
   welcomeCard: {
     justifyContent: 'center',
   },
+  landingCard: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    justifyContent: 'center',
+    paddingTop: 48,
+    paddingBottom: 72,
+  },
   locationPermissionCard: {
     justifyContent: 'center',
   },
@@ -582,10 +621,10 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   logo: {
-    width: 76,
-    height: 76,
-    marginBottom: 34,
-    borderRadius: 18,
+    width: 108,
+    height: 108,
+    marginBottom: 36,
+    borderRadius: 26,
   },
   compactLogo: {
     width: 64,
@@ -593,21 +632,45 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   scriptTitle: {
-    color: '#F8F3FF',
-    fontFamily: Platform.select({ ios: 'Snell Roundhand', android: 'cursive', default: 'cursive' }),
-    fontSize: 26,
+    color: '#FFFFFF',
+    fontFamily: 'CedarvilleCursive_400Regular',
+    fontSize: 36,
+    lineHeight: 48,
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   brand: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
+    fontFamily: SF_PRO_DISPLAY,
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: 1.2,
     textAlign: 'center',
-    marginBottom: 26,
+    marginBottom: 28,
+  },
+  landingButton: {
+    minHeight: 52,
+    width: '78%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 14,
+    backgroundColor: '#F4F3F8',
+    marginTop: 8,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  landingButtonText: {
+    color: '#1C1C34',
+    fontFamily: SF_PRO,
+    fontSize: 16,
+    fontWeight: '600',
   },
   heading: {
     color: '#FFFFFF',
+    fontFamily: SF_PRO,
     fontSize: 20,
     fontWeight: '700',
     textAlign: 'center',
@@ -664,6 +727,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#FFFFFF',
+    fontFamily: SF_PRO,
     fontSize: 15,
     fontWeight: '700',
   },
