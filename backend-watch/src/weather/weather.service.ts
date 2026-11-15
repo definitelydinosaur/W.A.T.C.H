@@ -133,6 +133,7 @@ interface StoredWeatherRecord {
 interface WeatherMeasurements {
   rainMm: number;
   windKph: number;
+  windGustsKph?: number;
   heatIndexC: number;
   temperatureC: number;
   humidityPercent: number;
@@ -472,7 +473,7 @@ export class WeatherService {
             measurements.rainMm,
             measurements.windKph,
             measurements.heatIndexC,
-            measurements.weatherCode,
+            forecast.current.weatherCode,
             measurements.pressureMslHpa,
             measurements.windGustsKph ?? 0,
             forecast?.alerts ?? [],
@@ -700,7 +701,6 @@ export class WeatherService {
       );
       return null;
     }
-  }
   }
 
   @Cron('*/10 * * * *', { waitForCompletion: true })
