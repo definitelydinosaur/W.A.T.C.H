@@ -187,4 +187,34 @@ export class AuthService {
       expiresIn: data.session.expires_in,
     };
   }
+
+
+async deleteAccount(accessToken: string) {
+  // 1. Verify the access token
+  const {
+    data: { user },
+    error: authError,
+  } = await this.supabaseClient.auth.getUser(accessToken);
+
+  if (authError || !user) {
+    throw new UnauthorizedException('Invalid or expired session.');
+  }
+
+ 
+  const { error: deleteError } =
+    await this.supabaseClient.auth.admin.deleteUser(user.id);
+
+  if (deleteError) {
+    console.error('ACCOUNT DELETION ERROR:', deleteError);
+
+    throw new InternalServerErrorException(
+      'Unable to delete your account. Please try again.',
+    );
+  }
+
+  return {
+    message: 'Your account has been successfully deleted.',
+  };
+}
+
 }
