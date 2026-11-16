@@ -301,6 +301,24 @@ export default function SettingsScreen() {
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
+                    ) : item.icon === 'notifications' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() =>
+                          router.push('/settings_page/notifications')
+                        }
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
                     ) : item.icon === 'profile' ? (
                       <Pressable
                         key={item.label}

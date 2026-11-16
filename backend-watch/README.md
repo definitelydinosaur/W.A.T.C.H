@@ -35,6 +35,8 @@ Review [202611010001_alerts_feature.sql](./supabase/migrations/202611010001_aler
 
 The migration has **not** been run against your database. For the supplied current schema, apply this alerts migration after review; do not blindly replay the repository's older migrations, which target a different schema. Back up and review your live schema before applying SQL.
 
+Push-token registration also needs [202611080001_push_token_registration.sql](./supabase/migrations/202611080001_push_token_registration.sql). Review and apply this focused migration to add the profile token/preferences columns and `push_tokens` table; it is safe to run alongside the current schema and does not replace the alerts migration.
+
 ## Announcement source pipeline
 
 The worker checks active rows in `school_sources` every five minutes. It uses Facebook Graph API only when a configured token has permission to read that page, then tries the source's RSS/Atom URL or a website URL that serves an XML feed. It does not scrape Facebook pages, access private content, or bypass authentication or rate limits. Configure `rss_url` or `website_url` for official feeds; a Facebook URL by itself is not enough without permitted Graph access.
@@ -100,6 +102,7 @@ Use `heat` as the other supported `hazard_type`. The endpoint is disabled unless
 - In Expo Go, sign in and open **Alerts** to verify notification history, category filters, pull-to-refresh, pagination, and delete/undo. In-app alert/realtime behavior can be checked without remote push.
 - Open Home with an active, unexpired hazard for the saved home location to see grouped **What to do**, **What to prepare**, and **What to avoid** guidance.
 - For remote push and notification-tap routing, install an iOS/Android development build. Expo Go does not support the remote push workflow used here. Configure the EAS project, notification permissions, and Android FCM credentials; set `EXPO_ACCESS_TOKEN` on the backend. The user profile must have a valid Expo token and must not disable the corresponding notification preference.
+- After signing in on the installed build and allowing notifications, confirm `user_info.expo_push_token` is populated for that user in Supabase. To smoke-test Expo delivery independently of the alert worker, send a push to that token using the [Expo Push Tool](https://expo.dev/notifications) or Expo's push API. An `ok` ticket means Expo accepted the message, not that the device received it; test on the physical device with the app backgrounded and notifications enabled. Then test the full backend path with the admin-only `/admin/test-hazard` procedure below and confirm both the device notification and Alerts history update.
 - `GET /alerts` returns the authenticated user's recent alerts. `GET /alerts/announcements/:id` returns an announcement available to that user and marks it read. The app reads and updates its alert history through Supabase RLS/realtime.
 
 ## Other endpoints

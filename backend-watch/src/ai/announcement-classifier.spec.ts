@@ -122,5 +122,30 @@ describe('announcement processing rules', () => {
         { ...user, notificationPrefs: { announcements: false } },
       ),
     ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'institution', institutionId: 'school-1' },
+        { ...user, notificationPrefs: { school: false } },
+      ),
+    ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'lgu', city: 'Cebu City' },
+        { ...user, notificationPrefs: { safety: false } },
+      ),
+    ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'lgu', city: 'Cebu City' },
+        {
+          ...user,
+          notificationPrefs: {
+            announcements: false,
+            safety: true,
+            school: true,
+          },
+        },
+      ),
+    ).toBe(true);
   });
 });
