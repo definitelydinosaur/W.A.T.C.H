@@ -276,23 +276,6 @@ const saveInstitution = async (selected: InstitutionOption | null) => {
   }
 };
 
-const sendPasswordReset = async () => {
-  if (!email.trim()) {
-    Alert.alert('Email unavailable', 'A password reset email cannot be sent for this account.');
-    return;
-  }
-  try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
-    if (error) throw error;
-    Alert.alert('Check your email', 'A secure password reset link has been sent.');
-  } catch (error) {
-    Alert.alert(
-      'Password reset failed',
-      error instanceof Error ? error.message : 'Please try again.',
-    );
-  }
-};
-
 const changeProfilePicture = async () => {
   try {
     // 1. Request gallery permission
@@ -574,21 +557,6 @@ const changeProfilePicture = async () => {
                     style={[styles.input, styles.readOnlyInput]}
                     value={email}
                   />
-                </ProfileField>
-
-                <ProfileField label="Password">
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Send secure password reset link"
-                    onPress={() => void sendPasswordReset()}
-                    style={({ pressed }) => [
-                      styles.input,
-                      styles.passwordResetButton,
-                      pressed && styles.pickerPressed,
-                    ]}
-                  >
-                    <Text style={styles.passwordResetText}>Send secure reset link</Text>
-                  </Pressable>
                 </ProfileField>
 
                 <ProfileField label="Date of Birth">
@@ -895,13 +863,6 @@ const styles = StyleSheet.create({
   },
   readOnlyInput: {
     opacity: 0.7,
-  },
-  passwordResetButton: {
-    justifyContent: 'center',
-  },
-  passwordResetText: {
-    color: '#37343D',
-    fontSize: 12,
   },
   pickerButton: {
     flexDirection: 'row',
