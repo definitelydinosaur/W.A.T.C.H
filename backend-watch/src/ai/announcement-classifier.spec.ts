@@ -102,6 +102,9 @@ describe('announcement processing rules', () => {
       ),
     ).toBe(true);
     expect(
+      matchesAnnouncementAudience({ type: 'lgu', city: 'City of Cebu' }, user),
+    ).toBe(true);
+    expect(
       matchesAnnouncementAudience(
         { type: 'lgu_mayor', city: 'Lapu-Lapu City' },
         user,

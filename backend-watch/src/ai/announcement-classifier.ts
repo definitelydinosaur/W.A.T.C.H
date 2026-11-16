@@ -4,6 +4,7 @@ export const ANNOUNCEMENT_CATEGORIES = [
   'class_suspension',
   'holiday_no_class',
   'weather_update',
+  'air_quality',
   'emergency',
   'evacuation',
   'other',
@@ -35,7 +36,7 @@ export interface AnnouncementAudience {
 }
 
 export interface AnnouncementSourceAudience {
-  type: 'lgu_mayor' | 'institution' | 'barangay';
+  type: 'lgu' | 'lgu_mayor' | 'institution' | 'barangay';
   city?: string | null;
   institutionId?: string | null;
   name?: string;
@@ -179,7 +180,10 @@ function normalizePlace(value: string) {
   return value
     .trim()
     .toLocaleLowerCase()
-    .replace(/\b(city|municipality)\b/g, '')
+    .replace(/^city\s+of\s+/, '')
+    .replace(/\s+city$/, '')
+    .replace(/\s+municipality$/, '')
+    .replace(/^municipality\s+of\s+/, '')
     .replace(/\s+/g, ' ')
     .trim();
 }

@@ -7,11 +7,17 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
-import { classifyWeatherRisk, detectWeatherHazards } from './weather-risk';
+import {
+  classifyWeatherRisk,
+  DetectedWeatherHazard,
+  detectWeatherHazards,
+  WeatherApiAlert,
+} from './weather-risk';
 import { AiService } from '../ai/ai.service';
 import { PushService } from '../notifications/push.service';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const HAZARD_DEDUPE_WINDOW_MS = 60 * 60 * 1000; // 1-hour deduplication window
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
 interface OpenMeteoResponse {
@@ -22,11 +28,14 @@ interface OpenMeteoResponse {
     relative_humidity_2m: number;
     precipitation: number;
     wind_speed_10m: number;
+    wind_gusts_10m?: number;
     wind_direction_10m: number;
     pressure_msl: number;
     weather_code: number;
     uv_index: number;
+    us_aqi?: number;
   };
+  alerts?: WeatherApiAlert[];
   hourly: {
     time: string[];
     temperature_2m: number[];
@@ -55,11 +64,14 @@ export interface WeatherForecast {
     humidityPercent: number;
     precipitationMm: number;
     windKph: number;
+    windGustsKph?: number;
     windDirectionDegrees: number;
     pressureMslHpa: number;
     weatherCode: number;
     uvIndex: number;
+    airQualityUsAqi: number | null;
   };
+  alerts?: WeatherApiAlert[];
   hourly: {
     time: string;
     temperatureC: number;
@@ -79,8 +91,10 @@ export interface WeatherForecast {
   riskMeasurements: {
     rainMm: number;
     windKph: number;
+    windGustsKph?: number;
     pressureMslHpa: number;
     heatIndexC: number;
+    aqi: number | null;
   };
 }
 
@@ -94,11 +108,6 @@ interface WeatherState {
   observed_at?: string;
 }
 
-interface HazardState {
-  risk_level: string;
-  created_at: string;
-}
-
 interface SavedHomeLocation {
   loc_id: number;
   user_id: string;
@@ -107,6 +116,31 @@ interface SavedHomeLocation {
   city: string | null;
   latitude: number;
   longitude: number;
+}
+
+interface StoredWeatherRecord {
+  recorded_at: string;
+  temperature: number;
+  rainfall: number;
+  wind_speed: number;
+  weather_condition: string | null;
+  humidity: number | null;
+  heat_index: number | null;
+  uv_index: number | null;
+  aqi: number | null;
+}
+
+interface WeatherMeasurements {
+  rainMm: number;
+  windKph: number;
+  heatIndexC: number;
+  temperatureC: number;
+  humidityPercent: number;
+  uvIndex: number;
+  aqi: number | null;
+  weatherCode: number;
+  pressureMslHpa?: number;
+  stale: boolean;
 }
 
 function isValidOpenMeteoResponse(value: unknown): value is OpenMeteoResponse {
@@ -215,14 +249,6 @@ function isWeatherState(value: unknown): value is WeatherState {
   );
 }
 
-function isHazardState(value: unknown): value is HazardState {
-  return (
-    isWeatherState(value) &&
-    'created_at' in value &&
-    typeof value.created_at === 'string'
-  );
-}
-
 @Injectable()
 export class WeatherService {
   private readonly logger = new Logger(WeatherService.name);
@@ -267,7 +293,7 @@ export class WeatherService {
       latitude: String(latitude),
       longitude: String(longitude),
       current:
-        'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,wind_speed_10m,wind_direction_10m,pressure_msl,weather_code,uv_index',
+        'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,wind_direction_10m,pressure_msl,weather_code,uv_index',
       hourly: 'temperature_2m,precipitation_probability,weather_code',
       daily:
         'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,sunrise,sunset',
@@ -317,6 +343,18 @@ export class WeatherService {
     }
     const sourceData = responseData;
     const current = sourceData.current;
+    const windGustsKph =
+      typeof current.wind_gusts_10m === 'number' &&
+      Number.isFinite(current.wind_gusts_10m)
+        ? current.wind_gusts_10m
+        : undefined;
+    const fetchedAqi = await this.fetchUsAqi(latitude, longitude);
+    const airQualityAqi =
+      fetchedAqi ?? cached?.data.current.airQualityUsAqi ?? null;
+    const heatIndexC = calculateHeatIndexC(
+      current.temperature_2m,
+      current.relative_humidity_2m,
+    );
     const payload: WeatherForecast = {
       location: {
         name:
@@ -336,11 +374,14 @@ export class WeatherService {
         humidityPercent: current.relative_humidity_2m,
         precipitationMm: current.precipitation,
         windKph: current.wind_speed_10m,
+        windGustsKph,
         windDirectionDegrees: current.wind_direction_10m,
         pressureMslHpa: current.pressure_msl,
         weatherCode: current.weather_code,
         uvIndex: current.uv_index,
+        airQualityUsAqi: airQualityAqi,
       },
+      alerts: Array.isArray(sourceData.alerts) ? sourceData.alerts : undefined,
       hourly: sourceData.hourly.time.slice(0, 24).map((time, index) => ({
         time,
         temperatureC: sourceData.hourly.temperature_2m[index],
@@ -361,20 +402,17 @@ export class WeatherService {
       risk: classifyWeatherRisk(
         current.precipitation,
         current.wind_speed_10m,
-        calculateHeatIndexC(
-          current.temperature_2m,
-          current.relative_humidity_2m,
-        ),
+        heatIndexC,
         current.weather_code,
+        airQualityAqi,
       ),
       riskMeasurements: {
         rainMm: current.precipitation,
         windKph: current.wind_speed_10m,
+        windGustsKph,
         pressureMslHpa: current.pressure_msl,
-        heatIndexC: calculateHeatIndexC(
-          current.temperature_2m,
-          current.relative_humidity_2m,
-        ),
+        heatIndexC,
+        aqi: airQualityAqi,
       },
     };
 
@@ -398,6 +436,273 @@ export class WeatherService {
     return payload;
   }
 
+  /**
+   * Evaluates incoming weather metrics and active provider alerts against
+   * critical hazard thresholds, resolves cleared hazards for the area, and
+   * idempotently logs/upserts active hazards in the `hazards` table.
+   */
+  async evaluateAndLogHazards(
+    forecast: WeatherForecast,
+    context?: {
+      locationId?: number;
+      userId?: string;
+      placeName?: string;
+      previousRiskLevel?: string;
+    },
+  ): Promise<
+    { id: string; hazard: DetectedWeatherHazard; escalated: boolean }[]
+  > {
+    const { latitude, longitude } = forecast.location;
+    const areaKey = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+    const detectedAt = new Date().toISOString();
+    const measurements = forecast.riskMeasurements;
+    const rawMetrics = {
+      rainMm: measurements.rainMm,
+      windKph: measurements.windKph,
+      windGustsKph: measurements.windGustsKph ?? null,
+      heatIndexC: measurements.heatIndexC,
+      pressureMslHpa: measurements.pressureMslHpa,
+      temperatureC: forecast.current.temperatureC,
+      humidityPercent: forecast.current.humidityPercent,
+      weatherCode: forecast.current.weatherCode,
+      uvIndex: forecast.current.uvIndex,
+    };
+
+    const hazards = detectWeatherHazards(
+            measurements.rainMm,
+            measurements.windKph,
+            measurements.heatIndexC,
+            measurements.weatherCode,
+            measurements.pressureMslHpa,
+            measurements.windGustsKph ?? 0,
+            forecast?.alerts ?? [],
+            measurements.aqi,
+          );
+
+    const activeEventTypes = hazards.map((h) => h.eventType);
+
+    // Auto-resolve active hazards for this area that are no longer breaching thresholds
+    const resolveQuery = this.supabase
+      .from('hazards')
+      .update({ resolved_at: detectedAt })
+      .eq('area_key', areaKey)
+      .is('resolved_at', null);
+
+    const { error: resolveError } = activeEventTypes.length
+      ? await resolveQuery.not(
+          'event_type',
+          'in',
+          `(${activeEventTypes.join(',')})`,
+        )
+      : await resolveQuery;
+
+    if (resolveError) {
+      this.logger.warn(
+        `Could not auto-resolve cleared hazards for ${areaKey}: ${resolveError.message}`,
+      );
+    }
+
+    const severityRank: Record<string, number> = {
+      Normal: 0,
+      Advisory: 1,
+      Warning: 2,
+      Severe: 3,
+      Extreme: 4,
+    };
+
+    const recorded: {
+      id: string;
+      hazard: DetectedWeatherHazard;
+      escalated: boolean;
+    }[] = [];
+
+    for (const hazard of hazards) {
+      const existingResult = await this.supabase
+        .from('hazards')
+        .select('id, severity, risk_level, detected_at, created_at, resolved_at')
+        .eq('area_key', areaKey)
+        .eq('event_type', hazard.eventType)
+        .order('detected_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingResult.error) {
+        throw new Error(
+          `Hazard idempotency check failed: ${existingResult.error.message}`,
+        );
+      }
+
+      const existing = existingResult.data as {
+        id: string;
+        severity?: string | null;
+        risk_level?: string | null;
+        detected_at?: string | null;
+        created_at?: string | null;
+        resolved_at?: string | null;
+      } | null;
+
+      const lastTimestamp = existing?.detected_at ?? existing?.created_at;
+      const isCurrentlyActive = existing && existing.resolved_at === null;
+      const withinDedupeWindow =
+        Boolean(lastTimestamp) &&
+        Date.now() - Date.parse(lastTimestamp!) < HAZARD_DEDUPE_WINDOW_MS;
+
+      const priorSeverity =
+        existing?.severity ?? existing?.risk_level ?? 'Normal';
+      const escalated =
+        severityRank[hazard.severity] > (severityRank[priorSeverity] ?? 0) ||
+        context?.previousRiskLevel === 'Normal';
+
+      if (existing && (isCurrentlyActive || withinDedupeWindow)) {
+        // Idempotent update of existing active hazard in the same area/window
+        const nextSeverity = escalated ? hazard.severity : priorSeverity;
+        const nextRiskLevel =
+          nextSeverity === 'Extreme'
+            ? 'Severe'
+            : (nextSeverity as 'Advisory' | 'Warning' | 'Severe');
+
+        const { error: updateError } = await this.supabase
+          .from('hazards')
+          .update({
+            severity: nextSeverity,
+            risk_level: nextRiskLevel,
+            description: hazard.description,
+            explanation: hazard.description,
+            raw_metrics: rawMetrics,
+            measurements,
+            observed_at: detectedAt,
+            resolved_at: null,
+          })
+          .eq('id', existing.id);
+
+        if (updateError) {
+          throw new Error(
+            `Active hazard update failed: ${updateError.message}`,
+          );
+        }
+
+        if (escalated) {
+          recorded.push({ id: existing.id, hazard, escalated: true });
+        }
+        continue;
+      }
+
+      const place = context?.placeName ?? forecast.location.name;
+      const guidance = await this.ai.generateWeatherSafetyTips({
+        hazardType: hazard.type,
+        riskLevel: hazard.riskLevel,
+        location: place,
+        measurements: {
+          rainMm: measurements.rainMm,
+          windKph: measurements.windKph,
+          heatIndexC: measurements.heatIndexC,
+          temperatureC: forecast.current.temperatureC,
+          humidityPercent: forecast.current.humidityPercent,
+          aqi: measurements.aqi ?? 0,
+        },
+      });
+
+      const hazardInsert = await this.supabase
+        .from('hazards')
+        .insert({
+          event_type: hazard.eventType,
+          severity: hazard.severity,
+          description: hazard.description,
+          location_lat: latitude,
+          location_lon: longitude,
+          area_key: areaKey,
+          raw_metrics: rawMetrics,
+          detected_at: detectedAt,
+          resolved_at: null,
+          location_id: context?.locationId ?? null,
+          user_id: context?.userId ?? null,
+          hazard_type: hazard.type,
+          risk_level: hazard.riskLevel,
+          ai_summary: guidance.summary,
+          safety_tips: {
+            do: guidance.do,
+            prepare: guidance.prepare,
+            avoid: guidance.avoid,
+          },
+          explanation: hazard.description,
+          measurements,
+          observed_at: detectedAt,
+        })
+        .select('id')
+        .single();
+
+      const savedHazardId =
+        typeof hazardInsert.data?.id === 'string'
+          ? hazardInsert.data.id
+          : null;
+      if (hazardInsert.error || !savedHazardId) {
+        throw new Error(
+          `Hazard could not be saved: ${hazardInsert.error?.message ?? 'No row returned'}`,
+        );
+      }
+
+      if (context?.userId) {
+        await this.push.sendUserNotification({
+          userId: context.userId,
+          hazardId: savedHazardId,
+          kind: 'weather_hazard',
+          sourceName: 'Open-Meteo',
+          title: `${hazard.type} - ${hazard.severity} for ${place}`,
+          body: `${guidance.do[0] ?? guidance.summary}\nFollow official PAGASA/LGU advisories.`,
+          data: { type: 'hazard', hazardId: savedHazardId },
+        });
+      }
+
+      recorded.push({ id: savedHazardId, hazard, escalated: true });
+    }
+
+    return recorded;
+  }
+
+  private async fetchUsAqi(latitude: number, longitude: number) {
+    const url = new URL(
+      'https://air-quality-api.open-meteo.com/v1/air-quality',
+    );
+    url.search = new URLSearchParams({
+      latitude: String(latitude),
+      longitude: String(longitude),
+      current: 'us_aqi',
+      timezone: 'auto',
+    }).toString();
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(12_000),
+      });
+      if (!response.ok) {
+        this.logger.warn(
+          `Open-Meteo air quality returned HTTP ${response.status}.`,
+        );
+        return null;
+      }
+      const value: unknown = await response.json();
+      if (
+        !value ||
+        typeof value !== 'object' ||
+        !('current' in value) ||
+        typeof value.current !== 'object' ||
+        value.current === null ||
+        !('us_aqi' in value.current) ||
+        typeof value.current.us_aqi !== 'number' ||
+        !Number.isFinite(value.current.us_aqi)
+      ) {
+        this.logger.warn('Open-Meteo air-quality response failed validation.');
+        return null;
+      }
+      return value.current.us_aqi;
+    } catch (error) {
+      this.logger.warn(
+        `Open-Meteo air quality is unavailable: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      return null;
+    }
+  }
+  }
+
   @Cron('*/10 * * * *', { waitForCompletion: true })
   async monitorSavedLocations() {
     const locationResult = await this.supabase
@@ -411,133 +716,242 @@ export class WeatherService {
       return;
     }
     const locations = (locationResult.data ?? []) as SavedHomeLocation[];
+    const grouped = new Map<string, SavedHomeLocation[]>();
+    for (const location of locations) {
+      const key = `${location.latitude.toFixed(2)},${location.longitude.toFixed(2)}`;
+      const group = grouped.get(key) ?? [];
+      group.push(location);
+      grouped.set(key, group);
+    }
 
-    for (const location of locations ?? []) {
+    for (const group of grouped.values()) {
+      const representative = group[0];
+      let forecast: WeatherForecast | null = null;
+      let measurements: WeatherMeasurements;
       try {
-        const forecast = await this.getForecast(
-          location.latitude,
-          location.longitude,
+        forecast = await this.getForecast(
+          Number(representative.latitude.toFixed(2)),
+          Number(representative.longitude.toFixed(2)),
         );
-        const measurements = forecast.riskMeasurements;
-        const risk = forecast.risk;
-        const observedAt = new Date().toISOString();
-        const previousResult = await this.supabase
-          .from('weather_records')
-          .select('risk_level, observed_at')
-          .eq('location_id', location.loc_id)
-          .order('observed_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (previousResult.error)
-          throw new Error(
-            `Previous weather state could not be loaded: ${previousResult.error.message}`,
-          );
-        const previousValue: unknown = previousResult.data;
-        const previous = isWeatherState(previousValue) ? previousValue : null;
-
-        const { error: recordError } = await this.supabase
-          .from('weather_records')
-          .insert({
-            location_id: location.loc_id,
-            user_id: location.user_id,
-            payload: forecast,
-            risk_level: risk.level,
-            observed_at: observedAt,
-          });
-        if (recordError)
-          throw new Error(
-            `Weather record could not be saved: ${recordError.message}`,
-          );
-
-        const hazards = detectWeatherHazards(
-          measurements.rainMm,
-          measurements.windKph,
-          measurements.heatIndexC,
-          forecast.current.weatherCode,
-          forecast.current.pressureMslHpa,
-        );
-        for (const hazard of hazards) {
-          const riskRank: Record<string, number> = {
-            Normal: 0,
-            Advisory: 1,
-            Warning: 2,
-            Severe: 3,
-          };
-          const lastHazardResult = await this.supabase
-            .from('hazards')
-            .select('created_at, risk_level')
-            .eq('location_id', location.loc_id)
-            .eq('user_id', location.user_id)
-            .eq('hazard_type', hazard.type)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (lastHazardResult.error)
-            throw new Error(
-              `Hazard cooldown could not be checked: ${lastHazardResult.error.message}`,
-            );
-          const lastHazardValue: unknown = lastHazardResult.data;
-          const lastHazard = isHazardState(lastHazardValue)
-            ? lastHazardValue
-            : null;
-          const previousRisk = lastHazard?.risk_level ?? 'Normal';
-          const escalated =
-            riskRank[hazard.riskLevel] > (riskRank[previousRisk] ?? 0) ||
-            previous?.risk_level === 'Normal';
-          const cooledDown =
-            !lastHazard ||
-            Date.now() - Date.parse(lastHazard.created_at) >=
-              6 * 60 * 60 * 1000;
-          if (!escalated && !cooledDown) continue;
-
-          const place =
-            location.label && location.label !== 'Home'
-              ? location.label
-              : location.city || location.full_address || 'Home';
-          const safetyTips = await this.ai.generateWeatherSafetyTips({
-            hazardType: hazard.type,
-            riskLevel: hazard.riskLevel,
-            location: place,
-            measurements,
-          });
-          const explanation = `Rule-based weather monitoring classified conditions as ${hazard.riskLevel}.`;
-          const hazardInsert = await this.supabase
-            .from('hazards')
-            .insert({
-              location_id: location.loc_id,
-              user_id: location.user_id,
-              hazard_type: hazard.type,
-              risk_level: hazard.riskLevel,
-              safety_tips: safetyTips,
-              explanation,
-              measurements,
-            })
-            .select('id')
-            .single();
-          const savedHazardId =
-            typeof hazardInsert.data?.id === 'string'
-              ? hazardInsert.data.id
-              : null;
-          if (hazardInsert.error || !savedHazardId) {
-            throw new Error(
-              `Hazard could not be saved: ${hazardInsert.error?.message ?? 'No row returned'}`,
-            );
-          }
-          await this.push.sendUserNotification({
-            userId: location.user_id,
-            hazardId: savedHazardId,
-            title: `${hazard.type} - ${hazard.riskLevel} for ${place}`,
-            body: `${safetyTips.join('\n')}\nFollow official PAGASA/LGU advisories.`,
-            data: { type: 'hazard', hazardId: savedHazardId },
-          });
-        }
+        measurements = {
+          rainMm: forecast.riskMeasurements.rainMm,
+          windKph: forecast.riskMeasurements.windKph,
+          windGustsKph: forecast.riskMeasurements.windGustsKph,
+          heatIndexC: forecast.riskMeasurements.heatIndexC,
+          temperatureC: forecast.current.temperatureC,
+          humidityPercent: forecast.current.humidityPercent,
+          uvIndex: forecast.current.uvIndex,
+          aqi: forecast.riskMeasurements.aqi,
+          weatherCode: forecast.current.weatherCode,
+          pressureMslHpa: forecast.current.pressureMslHpa,
+          stale: forecast.stale,
+        };
       } catch (error) {
         this.logger.error(
-          `Weather monitor failed for ${location.city ?? location.loc_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          `Weather fetch failed for ${representative.city ?? representative.loc_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         );
+        const { data: stored, error: storedError } = await this.supabase
+          .from('weather_records')
+          .select(
+            'recorded_at,temperature,rainfall,wind_speed,weather_condition,humidity,heat_index,uv_index,aqi',
+          )
+          .eq('location_id', representative.loc_id)
+          .order('recorded_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (storedError) {
+          this.logger.error(
+            `Latest stored weather could not be loaded: ${storedError.message}`,
+          );
+          continue;
+        }
+        if (!isStoredWeatherRecord(stored)) {
+          this.logger.warn(
+            `No stored weather record is available for ${representative.city ?? representative.loc_id}.`,
+          );
+          continue;
+        }
+        measurements = {
+          rainMm: stored.rainfall,
+          windKph: stored.wind_speed,
+          heatIndexC: stored.heat_index ?? stored.temperature,
+          temperatureC: stored.temperature,
+          humidityPercent: stored.humidity ?? 0,
+          uvIndex: stored.uv_index ?? 0,
+          aqi: stored.aqi,
+          weatherCode: /thunder|storm/i.test(stored.weather_condition ?? '')
+            ? 95
+            : -1,
+          stale: true,
+        };
+      }
+
+      for (const location of group) {
+        try {
+          const recordedAt = new Date().toISOString();
+          const condition =
+            forecast?.current.weatherCode === 95 ||
+            forecast?.current.weatherCode === 96 ||
+            forecast?.current.weatherCode === 99
+              ? 'Thunderstorm'
+              : forecast
+                ? `WMO ${forecast.current.weatherCode}`
+                : 'Stale stored observation';
+          const { error: recordError } = await this.supabase
+            .from('weather_records')
+            .insert({
+              location_id: location.loc_id,
+              temperature: measurements.temperatureC,
+              rainfall: measurements.rainMm,
+              wind_speed: measurements.windKph,
+              weather_condition: condition,
+              recorded_at: recordedAt,
+              humidity: measurements.humidityPercent,
+              heat_index: measurements.heatIndexC,
+              uv_index: measurements.uvIndex,
+              aqi: measurements.aqi,
+              is_stale: measurements.stale,
+            });
+          if (recordError) {
+            this.logger.error(
+              `Weather record could not be saved: ${recordError.message}`,
+            );
+          }
+
+          const hazards = detectWeatherHazards(
+            measurements.rainMm,
+            measurements.windKph,
+            measurements.heatIndexC,
+            measurements.weatherCode,
+            measurements.pressureMslHpa,
+            measurements.aqi,
+          );
+          for (const hazard of hazards) {
+            const { data: previous, error: previousError } = await this.supabase
+              .from('hazards')
+              .select('created_at,risk_level,severity')
+              .eq('location_id', location.loc_id)
+              .eq('hazard_type', hazard.type)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (previousError) {
+              this.logger.error(
+                `Hazard cooldown could not be checked: ${previousError.message}`,
+              );
+              continue;
+            }
+            const previousRisk =
+              typeof previous?.risk_level === 'string'
+                ? previous.risk_level
+                : typeof previous?.severity === 'string'
+                  ? previous.severity
+                  : 'Normal';
+            const riskRank: Record<string, number> = {
+              Normal: 0,
+              Advisory: 1,
+              Warning: 2,
+              Severe: 3,
+            };
+            const previousCreatedAt =
+              typeof previous?.created_at === 'string'
+                ? Date.parse(previous.created_at)
+                : Number.NaN;
+            const escalated =
+              riskRank[hazard.riskLevel] > (riskRank[previousRisk] ?? 0);
+            const cooledDown =
+              !Number.isFinite(previousCreatedAt) ||
+              Date.now() - previousCreatedAt >= 6 * 60 * 60 * 1000;
+            if (previous && !escalated && !cooledDown) continue;
+
+            const place =
+              location.label && location.label !== 'Home'
+                ? location.label
+                : location.city || location.full_address || 'Home';
+            const guidance = await this.ai.generateWeatherSafetyTips({
+              hazardType: hazard.type,
+              riskLevel: hazard.riskLevel,
+              location: place,
+              measurements: {
+                rainMm: measurements.rainMm,
+                windKph: measurements.windKph,
+                heatIndexC: measurements.heatIndexC,
+                temperatureC: measurements.temperatureC,
+                humidityPercent: measurements.humidityPercent,
+                aqi: measurements.aqi ?? 0,
+              },
+            });
+            const dedupeKey = [
+              location.loc_id,
+              hazard.type.toLocaleLowerCase().replace(/\s+/g, '-'),
+              hazard.riskLevel.toLocaleLowerCase(),
+              Math.floor(Date.now() / (6 * 60 * 60 * 1000)),
+            ].join(':');
+            const { data: savedHazard, error: hazardError } =
+              await this.supabase
+                .from('hazards')
+                .insert({
+                  location_id: location.loc_id,
+                  category: hazard.type,
+                  severity: hazard.riskLevel,
+                  hazard_type: hazard.type,
+                  risk_level: hazard.riskLevel,
+                  ai_summary: guidance.summary,
+                  safety_tips: {
+                    do: guidance.do,
+                    prepare: guidance.prepare,
+                    avoid: guidance.avoid,
+                  },
+                  dedupe_key: dedupeKey,
+                  expires_at: new Date(
+                    Date.now() + 6 * 60 * 60 * 1000,
+                  ).toISOString(),
+                })
+                .select('id')
+                .single();
+            if (hazardError?.code === '23505') continue;
+            if (hazardError || !savedHazard) {
+              this.logger.error(
+                `Hazard could not be saved: ${hazardError?.message ?? 'No row returned'}`,
+              );
+              continue;
+            }
+            const hazardId = String(savedHazard.id);
+            await this.push.sendUserNotification({
+              userId: location.user_id,
+              hazardId,
+              kind: 'weather_hazard',
+              sourceName: 'Open-Meteo',
+              title: `${hazard.type} - ${hazard.riskLevel} near ${place}`,
+              body: `${guidance.do[0]}\n${guidance.do[1]}`,
+              data: { type: 'hazard', hazardId },
+            });
+          }
+        } catch (error) {
+          this.logger.error(
+            `Weather monitor failed for ${location.city ?? location.loc_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          );
+        }
       }
     }
   }
+}
+
+function isStoredWeatherRecord(value: unknown): value is StoredWeatherRecord {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.recorded_at === 'string' &&
+    typeof record.temperature === 'number' &&
+    typeof record.rainfall === 'number' &&
+    typeof record.wind_speed === 'number' &&
+    (typeof record.weather_condition === 'string' ||
+      record.weather_condition === null) &&
+    (typeof record.humidity === 'number' || record.humidity === null) &&
+    (typeof record.heat_index === 'number' || record.heat_index === null) &&
+    (typeof record.uv_index === 'number' || record.uv_index === null) &&
+    (typeof record.aqi === 'number' || record.aqi === null)
+  );
 }
 
 function calculateHeatIndexC(temperatureC: number, humidityPercent: number) {

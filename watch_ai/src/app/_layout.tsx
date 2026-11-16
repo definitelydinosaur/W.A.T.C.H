@@ -1,4 +1,5 @@
 import { Stack, useRouter } from 'expo-router';
+import { ThemeProvider } from '../theme/theme-context';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
@@ -129,15 +130,27 @@ export default function RootLayout() {
       try {
         const data = response.notification.request.content.data as {
           type?: string;
+          notificationId?: string;
           announcementId?: string;
+          hazardId?: string;
         };
-        if (data.type === 'announcement' && data.announcementId) {
+        if (data.type === 'hazard' && data.hazardId) {
+          router.push({
+            pathname: '/home',
+            params: { hazardId: data.hazardId },
+          });
+        } else if (data.type === 'announcement' && data.notificationId) {
+          router.push({
+            pathname: '/alert_page/announcement',
+            params: { notificationId: data.notificationId },
+          });
+        } else if (data.type === 'announcement' && data.announcementId) {
           router.push({
             pathname: '/alert_page/announcement',
             params: { id: data.announcementId },
           });
         } else {
-          router.push('/alert_page/alert');
+          router.push('/alerts');
         }
       } catch (error) {
         console.warn('Unable to open the notification destination:', error);
@@ -168,6 +181,7 @@ export default function RootLayout() {
   }, [router]);
 
   return (
+    <ThemeProvider>
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
@@ -176,10 +190,13 @@ export default function RootLayout() {
       <Stack.Screen name="auth/loading_auth" options={{ animation: 'fade' }} />
       <Stack.Screen name="auth/confirm-email" options={{ animation: 'fade' }} />
       <Stack.Screen name="home" />
+      <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
       <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
-      <Stack.Screen name="map-overview" options={{ animation: 'fade' }} />
+      <Stack.Screen name="map-overview" options={{ animation: 'slide_from_left' }} />
+      <Stack.Screen name="settings_page/customize-theme" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/alert" options={{ animation: 'fade' }} />
       <Stack.Screen name="alert_page/announcement" options={{ animation: 'fade' }} />
     </Stack>
+    </ThemeProvider>
   );
 }

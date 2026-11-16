@@ -13,6 +13,7 @@
     },
     "android": {
       "package": "com.stratodevs.watch",
+      "googleServicesFile": "./google-services.json",
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_FINE_LOCATION",
@@ -46,6 +47,17 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "0f8597f6-574b-4514-9047-936c801fbb8d"
+      }
+    },
+    "owner": "major119791"
   }
 }
