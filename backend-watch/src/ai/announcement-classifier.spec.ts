@@ -3,6 +3,7 @@ import {
   announcementContentHash,
   isDuplicateAnnouncement,
   matchesAnnouncementAudience,
+  parseAnnouncementAiDetails,
   parseAnnouncementClassification,
   shouldSkipOldAnnouncement,
 } from './announcement-classifier';
@@ -40,6 +41,31 @@ describe('announcement processing rules', () => {
         JSON.stringify({ ...JSON.parse(valid), summary: 'One. Two. Three.' }),
       ),
     ).toThrow('does not match');
+  });
+
+  it('validates structured announcement scope and suspension details', () => {
+    const details = {
+      scope: 'institution',
+      is_class_suspension: true,
+      suspension_reason: 'flood',
+      affected_levels: 'All levels',
+      effective_date: '2026-11-20',
+      short_summary: 'Classes are suspended because of flooding.',
+      key_points: ['All levels are affected.'],
+    };
+    expect(parseAnnouncementAiDetails(JSON.stringify(details))).toEqual(
+      details,
+    );
+    expect(() =>
+      parseAnnouncementAiDetails(
+        JSON.stringify({ ...details, suspension_reason: 'unknown' }),
+      ),
+    ).toThrow('required schema');
+    expect(() =>
+      parseAnnouncementAiDetails(
+        JSON.stringify({ ...details, key_points: [''] }),
+      ),
+    ).toThrow('required schema');
   });
 
   it('deduplicates source posts by external id or normalized content hash', () => {

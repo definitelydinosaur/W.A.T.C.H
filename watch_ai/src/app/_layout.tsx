@@ -1,12 +1,14 @@
 import { Stack, useRouter } from 'expo-router';
 import { ThemeProvider } from '../theme/theme-context';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
+import supabase from '../lib/supabase';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+const isExpoGo =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 if (Platform.OS !== 'web' && !isExpoGo) {
   try {
@@ -30,6 +32,9 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const router = useRouter();
+  const handledResponses = useRef(new Set<string>());
+  const presentedNotifications = useRef(new Set<string>());
+  const pendingNotification = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     if (__DEV__) {
@@ -56,35 +61,91 @@ export default function RootLayout() {
       }
     }
 
+    const showPendingNotification = () => {
+      const data = pendingNotification.current;
+      if (!data) return;
+      const notificationId =
+        readDataString(data.notification_id) ??
+        readDataString(data.notificationId);
+      const announcementId =
+        readDataString(data.announcement_id) ??
+        readDataString(data.announcementId);
+      const hazardId =
+        readDataString(data.hazard_id) ?? readDataString(data.hazardId);
+      const key = notificationId ?? `${announcementId ?? ''}:${hazardId ?? ''}`;
+      if (presentedNotifications.current.has(key)) {
+        pendingNotification.current = null;
+        return;
+      }
+      if (notificationId) {
+        router.push({
+          pathname: '/alert_page/announcement',
+          params: { notificationId },
+        });
+      } else if (announcementId) {
+        router.push({
+          pathname: '/alert_page/announcement',
+          params: { announcementId },
+        });
+      } else if (hazardId) {
+        router.push({
+          pathname: '/alert_page/announcement',
+          params: { hazardId },
+        });
+      } else {
+        router.push('/alerts');
+      }
+      presentedNotifications.current.add(key);
+      pendingNotification.current = null;
+    };
+
+    const waitForAuthentication = () => {
+      void supabase.auth
+        .getSession()
+        .then(({ data, error }) => {
+          if (error) {
+            console.warn(
+              'Notification tap could not check the session:',
+              error,
+            );
+            return;
+          }
+          if (data.session) {
+            showPendingNotification();
+          } else {
+            router.push('/auth/login');
+          }
+        })
+        .catch((error: unknown) => {
+          console.warn('Notification tap could not check the session:', error);
+        });
+    };
+
     const openFromNotification = (
       response: Notifications.NotificationResponse | null,
     ) => {
       if (!response) return;
       try {
-        const data = response.notification.request.content.data as {
-          type?: string;
-          notificationId?: string;
-          announcementId?: string;
-          hazardId?: string;
-        };
-        if (data.type === 'hazard' && data.hazardId) {
-          router.push({
-            pathname: '/home',
-            params: { hazardId: data.hazardId },
-          });
-        } else if (data.type === 'announcement' && data.notificationId) {
-          router.push({
-            pathname: '/alert_page/announcement',
-            params: { notificationId: data.notificationId },
-          });
-        } else if (data.type === 'announcement' && data.announcementId) {
-          router.push({
-            pathname: '/alert_page/announcement',
-            params: { id: data.announcementId },
-          });
-        } else {
-          router.push('/alerts');
-        }
+        const data = response.notification.request.content.data as Record<
+          string,
+          unknown
+        >;
+        const key =
+          response.notification.request.identifier ||
+          readDataString(data.notification_id) ||
+          readDataString(data.notificationId);
+        if (key && handledResponses.current.has(key)) return;
+        if (key) handledResponses.current.add(key);
+        pendingNotification.current = data;
+        void Notifications.clearLastNotificationResponseAsync().catch(
+          (error: unknown) => {
+            console.warn(
+              'Unable to clear the last notification response:',
+              error,
+            );
+          },
+        );
+        waitForAuthentication();
       } catch (error) {
         console.warn('Unable to open the notification destination:', error);
       }
@@ -92,15 +153,31 @@ export default function RootLayout() {
     let responseListener: Notifications.EventSubscription | null = null;
     if (Platform.OS !== 'web' && !isExpoGo) {
       try {
+        const { data: authListener } = supabase.auth.onAuthStateChange(
+          (_event, session) => {
+            if (session && pendingNotification.current) {
+              showPendingNotification();
+            }
+          },
+        );
         responseListener =
           Notifications.addNotificationResponseReceivedListener(
             openFromNotification,
           );
         void Notifications.getLastNotificationResponseAsync()
-          .then(openFromNotification)
+          .then((response) => {
+            openFromNotification(response);
+          })
           .catch((error: unknown) => {
-            console.warn('Unable to check the last notification response:', error);
+            console.warn(
+              'Unable to check the last notification response:',
+              error,
+            );
           });
+        return () => {
+          responseListener?.remove();
+          authListener.subscription.unsubscribe();
+        };
       } catch (error) {
         console.warn('Notification response listeners are unavailable:', error);
       }
@@ -113,21 +190,40 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider>
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
-      <Stack.Screen name="auth/login" options={{ animation: 'fade' }} />
-      <Stack.Screen name="auth/register" options={{ animation: 'fade' }} />
-      <Stack.Screen name="auth/loading_auth" options={{ animation: 'fade' }} />
-      <Stack.Screen name="auth/confirm-email" options={{ animation: 'fade' }} />
-      <Stack.Screen name="home" />
-      <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
-      <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
-      <Stack.Screen name="map-overview" options={{ animation: 'slide_from_left' }} />
-      <Stack.Screen name="settings_page/customize-theme" options={{ animation: 'fade' }} />
-      <Stack.Screen name="alert_page/alert" options={{ animation: 'fade' }} />
-      <Stack.Screen name="alert_page/announcement" options={{ animation: 'fade' }} />
-    </Stack>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+        <Stack.Screen name="auth/login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="auth/register" options={{ animation: 'fade' }} />
+        <Stack.Screen
+          name="auth/loading_auth"
+          options={{ animation: 'fade' }}
+        />
+        <Stack.Screen
+          name="auth/confirm-email"
+          options={{ animation: 'fade' }}
+        />
+        <Stack.Screen name="home" />
+        <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
+        <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
+        <Stack.Screen
+          name="map-overview"
+          options={{ animation: 'slide_from_left' }}
+        />
+        <Stack.Screen
+          name="settings_page/customize-theme"
+          options={{ animation: 'fade' }}
+        />
+        <Stack.Screen name="alert_page/alert" options={{ animation: 'fade' }} />
+        <Stack.Screen
+          name="alert_page/announcement"
+          options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+        />
+      </Stack>
     </ThemeProvider>
   );
+}
+
+function readDataString(value: unknown) {
+  return typeof value === 'string' && value.length ? value : null;
 }

@@ -6,7 +6,13 @@ import { Cron } from '@nestjs/schedule';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 
 type NotificationKind =
-  'announcement_local' | 'announcement_institution' | 'weather_hazard';
+  | 'announcement_local'
+  | 'announcement_institution'
+  | 'weather_hazard'
+  | 'institution'
+  | 'local'
+  | 'weather'
+  | 'safety_tip';
 
 interface NotificationPreferences {
   announcements?: boolean;
@@ -47,12 +53,22 @@ export class PushService {
     }
     const referenceColumn = hasAnnouncement ? 'announcement_id' : 'hazard_id';
     const referenceId = input.announcementId ?? input.hazardId!;
-    const { data: prior, error: priorError } = await this.supabase
+    if (input.kind === 'safety_tip' && !input.data.tip_key) {
+      throw new Error('Safety-tip notifications require a stable tip_key.');
+    }
+    let priorQuery = this.supabase
       .from('notifications')
       .select('id')
       .eq('user_id', input.userId)
-      .eq(referenceColumn, referenceId)
-      .maybeSingle();
+      .eq(referenceColumn, referenceId);
+    if (input.kind === 'safety_tip') {
+      priorQuery = priorQuery
+        .eq('kind', 'safety_tip')
+        .eq('data->>tip_key', input.data.tip_key);
+    } else {
+      priorQuery = priorQuery.neq('kind', 'safety_tip');
+    }
+    const { data: prior, error: priorError } = await priorQuery.maybeSingle();
     if (priorError) {
       throw new Error(
         `Notification dedupe check failed: ${priorError.message}`,
@@ -73,17 +89,42 @@ export class PushService {
     const notificationPrefs = (profile?.notification_prefs ??
       {}) as NotificationPreferences;
     const allowsPush =
-      input.kind === 'weather_hazard'
-        ? notificationPrefs.weather !== false
-        : input.kind === 'announcement_institution'
+      input.kind === 'weather_hazard' ||
+      input.kind === 'weather' ||
+      input.kind === 'safety_tip'
+        ? notificationPrefs.weather !== false &&
+          (input.kind !== 'safety_tip' || notificationPrefs.safety !== false)
+        : input.kind === 'announcement_institution' ||
+            input.kind === 'institution'
           ? (notificationPrefs.school ?? notificationPrefs.announcements) !==
             false
           : (notificationPrefs.safety ?? notificationPrefs.announcements) !==
             false;
-    const token =
+    const body = this.ensureOpenAppInstruction(input.body);
+    const title = input.title.trim().slice(0, 80) || 'W.A.T.C.H. Alert';
+    let token =
       typeof profile?.expo_push_token === 'string'
         ? profile.expo_push_token
         : null;
+    if (!token) {
+      const { data: pushToken, error: tokenError } = await this.supabase
+        .from('push_tokens')
+        .select('expo_push_token')
+        .eq('user_id', input.userId)
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (tokenError) {
+        throw new Error(
+          `Registered push token could not be loaded: ${tokenError.message}`,
+        );
+      }
+      token =
+        typeof pushToken?.expo_push_token === 'string'
+          ? pushToken.expo_push_token
+          : null;
+    }
 
     const { data: notification, error: insertError } = await this.supabase
       .from('notifications')
@@ -94,9 +135,9 @@ export class PushService {
         kind: input.kind,
         source_name: input.sourceName ?? null,
         source_url: input.sourceUrl ?? null,
-        title: input.title,
-        body: input.body,
-        data: input.data,
+        title,
+        body,
+        data: {},
         status: 'Failed',
         expo_ticket_ids: [],
         sent_at: new Date().toISOString(),
@@ -111,6 +152,24 @@ export class PushService {
       );
     }
     const notificationId = String(notification.id);
+    const pushData: Record<string, string> = {
+      notification_id: notificationId,
+      kind: input.kind === 'safety_tip' ? 'weather' : input.kind,
+      ...(input.announcementId
+        ? { announcement_id: input.announcementId }
+        : { hazard_id: input.hazardId! }),
+      source_url: input.sourceUrl ?? '',
+      ...(input.kind === 'safety_tip' ? { tip_key: input.data.tip_key } : {}),
+    };
+    const { error: payloadError } = await this.supabase
+      .from('notifications')
+      .update({ data: pushData })
+      .eq('id', notificationId);
+    if (payloadError) {
+      throw new Error(
+        `Notification payload could not be saved: ${payloadError.message}`,
+      );
+    }
     if (!token || !Expo.isExpoPushToken(token) || !allowsPush) {
       if (token && !Expo.isExpoPushToken(token)) {
         this.logger.warn(
@@ -122,9 +181,9 @@ export class PushService {
 
     const message: ExpoPushMessage = {
       to: token,
-      title: input.title,
-      body: input.body,
-      data: { ...input.data, notificationId },
+      title,
+      body,
+      data: pushData,
       sound: 'default',
       channelId: 'weather-alerts',
       priority: 'high',
@@ -201,6 +260,7 @@ export class PushService {
             invalidDevice = true;
           }
         }
+
         if (invalidDevice && typeof row.user_id === 'string') {
           const { error: profileError } = await this.supabase
             .from('user_info')
@@ -212,6 +272,7 @@ export class PushService {
             );
           }
         }
+
         const status = values.some((receipt) => receipt.status === 'ok')
           ? 'Delivered'
           : values.some((receipt) => receipt.status === 'error')
@@ -251,5 +312,23 @@ export class PushService {
         `Invalid Expo token could not be cleared: ${error.message}`,
       );
     }
+    const { error: tokenError } = await this.supabase
+      .from('push_tokens')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('expo_push_token', token);
+    if (tokenError) {
+      this.logger.error(
+        `Invalid registered Expo token could not be disabled: ${tokenError.message}`,
+      );
+    }
+  }
+
+  private ensureOpenAppInstruction(body: string) {
+    const instruction = 'Open app to see full details';
+    const trimmedBody = body.trimEnd();
+    return trimmedBody.endsWith(instruction)
+      ? trimmedBody
+      : `${trimmedBody}\n${instruction}`;
   }
 }

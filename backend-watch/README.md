@@ -17,6 +17,8 @@ Optional variables:
 
 - `FACEBOOK_ACCESS_TOKEN` — authorized Meta Graph API access for eligible public pages.
 - `EXPO_ACCESS_TOKEN` — authenticated Expo push delivery.
+- `SAFETY_TIP_INTERVAL_HOURS` — ongoing hazard-tip interval, from 2 to 3 hours (default `3`).
+- `SAFETY_TIP_MAX_PER_HAZARD_USER` — maximum ongoing tips per hazard and user (default `3`, maximum `5`).
 - `ADMIN_API_KEY` — secret for administrative source and manual-announcement endpoints; send as `x-admin-key`.
 - `ENABLE_TEST_ENDPOINTS=true` — enables the test-hazard endpoint; leave off outside development.
 - `PORT` — API port, default `3000`.
@@ -36,6 +38,8 @@ Review [202611010001_alerts_feature.sql](./supabase/migrations/202611010001_aler
 The migration has **not** been run against your database. For the supplied current schema, apply this alerts migration after review; do not blindly replay the repository's older migrations, which target a different schema. Back up and review your live schema before applying SQL.
 
 Push-token registration also needs [202611080001_push_token_registration.sql](./supabase/migrations/202611080001_push_token_registration.sql). Review and apply this focused migration to add the profile token/preferences columns and `push_tokens` table; it is safe to run alongside the current schema and does not replace the alerts migration.
+
+Apply [202611190001_announcement_classification_and_safety_tips.sql](./supabase/migrations/202611190001_announcement_classification_and_safety_tips.sql) in the Supabase SQL editor for the announcements-to-institutions foreign key, its backfill, structured classification fields, and safety-tip notification kind/deduplication index. Its `NOTICE` reports matched and unmatched announcement rows. The alert list uses the named FK and a default left embed, so local/PAGASA announcements remain visible with a null institution.
 
 ## Announcement source pipeline
 
@@ -80,6 +84,8 @@ Invoke-RestMethod -Method Post -Uri http://localhost:3000/admin/announcements `
 ```
 
 The announcement still passes through AI classification and audience matching. Depending on confidence and conflict checks, it may appear in the review queue instead of being sent. Do not represent a test post as a real government advisory.
+
+Announcement classification and scheduled continuing-hazard tips use the backend's existing server-side `AiService` and `WeatherService`; AI secrets remain in the backend environment, never in the app. The tip worker checks active/unexpired hazards against recent measurements, preferences, notification history, and the configured interval/cap.
 
 To create a deterministic weather-hazard test for an administrator's saved home location:
 
