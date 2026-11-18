@@ -20,6 +20,7 @@ import { useAppTheme } from '../../theme/theme-context';
 type IconName =
   | 'profile'
   | 'security'
+  | 'notifications'
   | 'privacy'
   | 'help'
   | 'terms'
@@ -41,6 +42,7 @@ const SECTIONS: { title: string; items: SettingItem[] }[] = [
       { label: 'Edit profile', icon: 'profile' },
       { label: 'Customize Theme', icon: 'theme' },
       { label: 'Security', icon: 'security' },
+      { label: 'Notifications', icon: 'notifications' },
       { label: 'Privacy', icon: 'privacy' },
     ],
   },
@@ -85,6 +87,12 @@ function SettingIcon({ name, color = '#4B32B5' }: { name: IconName; color?: stri
           <Path d="M12 2.5 20 5v6c0 5-3.4 8.4-8 10.5C7.4 19.4 4 16 4 11V5z" {...shared} />
           <Path d="M12 8v4" {...shared} />
           <Circle cx={12} cy={15.5} r={0.7} fill={color} stroke="none" />
+        </>
+      )}
+      {name === 'notifications' && (
+        <>
+          <Path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" {...shared} />
+          <Path d="M10 21h4" {...shared} />
         </>
       )}
       {name === 'privacy' && (
@@ -268,6 +276,24 @@ export default function SettingsScreen() {
                         accessibilityRole="button"
                         accessibilityLabel={item.label}
                         onPress={() => router.push('/settings_page/customize-theme')}
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
+                    ) : item.icon === 'notifications' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() =>
+                          router.push('/settings_page/notifications')
+                        }
                         style={({ pressed }) => [
                           styles.settingRow,
                           pressed && styles.settingRowPressed,

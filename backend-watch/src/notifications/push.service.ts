@@ -11,6 +11,8 @@ type NotificationKind =
 interface NotificationPreferences {
   announcements?: boolean;
   weather?: boolean;
+  safety?: boolean;
+  school?: boolean;
 }
 
 @Injectable()
@@ -73,7 +75,11 @@ export class PushService {
     const allowsPush =
       input.kind === 'weather_hazard'
         ? notificationPrefs.weather !== false
-        : notificationPrefs.announcements !== false;
+        : input.kind === 'announcement_institution'
+          ? (notificationPrefs.school ?? notificationPrefs.announcements) !==
+            false
+          : (notificationPrefs.safety ?? notificationPrefs.announcements) !==
+            false;
     const token =
       typeof profile?.expo_push_token === 'string'
         ? profile.expo_push_token

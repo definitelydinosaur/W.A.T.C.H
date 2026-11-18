@@ -587,30 +587,36 @@ function toCondition(code: number, hour: number): HourlyItem["condition"] {
 function GlassHomeDock({ primary }: { primary: string }) {
   const sourceHue = rgbToHsl(hexToRgb('#6738C7'))[0];
   const targetHue = rgbToHsl(hexToRgb(primary))[0];
-  const rotate = targetHue - sourceHue;
+  let rotate = targetHue - sourceHue;
+  if (rotate > 180) rotate -= 360;
+  if (rotate < -180) rotate += 360;
+  const hueKey = Math.round(rotate);
   if (Math.abs(rotate) < 1) {
     return (
       <Image
+        key="dock-original"
         source={require('../../assets/images/homepage/TabBar.png')}
         style={StyleSheet.absoluteFill}
         contentFit="fill"
       />
     );
   }
+  const filterId = `dockHue-${hueKey}`;
   return (
-    <Svg width="100%" height="100%" viewBox="0 0 1170 345">
+    <Svg key={filterId} width="100%" height="100%" viewBox="0 0 1170 345">
       <Defs>
-        <Filter id="dockHue">
+        <Filter id={filterId}>
           <FeColorMatrix type="hueRotate" values={rotate} />
         </Filter>
       </Defs>
-      <SvgImage
-        href={require('../../assets/images/homepage/TabBar.png')}
-        width="1170"
-        height="345"
-        preserveAspectRatio="none"
-        filter="url(#dockHue)"
-      />
+      <G filter={`url(#${filterId})`}>
+        <SvgImage
+          href={require('../../assets/images/homepage/TabBar.png')}
+          width="1170"
+          height="345"
+          preserveAspectRatio="none"
+        />
+      </G>
     </Svg>
   );
 }
@@ -1889,12 +1895,9 @@ export default function HomeScreen() {
 
       {/* Bottom TabBar */}
       <View style={styles.fixedTabBar} pointerEvents="box-none">
-        <Image
-          source={require("../../assets/images/homepage/TabBar.png")}
-          style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
-          contentFit="fill"
-          pointerEvents="none"
-        />
+        <View style={[StyleSheet.absoluteFill, { opacity: 0.9 }]} pointerEvents="none">
+          <GlassHomeDock primary={appTheme.primary} />
+        </View>
         <TouchableOpacity
           style={styles.tabBarRadarButton}
           activeOpacity={0.65}

@@ -29,6 +29,7 @@ import ProfileSelectionModal, {
   InstitutionOption,
 } from '../../components/profile-selection-modal';
 import { profileApi } from '../../lib/profile-api';
+import { AVATAR_ARTIST_CREDIT, CUSTOM_AVATARS, type CustomAvatar } from '../../lib/custom-avatars';
 
 type PickerField = 'Country/Region';
 
@@ -84,6 +85,7 @@ export default function EditProfileScreen() {
   );
   const [localProfilePicture, setLocalProfilePicture] = useState<string | null>(null);
   const [isUploadingPicture, setIsUploadingPicture] = useState(false);
+  const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
   const [homeLocation, setHomeLocation] = useState<HomeLocationInput | null>(null);
   const [institution, setInstitution] = useState<InstitutionOption | null>(null);
   const [selectionPicker, setSelectionPicker] =
@@ -278,82 +280,50 @@ const saveInstitution = async (selected: InstitutionOption | null) => {
   }
 };
 
-const changeProfilePicture = async () => {
+const sendPasswordReset = async () => {
+  if (!email.trim()) {
+    Alert.alert(
+      'Email unavailable',
+      'A password reset email cannot be sent for this account.',
+    );
+    return;
+  }
+
   try {
-    // 1. Request gallery permission
-    const permission =
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+    if (error) throw error;
+    Alert.alert('Check your email', 'A secure password reset link has been sent.');
+  } catch (error) {
+    Alert.alert(
+      'Password reset failed',
+      error instanceof Error ? error.message : 'Please try again.',
+    );
+  }
+};
 
-    if (!permission.granted) {
-      Alert.alert(
-        'Permission Required',
-        'Please allow access to your photo library to change your profile picture.',
-      );
-      return;
-    }
-
-    // 2. Open the image picker
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-    });
-
-    if (result.canceled) return;
-
-    const asset = result.assets[0];
-
-    if (!asset) {
-      throw new Error('No image was selected.');
-    }
-
-    // 3. Get the backend URL
+const uploadProfileImage = async (uri: string, mimeType: string) => {
     const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-
     if (!apiUrl) {
       throw new Error(
         'Backend URL is missing. Check your EXPO_PUBLIC_API_URL environment variable.',
       );
     }
 
-    // 4. Get the signed-in user's access token
     const { data, error } = await supabase.auth.getSession();
-
     if (error) {
       throw new Error(error.message);
     }
-
     if (!data.session) {
       throw new Error('Please sign in before uploading a profile picture.');
     }
 
-    // 5. Show loading state
     setIsUploadingPicture(true);
-    setLocalProfilePicture(asset.uri);
-    setProfilePicture(asset.uri);
+    setLocalProfilePicture(uri);
+    setProfilePicture(uri);
 
-    // 6. Determine the selected image's MIME type
-    const extension =
-      asset.fileName?.split('.').pop()?.toLowerCase() ||
-      (asset.mimeType === 'image/png'
-        ? 'png'
-        : asset.mimeType === 'image/webp'
-          ? 'webp'
-          : 'jpg');
-
-    const mimeType =
-      asset.mimeType ||
-      (extension === 'png'
-        ? 'image/png'
-        : extension === 'webp'
-          ? 'image/webp'
-          : 'image/jpeg');
-
-    // Use Expo's native multipart uploader instead of React Native FormData.
     const response = await FileSystem.uploadAsync(
       `${apiUrl}/profile/picture`,
-      asset.uri,
+      uri,
       {
         httpMethod: 'POST',
         uploadType: FileSystem.FileSystemUploadType.MULTIPART,
@@ -365,7 +335,6 @@ const changeProfilePicture = async () => {
       },
     );
 
-    // 8. Read the backend response
     let responseBody: {
       message?: string | string[];
       profile_pic?: string;
@@ -382,7 +351,6 @@ const changeProfilePicture = async () => {
       const message = Array.isArray(responseBody.message)
         ? responseBody.message.join(', ')
         : responseBody.message;
-
       throw new Error(message || `Image upload failed (HTTP ${response.status}).`);
     }
 
@@ -392,29 +360,111 @@ const changeProfilePicture = async () => {
       );
     }
 
-    // Force a fresh image after replacing the same storage object.
     const cacheBustedImageUrl = `${responseBody.profile_pic}${
       responseBody.profile_pic.includes('?') ? '&' : '?'
     }t=${Date.now()}`;
     setProfilePicture(cacheBustedImageUrl);
+  };
 
-    Alert.alert(
-      'Profile Picture Updated',
-      'Your profile picture was uploaded successfully.',
-    );
-  } catch (error) {
-    Alert.alert(
-      'Upload Failed',
-      error instanceof Error
-        ? error.message
-        : 'An unexpected error occurred while uploading your profile picture.',
-    );
-  } finally {
-    setIsUploadingPicture(false);
-  }
-};
+  const changeProfilePicture = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'Permission Required',
+          'Please allow access to your photo library to change your profile picture.',
+        );
+        return;
+      }
 
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+      if (result.canceled) return;
 
+      const asset = result.assets[0];
+      if (!asset) {
+        throw new Error('No image was selected.');
+      }
+
+      const extension =
+        asset.fileName?.split('.').pop()?.toLowerCase() ||
+        (asset.mimeType === 'image/png'
+          ? 'png'
+          : asset.mimeType === 'image/webp'
+            ? 'webp'
+            : 'jpg');
+      const mimeType =
+        asset.mimeType ||
+        (extension === 'png'
+          ? 'image/png'
+          : extension === 'webp'
+            ? 'image/webp'
+            : 'image/jpeg');
+
+      setSelectedAvatarId(null);
+      await uploadProfileImage(asset.uri, mimeType);
+      Alert.alert(
+        'Profile Picture Updated',
+        'Your profile picture was uploaded successfully.',
+      );
+    } catch (error) {
+      Alert.alert(
+        'Upload Failed',
+        error instanceof Error
+          ? error.message
+          : 'An unexpected error occurred while uploading your profile picture.',
+      );
+    } finally {
+      setIsUploadingPicture(false);
+    }
+  };
+
+  const chooseAvatar = async (avatar: CustomAvatar) => {
+    try {
+      const resolved = Image.resolveAssetSource(avatar.source);
+      if (!resolved?.uri) {
+        throw new Error('This avatar file could not be opened.');
+      }
+
+      let uri = resolved.uri;
+      const lowerUri = uri.toLowerCase();
+      const mimeType = lowerUri.includes('.jpg') || lowerUri.includes('.jpeg')
+        ? 'image/jpeg'
+        : lowerUri.includes('.webp')
+          ? 'image/webp'
+          : 'image/png';
+      const extension = mimeType === 'image/jpeg' ? 'jpg' : mimeType === 'image/webp' ? 'webp' : 'png';
+      if (!uri.startsWith('file:')) {
+        const folder = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+        if (!folder) {
+          throw new Error('This avatar could not be saved on the device.');
+        }
+        const downloaded = await FileSystem.downloadAsync(
+          uri,
+          `${folder}avatar-${avatar.id}.${extension}`,
+        );
+        uri = downloaded.uri;
+      }
+
+      setSelectedAvatarId(avatar.id);
+      await uploadProfileImage(uri, mimeType);
+      Alert.alert('Avatar Updated', 'Your profile picture now uses this avatar.');
+    } catch (error) {
+      setSelectedAvatarId(null);
+      Alert.alert(
+        'Avatar Failed',
+        error instanceof Error
+          ? error.message
+          : 'An unexpected error occurred while setting this avatar.',
+      );
+    } finally {
+      setIsUploadingPicture(false);
+    }
+  };
   const selectOption = (option: string) => {
     if (activePicker === 'Country/Region') setCountry(option);
     setActivePicker(null);
@@ -450,6 +500,9 @@ const changeProfilePicture = async () => {
     profilePictureUrl ??
     profilePicture ??
     initialProfilePictureUrl;
+  const selectedAvatar = CUSTOM_AVATARS.find((avatar) => avatar.id === selectedAvatarId);
+  const artistCredit = selectedAvatar?.credit.trim() || AVATAR_ARTIST_CREDIT.trim();
+  const avatarInitial = name.trim().charAt(0).toUpperCase() || 'W';
 
   return (
     <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
@@ -488,51 +541,94 @@ const changeProfilePicture = async () => {
               </View>
 
               <View style={styles.avatarSection}>
-                <View style={styles.avatar}>
-                  {displayedProfilePicture && (
-                    <Image
-                      accessibilityLabel="Selected profile picture"
-                      source={{
-                        uri: displayedProfilePicture,
-                      }}
-                      style={styles.avatarImage}
-                      resizeMode="cover"
-                      onError={() => {
-                        if (localProfilePicture && profilePicture !== localProfilePicture) {
-                          setProfilePicture(localProfilePicture);
-                        }
-                      }}
-                    />
-                  )}
+                <View style={styles.avatarStage}>
+                  <View style={[styles.avatarRing, { backgroundColor: displayed.primary }]}>
+                    <View style={styles.avatar}>
+                      {displayedProfilePicture ? (
+                        <Image
+                          accessibilityLabel="Selected profile picture"
+                          source={{ uri: displayedProfilePicture }}
+                          style={styles.avatarImage}
+                          resizeMode="cover"
+                          onError={() => {
+                            if (localProfilePicture && profilePicture !== localProfilePicture) {
+                              setProfilePicture(localProfilePicture);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <Text style={[styles.avatarInitial, { color: displayed.primary }]}>
+                          {avatarInitial}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Change profile photo"
                     accessibilityState={{ disabled: isUploadingPicture }}
                     disabled={isUploadingPicture}
-                    onPress={changeProfilePicture}
+                    onPress={() => void changeProfilePicture()}
                     style={styles.cameraButton}
                   >
                     {isUploadingPicture ? (
-                      <ActivityIndicator color={displayed.primary} />
+                      <ActivityIndicator color={displayed.primary} size="small" />
                     ) : (
-                      <Svg width={23} height={23} viewBox="0 0 24 24">
+                      <Svg width={18} height={18} viewBox="0 0 24 24">
                         <Path
-                          d="M4 7.5h3l1.5-2h7l1.5 2h3A1.5 1.5 0 0 1 21.5 9v9A1.5 1.5 0 0 1 20 19.5H4A1.5 1.5 0 0 1 2.5 18V9A1.5 1.5 0 0 1 4 7.5Z"
-                          fill={displayed.primary}
+                          d="M8.2 7.2 9.4 5.6h5.2l1.2 1.6H19a1.6 1.6 0 0 1 1.6 1.6v8.2A1.6 1.6 0 0 1 19 18.6H5a1.6 1.6 0 0 1-1.6-1.6V8.8A1.6 1.6 0 0 1 5 7.2h3.2Z"
+                          fill="none"
+                          stroke={displayed.primary}
+                          strokeWidth={1.8}
+                          strokeLinejoin="round"
                         />
                         <Circle
                           cx={12}
-                          cy={13.5}
-                          r={3.5}
+                          cy={12.6}
+                          r={2.7}
                           fill="none"
-                          stroke={displayed.onPrimary}
+                          stroke={displayed.primary}
                           strokeWidth={1.8}
                         />
-                        <Circle cx={18.2} cy={9.7} r={0.9} fill={displayed.onPrimary} />
                       </Svg>
                     )}
                   </Pressable>
                 </View>
+                {artistCredit ? (
+                  <Text style={styles.artistCredit}>Art by {artistCredit}</Text>
+                ) : null}
+                <Text style={styles.avatarHeading}>Avatars</Text>
+                {CUSTOM_AVATARS.length === 0 ? (
+                  <Text style={styles.avatarHint}>
+                    Add images to assets/avatars, then list each file in src/lib/custom-avatars.ts.
+                  </Text>
+                ) : (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.avatarRow}
+                  >
+                    {CUSTOM_AVATARS.map((avatar) => {
+                      const selected = avatar.id === selectedAvatarId;
+                      return (
+                        <Pressable
+                          key={avatar.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Use the ${avatar.id} avatar`}
+                          accessibilityState={{ selected, disabled: isUploadingPicture }}
+                          disabled={isUploadingPicture}
+                          onPress={() => void chooseAvatar(avatar)}
+                          style={[
+                            styles.avatarChoice,
+                            selected && { borderColor: displayed.primary },
+                          ]}
+                        >
+                          <Image source={avatar.source} style={styles.avatarChoiceImage} />
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
               </View>
 
               <View style={styles.form}>
@@ -559,6 +655,23 @@ const changeProfilePicture = async () => {
                     style={[styles.input, styles.readOnlyInput]}
                     value={email}
                   />
+                </ProfileField>
+
+                <ProfileField label="Password">
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Send secure password reset link"
+                    onPress={() => void sendPasswordReset()}
+                    style={({ pressed }) => [
+                      styles.input,
+                      styles.passwordResetButton,
+                      pressed && styles.pickerPressed,
+                    ]}
+                  >
+                    <Text style={styles.passwordResetText}>
+                      Send secure reset link
+                    </Text>
+                  </Pressable>
                 </ProfileField>
 
                 <ProfileField label="Date of Birth">
@@ -749,6 +862,7 @@ function PickerButton({
   value: string;
 }) {
   const { displayed } = useAppTheme();
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -819,30 +933,100 @@ const styles = StyleSheet.create({
   },
   avatarSection: {
     alignItems: 'center',
-    marginTop: 7,
-    marginBottom: 17,
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  avatarStage: {
+    width: 156,
+    height: 156,
+    marginBottom: 8,
+  },
+  avatarRing: {
+    width: 148,
+    height: 148,
+    borderRadius: 74,
+    padding: 4,
+    shadowColor: '#2A2148',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 6,
   },
   avatar: {
-    width: 140,
-    height: 140,
+    flex: 1,
     borderRadius: 70,
-    backgroundColor: '#A6A2BA',
-    alignItems: 'flex-end',
-    justifyContent: 'flex-end',
-  },
-  avatarImage: {
-    ...StyleSheet.absoluteFill,
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-  },
-  cameraButton: {
-    width: 34,
-    height: 34,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: -2,
-    marginBottom: 1,
+    backgroundColor: '#F4F2FA',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  avatarInitial: {
+    fontSize: 48,
+    fontWeight: '700',
+  },
+  cameraButton: {
+    position: 'absolute',
+    right: 4,
+    bottom: 4,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#F4F2FA',
+    shadowColor: '#2A2148',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  artistCredit: {
+    marginTop: 2,
+    marginBottom: 10,
+    color: '#7A7386',
+    fontSize: 11,
+    letterSpacing: 0.2,
+  },
+  avatarHeading: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    marginBottom: 8,
+    color: '#111111',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  avatarHint: {
+    alignSelf: 'stretch',
+    color: '#7A7386',
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+  },
+  avatarRow: {
+    gap: 10,
+    paddingVertical: 2,
+    paddingRight: 8,
+  },
+  avatarChoice: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#E4E0EE',
+    backgroundColor: '#F4F2FA',
+  },
+  avatarChoiceImage: {
+    width: '100%',
+    height: '100%',
   },
   form: {
     gap: 12,
@@ -867,6 +1051,13 @@ const styles = StyleSheet.create({
   },
   readOnlyInput: {
     opacity: 0.7,
+  },
+  passwordResetButton: {
+    justifyContent: 'center',
+  },
+  passwordResetText: {
+    color: '#37343D',
+    fontSize: 12,
   },
   pickerButton: {
     flexDirection: 'row',
