@@ -4,10 +4,17 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { AdminAlertsController, AlertsController } from './alerts.controller';
 import { AlertsService } from './alerts.service';
+import { AdminFeaturesController } from './admin-features.controller';
+import { AdminFeaturesService } from './admin-features.service';
+import { AdminAuthGuard } from '../auth/admin-auth.guard';
 
 @Module({
   imports: [AiModule, NotificationsModule, SupabaseModule],
-  controllers: [AdminAlertsController, AlertsController],
-  providers: [AlertsService],
+  controllers: [
+    AdminAlertsController,
+    AdminFeaturesController,
+    AlertsController,
+  ],
+  providers: [AlertsService, AdminFeaturesService, AdminAuthGuard],
 })
 export class AlertsModule {}

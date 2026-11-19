@@ -15,7 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import supabase from '../lib/supabase';
 
-type AlertFilter = 'All' | 'Local' | 'Institution' | 'Weather';
+type AlertFilter = 'All' | 'Local' | 'Institution' | 'Weather' | 'System';
 type AlertKind =
   | 'announcement_local'
   | 'announcement_institution'
@@ -23,7 +23,8 @@ type AlertKind =
   | 'institution'
   | 'local'
   | 'weather'
-  | 'safety_tip';
+  | 'safety_tip'
+  | 'system';
 
 interface AlertRow {
   id: string;
@@ -61,9 +62,15 @@ interface AlertRow {
 }
 
 const PAGE_SIZE = 20;
-const FILTERS: AlertFilter[] = ['All', 'Local', 'Institution', 'Weather'];
+const FILTERS: AlertFilter[] = [
+  'All',
+  'Local',
+  'Institution',
+  'Weather',
+  'System',
+];
 const SELECT_FIELDS =
-  'id,user_id,announcement_id,hazard_id,title,body,status,kind,source_name,source_url,created_at,read_at,deleted_at,announcement:announcements(ai_summary,category,source_url,institution:institutions!announcements_institution_id_fkey(name,short_name)),hazard:hazards(hazard_type,risk_level,ai_summary)';
+  'id,user_id,announcement_id,hazard_id,title,body,status,kind,source_name,source_url,created_at,read_at,deleted_at,announcement:announcements(ai_summary,category,source_url,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points,title,content,published_at,institution:institutions!announcements_institution_id_fkey(name,short_name)),hazard:hazards(hazard_type,risk_level,ai_summary)';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -138,6 +145,7 @@ function filterKind(kind: string, filter: AlertFilter) {
     return ['weather_hazard', 'weather', 'safety_tip'].includes(kind);
   if (filter === 'Institution')
     return ['announcement_institution', 'institution'].includes(kind);
+  if (filter === 'System') return kind === 'system';
   return ['announcement_local', 'local'].includes(kind);
 }
 
@@ -212,6 +220,7 @@ export default function AlertsScreen() {
         query = query.in('kind', ['announcement_institution', 'institution']);
       else if (filter === 'Local')
         query = query.in('kind', ['announcement_local', 'local']);
+      else if (filter === 'System') query = query.eq('kind', 'system');
       const { data, error: queryError } = await query.range(
         start,
         start + PAGE_SIZE - 1,
@@ -352,21 +361,26 @@ export default function AlertsScreen() {
     const isWeather = ['weather_hazard', 'weather', 'safety_tip'].includes(
       item.kind,
     );
+    const isSystem = item.kind === 'system';
     const isInstitution = ['announcement_institution', 'institution'].includes(
       item.kind,
     );
-    const badge = isWeather
-      ? 'Weather'
-      : isInstitution
-        ? 'Institution'
-        : 'Local';
-    const locationLabel = isWeather
-      ? (item.hazard?.risk_level ?? 'Weather')
-      : isInstitution
-        ? (item.announcement?.institution?.short_name ??
-          item.source_name ??
-          'School')
-        : (item.source_name ?? 'Local');
+    const badge = isSystem
+      ? 'System'
+      : isWeather
+        ? 'Weather'
+        : isInstitution
+          ? 'Institution'
+          : 'Local';
+    const locationLabel = isSystem
+      ? (item.source_name ?? 'Watch System')
+      : isWeather
+        ? (item.hazard?.risk_level ?? 'Weather')
+        : isInstitution
+          ? (item.announcement?.institution?.short_name ??
+            item.source_name ??
+            'School')
+          : (item.source_name ?? 'Local');
     const sourceUrl = item.source_url ?? item.announcement?.source_url;
     const summary =
       item.announcement?.ai_summary ?? item.hazard?.ai_summary ?? item.body;
@@ -394,10 +408,11 @@ export default function AlertsScreen() {
             <Text
               style={[
                 styles.typeBadge,
+                isSystem && { color: '#A7E7C3' },
                 isWeather && { color: riskColor(severity) },
               ]}
             >
-              {isWeather ? '⚠  ' : ''}
+              {isSystem ? '●  ' : isWeather ? '⚠  ' : ''}
               {badge}
             </Text>
             <Text style={styles.locationBadge}>{locationLabel}</Text>

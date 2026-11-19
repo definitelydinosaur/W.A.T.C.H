@@ -12,7 +12,8 @@ type NotificationKind =
   | 'institution'
   | 'local'
   | 'weather'
-  | 'safety_tip';
+  | 'safety_tip'
+  | 'system';
 
 interface NotificationPreferences {
   announcements?: boolean;
@@ -45,6 +46,7 @@ export class PushService {
     sourceUrl?: string | null;
     announcementId?: string;
     hazardId?: string;
+    ignorePreferences?: boolean;
   }) {
     const hasAnnouncement = Boolean(input.announcementId);
     const hasHazard = Boolean(input.hazardId);
@@ -89,17 +91,19 @@ export class PushService {
     const notificationPrefs = (profile?.notification_prefs ??
       {}) as NotificationPreferences;
     const allowsPush =
-      input.kind === 'weather_hazard' ||
-      input.kind === 'weather' ||
-      input.kind === 'safety_tip'
-        ? notificationPrefs.weather !== false &&
-          (input.kind !== 'safety_tip' || notificationPrefs.safety !== false)
-        : input.kind === 'announcement_institution' ||
-            input.kind === 'institution'
-          ? (notificationPrefs.school ?? notificationPrefs.announcements) !==
-            false
-          : (notificationPrefs.safety ?? notificationPrefs.announcements) !==
-            false;
+      input.ignorePreferences === true
+        ? true
+        : input.kind === 'weather_hazard' ||
+            input.kind === 'weather' ||
+            input.kind === 'safety_tip'
+          ? notificationPrefs.weather !== false &&
+            (input.kind !== 'safety_tip' || notificationPrefs.safety !== false)
+          : input.kind === 'announcement_institution' ||
+              input.kind === 'institution'
+            ? (notificationPrefs.school ?? notificationPrefs.announcements) !==
+              false
+            : (notificationPrefs.safety ?? notificationPrefs.announcements) !==
+              false;
     const body = this.ensureOpenAppInstruction(input.body);
     const title = input.title.trim().slice(0, 80) || 'W.A.T.C.H. Alert';
     let token =
@@ -139,6 +143,12 @@ export class PushService {
         body,
         data: {},
         status: 'Failed',
+        delivery_error:
+          !token || !Expo.isExpoPushToken(token)
+            ? 'No valid Expo push token is registered.'
+            : !allowsPush
+              ? 'The user notification preferences prevent push delivery.'
+              : null,
         expo_ticket_ids: [],
         sent_at: new Date().toISOString(),
       })
@@ -176,7 +186,12 @@ export class PushService {
           `Ignoring invalid Expo token for user ${input.userId}.`,
         );
       }
-      return { sent: false, duplicate: false, notificationId };
+      return {
+        sent: false,
+        duplicate: false,
+        notificationId,
+        noToken: !token || !Expo.isExpoPushToken(token),
+      };
     }
 
     const message: ExpoPushMessage = {
@@ -190,6 +205,7 @@ export class PushService {
     };
     let status: 'Sent' | 'Failed' = 'Failed';
     let receiptIds: string[] = [];
+    let deliveryError: string | null = null;
     try {
       const tickets = await this.expo.sendPushNotificationsAsync([message]);
       receiptIds = tickets.flatMap((ticket) =>
@@ -200,6 +216,7 @@ export class PushService {
         : 'Failed';
       for (const ticket of tickets) {
         if (ticket.status === 'error') {
+          deliveryError = ticket.message;
           this.logger.error(`Expo push rejected a message: ${ticket.message}`);
           if (ticket.details?.error === 'DeviceNotRegistered') {
             await this.clearInvalidToken(input.userId, token);
@@ -207,14 +224,18 @@ export class PushService {
         }
       }
     } catch (error) {
-      this.logger.error(
-        `Expo push request failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+      deliveryError =
+        error instanceof Error ? error.message : 'Unknown Expo push error.';
+      this.logger.error(`Expo push request failed: ${deliveryError}`);
     }
 
     const { error: updateError } = await this.supabase
       .from('notifications')
-      .update({ status, expo_ticket_ids: receiptIds })
+      .update({
+        status,
+        expo_ticket_ids: receiptIds,
+        delivery_error: status === 'Failed' ? deliveryError : null,
+      })
       .eq('id', notificationId);
     if (updateError) {
       throw new Error(
@@ -279,6 +300,15 @@ export class PushService {
             ? 'Failed'
             : null;
         if (!status) continue;
+        const deliveryError =
+          status === 'Failed'
+            ? values
+                .filter((receipt) => receipt.status === 'error')
+                .map(
+                  (receipt) => receipt.details?.error ?? 'Expo receipt error',
+                )
+                .join('; ')
+            : null;
         const { error: updateError } = await this.supabase
           .from('notifications')
           .update({
@@ -286,6 +316,7 @@ export class PushService {
             delivered_at:
               status === 'Delivered' ? new Date().toISOString() : null,
             expo_ticket_ids: [],
+            delivery_error: deliveryError,
           })
           .eq('id', row.id);
         if (updateError) {

@@ -41,6 +41,7 @@ export class AuthService {
 
     // Sign-in stores a user session on the shared client. Profile reads and
     // writes stay on this client so they keep using the service role.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     this.profiles = createClient(supabaseUrl, supabaseKey, {
       auth: {
         persistSession: false,
@@ -166,11 +167,25 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: profile.name ?? user.email?.split('@')[0],
+        role: profile.role ?? 'user',
       },
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
       expiresIn: data.session.expires_in,
     };
+  }
+
+  async getProfileRole(userId: string) {
+    const { data, error } = await this.profiles
+      .from('user_info')
+      .select('role')
+      .eq('id', userId)
+      .maybeSingle()
+      .overrideTypes<{ role: string | null }, { merge: false }>();
+    if (error) {
+      throw new BadRequestException('Unable to load your account role.');
+    }
+    return { role: data?.role ?? 'user' };
   }
 
   private profileName(user: AuthUser, email: string) {
@@ -195,10 +210,13 @@ export class AuthService {
   private async loadOrCreateProfile(user: AuthUser) {
     const { data: profile, error: profileError } = await this.profiles
       .from('user_info')
-      .select('name')
+      .select('name,role')
       .eq('id', user.id)
       .maybeSingle()
-      .overrideTypes<{ name: string | null }, { merge: false }>();
+      .overrideTypes<
+        { name: string | null; role: string | null },
+        { merge: false }
+      >();
 
     if (profileError) {
       throw new BadRequestException('Unable to load your account profile.');
@@ -225,6 +243,6 @@ export class AuthService {
       throw new BadRequestException('Unable to load your account profile.');
     }
 
-    return { name: this.profileName(user, email) };
+    return { name: this.profileName(user, email), role: 'user' };
   }
 }

@@ -27,7 +27,7 @@ if (Platform.OS !== 'web' && !isExpoGo) {
 }
 
 export const unstable_settings = {
-  anchor: 'onboarding',
+  anchor: 'index',
 };
 
 export default function RootLayout() {
@@ -205,6 +205,7 @@ export default function RootLayout() {
         />
         <Stack.Screen name="home" />
         <Stack.Screen name="alerts" options={{ animation: 'fade' }} />
+        <Stack.Screen name="admin" options={{ animation: 'fade' }} />
         <Stack.Screen name="weather-watch" options={{ animation: 'fade' }} />
         <Stack.Screen
           name="map-overview"
