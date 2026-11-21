@@ -282,9 +282,13 @@ const saveInstitution = async (selected: InstitutionOption | null) => {
 
 const sendPasswordReset = async () => {
   if (!email.trim()) {
-    Alert.alert('Email unavailable', 'A password reset email cannot be sent for this account.');
+    Alert.alert(
+      'Email unavailable',
+      'A password reset email cannot be sent for this account.',
+    );
     return;
   }
+
   try {
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
     if (error) throw error;
@@ -664,7 +668,9 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
                       pressed && styles.pickerPressed,
                     ]}
                   >
-                    <Text style={styles.passwordResetText}>Send secure reset link</Text>
+                    <Text style={styles.passwordResetText}>
+                      Send secure reset link
+                    </Text>
                   </Pressable>
                 </ProfileField>
 
