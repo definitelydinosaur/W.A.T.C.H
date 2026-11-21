@@ -43,6 +43,7 @@ export class AuthService {
 
     // Sign-in stores a user session on the shared client. Profile reads and
     // writes stay on this client so they keep using the service role.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     this.profiles = createClient(supabaseUrl, supabaseKey, {
       auth: {
         persistSession: false,
@@ -179,6 +180,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: profile.name ?? user.email?.split('@')[0],
+        role: profile.role ?? 'user',
       },
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
@@ -186,6 +188,17 @@ export class AuthService {
     };
   }
 
+  async getProfileRole(userId: string) {
+    const { data, error } = await this.profiles
+      .from('user_info')
+      .select('role')
+      .eq('id', userId)
+      .maybeSingle()
+      .overrideTypes<{ role: string | null }, { merge: false }>();
+    if (error) {
+      throw new BadRequestException('Unable to load your account role.');
+    }
+    return { role: data?.role ?? 'user' };
   // Account deletion
   async deleteAccount(accessToken: string) {
     const {
@@ -240,16 +253,15 @@ export class AuthService {
   }
 
   private async loadOrCreateProfile(user: AuthUser) {
-    const { data: profile, error: profileError } =
-      await this.profiles
-        .from('user_info')
-        .select('name')
-        .eq('id', user.id)
-        .maybeSingle()
-        .overrideTypes<
-          { name: string | null },
-          { merge: false }
-        >();
+    const { data: profile, error: profileError } = await this.profiles
+      .from('user_info')
+      .select('name,role')
+      .eq('id', user.id)
+      .maybeSingle()
+      .overrideTypes<
+        { name: string | null; role: string | null },
+        { merge: false }
+      >();
 
     if (profileError) {
       throw new BadRequestException(
@@ -281,6 +293,6 @@ export class AuthService {
       );
     }
 
-    return { name: this.profileName(user, email) };
+    return { name: this.profileName(user, email), role: 'user' };
   }
 }

@@ -29,10 +29,22 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    the file. The backend has its own `.env` and needs `SUPABASE_URL` plus
    `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SERVICE_KEY`.
 
-## Starting Expo Go over a tunnel
+## Starting the development build over a tunnel
 
-The project includes `@expo/ngrok` as a local development dependency. From
-`watch_ai`, run this to start a tunnel and generate an Expo Go QR code:
+The app uses the native `react-native-maps` module, which is not available in
+the Expo Go binary currently installed on the device. Build and install the
+development client first. From `watch_ai`, run:
+
+```powershell
+npx eas-cli build --profile development --platform android
+```
+
+Install the resulting development build on the device. For a connected Android
+device or emulator, you can build and install locally with `npx expo run:android`
+instead.
+
+The project includes `@expo/ngrok` as a local development dependency. Once the
+development build is installed, start a tunnel and generate its QR code:
 
 ```powershell
 npm run start:tunnel
@@ -41,8 +53,10 @@ npm run start:tunnel
 You can also run the equivalent command directly:
 
 ```powershell
-npx expo start --tunnel --go
+npx expo start --tunnel --dev-client
 ```
+
+Use the development build to scan the QR code, not Expo Go.
 
 Do not add `ngrok` after `--tunnel`: Expo treats that extra word as a project
 directory. The installed `@expo/ngrok` package is used automatically.
@@ -54,18 +68,18 @@ one explicitly:
 npm run start:tunnel -- --port 8083
 ```
 
-Scan the QR code printed by that running server with Expo Go. If Expo Go still
-shows a remote-update download error, confirm the tunnel reports **Tunnel
-ready**, scan the newest QR code (not one from a previous server), and verify
-the phone can access the internet. On a shared Wi-Fi network, `npx expo start
---lan` may be faster; phone and computer must be on the same network.
+Scan the QR code printed by that running server with the installed development
+build. Confirm the tunnel reports **Tunnel ready**, scan the newest QR code
+(not one from a previous server), and verify the phone can access the internet.
+On a shared Wi-Fi network, `npx expo start --lan --dev-client` may be faster;
+phone and computer must be on the same network.
 
 ## Weather Watch and Map Overview
 
 After login, Weather Watch loads the live Cebu forecast from the NestJS
 backend and refreshes it every ten minutes. Pull down to refresh sooner.
-Map Overview uses Leaflet with OpenStreetMap tiles on web; native builds link
-to the selected OpenStreetMap location. Search uses the backend geocoder.
+Map Overview uses Leaflet with OpenStreetMap tiles on web and
+`react-native-maps` on native. Search uses the backend geocoder.
 Set `EXPO_PUBLIC_API_URL` to the reachable backend URL for both screens.
 
 In the output, you'll find options to open the app in a
@@ -108,7 +122,14 @@ that page; the system does not scrape Facebook pages or access private content.
 An official RSS/Atom feed or admin-entered post can be used instead. See
 [`backend-watch/README.md`](../backend-watch/README.md) for migration review,
 source registration, manual announcement tests, and an admin-only test-hazard
-procedure. The alerts migration has not been run against the database.
+procedure. Run
+[`202611190001_announcement_classification_and_safety_tips.sql`](../backend-watch/supabase/migrations/202611190001_announcement_classification_and_safety_tips.sql)
+in Supabase before deploying this version. It creates the real nullable
+announcements-to-institutions foreign key used by PostgREST; local and weather
+announcements intentionally keep `institution_id` null and continue to load
+through the default left embed. The migration reports matched and unmatched
+institution rows with a `NOTICE`. Re-run `NOTIFY pgrst, 'reload schema';` after
+the migration if the relationship is not immediately visible.
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
