@@ -2242,6 +2242,44 @@ export default function HomeScreen() {
           <Text style={styles.welcomeToastText}>Welcome {welcomeName}!</Text>
         </Animated.View>
       )}
+
+      <Animated.View
+        style={[
+          styles.chatbotLauncher,
+          {
+            transform: [
+              ...chatbotAnimatedPosition.getTranslateTransform(),
+              { scale: chatbotScale },
+            ],
+          },
+        ]}
+        {...(chatbotPanResponder?.panHandlers ?? {})}
+      >
+        <TouchableOpacity
+          style={styles.chatbotLauncherButton}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Open chatbot"
+          onPress={() => {
+            setChatbotAnchor(chatbotPositionRef.current);
+            setChatbotVisible(true);
+          }}
+        >
+          <Image
+            source={require("../../assets/images/chatbot/chatbot.png")}
+            style={styles.chatbotLauncherImage}
+            contentFit="contain"
+            accessibilityLabel="Chatbot"
+          />
+        </TouchableOpacity>
+      </Animated.View>
+
+      <Chatbot
+        visible={chatbotVisible}
+        onClose={() => setChatbotVisible(false)}
+        anchor={chatbotAnchor}
+        userAvatarUri={profilePictureUrl}
+      />
     </View>
   );
 }

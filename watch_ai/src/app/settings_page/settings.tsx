@@ -337,7 +337,7 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
@@ -353,7 +353,7 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
@@ -369,7 +369,7 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
@@ -385,7 +385,7 @@ export default function SettingsScreen() {
                         ]}
                       >
                         <View style={styles.iconContainer}>
-                          <SettingIcon name={item.icon} />
+                          <SettingIcon name={item.icon} color={displayed.primary} />
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
