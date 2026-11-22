@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   announcementContentHash,
+  hasUnsupportedAnnouncementClaims,
   isDuplicateAnnouncement,
   matchesAnnouncementAudience,
   parseAnnouncementAiDetails,
@@ -66,6 +67,40 @@ describe('announcement processing rules', () => {
         JSON.stringify({ ...details, key_points: [''] }),
       ),
     ).toThrow('required schema');
+  });
+
+  it('rejects AI dates, grade levels, and suspension reasons absent from the source', () => {
+    const classification = parseAnnouncementClassification(valid);
+    const supportedDetails = parseAnnouncementAiDetails(
+      JSON.stringify({
+        scope: 'local',
+        is_class_suspension: true,
+        suspension_reason: 'flood',
+        affected_levels: 'Grade 1-6',
+        effective_date: '2026-10-30',
+        short_summary: 'Classes are suspended for the stated grades.',
+        key_points: [],
+      }),
+    );
+    expect(
+      hasUnsupportedAnnouncementClaims(
+        'Classes are suspended for Grade 1-6 on October 30, 2026 due to flooding.',
+        classification,
+        supportedDetails,
+      ),
+    ).toBe(false);
+    expect(
+      hasUnsupportedAnnouncementClaims(
+        'Classes are suspended for Grade 1-6 on October 30, 2026 due to flooding.',
+        classification,
+        {
+          ...supportedDetails,
+          effective_date: '2026-11-20',
+          affected_levels: 'Grade 7-12',
+          suspension_reason: 'extreme_heat',
+        },
+      ),
+    ).toBe(true);
   });
 
   it('deduplicates source posts by external id or normalized content hash', () => {

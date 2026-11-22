@@ -7,6 +7,7 @@ import { AlertsService } from './alerts.service';
 import { AdminFeaturesController } from './admin-features.controller';
 import { AdminFeaturesService } from './admin-features.service';
 import { AdminAuthGuard } from '../auth/admin-auth.guard';
+import { HazardFeedService } from './hazard-feed.service';
 
 @Module({
   imports: [AiModule, NotificationsModule, SupabaseModule],
@@ -15,6 +16,11 @@ import { AdminAuthGuard } from '../auth/admin-auth.guard';
     AdminFeaturesController,
     AlertsController,
   ],
-  providers: [AlertsService, AdminFeaturesService, AdminAuthGuard],
+  providers: [
+    AlertsService,
+    AdminFeaturesService,
+    HazardFeedService,
+    AdminAuthGuard,
+  ],
 })
 export class AlertsModule {}

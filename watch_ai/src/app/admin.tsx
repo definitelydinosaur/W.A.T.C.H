@@ -1,31 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
-} from 'react-native';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import supabase from '../lib/supabase';
+} from "react-native";
+import { BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { router } from "expo-router";
+import supabase from "../lib/supabase";
 
-type AdminSection = 'Manual' | 'AI Announcements' | 'System';
+type AdminSection = "Manual" | "AI Announcements" | "System";
 type AnnouncementCategory =
-  | 'Extreme Heat'
-  | 'Unhealthy Air'
-  | 'Heavy Rain/Flood'
-  | 'Class Suspensions'
-  | 'Local (LGU/Mayor)'
-  | 'Institution'
-  | 'PAGASA/Weather'
-  | 'Safety Tips'
-  | 'Other';
+  "Extreme Heat" | "Unhealthy Air" | "Heavy Rain/Flood" | "PAGASA/Weather";
 type SystemDraft = {
   id: string;
   raw_text: string;
@@ -44,7 +38,7 @@ type SystemDraft = {
 };
 type AutomatedAnnouncement = {
   id: string;
-  item_type: 'announcement' | 'hazard' | 'safety_tip' | 'pagasa';
+  item_type: "hazard" | "pagasa";
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -56,40 +50,38 @@ type AutomatedAnnouncement = {
   source_url: string | null;
   published_at: string;
   category: string | null;
-  ai_scope: string | null;
-  is_class_suspension: boolean;
-  suspension_reason: string | null;
+  city: string | null;
+  province: string | null;
+  place_name: string;
+  affected_areas: string[];
+  requires_area_review: boolean;
+  audience_count: number;
   notification_counts: Record<string, number>;
 };
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-const SECTIONS: AdminSection[] = ['Manual', 'AI Announcements', 'System'];
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
+const SECTIONS: AdminSection[] = ["Manual", "AI Announcements", "System"];
 const CATEGORIES: AnnouncementCategory[] = [
-  'Extreme Heat',
-  'Unhealthy Air',
-  'Heavy Rain/Flood',
-  'Class Suspensions',
-  'Local (LGU/Mayor)',
-  'Institution',
-  'PAGASA/Weather',
-  'Safety Tips',
-  'Other',
+  "Extreme Heat",
+  "Unhealthy Air",
+  "Heavy Rain/Flood",
+  "PAGASA/Weather",
 ];
 
 async function adminRequest<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  if (!API_URL) throw new Error('Set EXPO_PUBLIC_API_URL to use admin tools.');
+  if (!API_URL) throw new Error("Set EXPO_PUBLIC_API_URL to use admin tools.");
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
   const token = data.session?.access_token;
   if (!token)
-    throw new Error('Your admin session has expired. Please log in again.');
+    throw new Error("Your admin session has expired. Please log in again.");
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
       ...init.headers,
     },
@@ -99,65 +91,97 @@ async function adminRequest<T>(
   };
   if (!response.ok) {
     const message = Array.isArray(result.message)
-      ? result.message.join('\n')
+      ? result.message.join("\n")
       : (result.message ?? `Request failed (HTTP ${response.status}).`);
     throw new Error(message);
   }
   return result;
 }
 
-function categoryFor(item: AutomatedAnnouncement): AnnouncementCategory {
-  if (item.item_type === 'safety_tip') return 'Safety Tips';
-  if (item.item_type === 'pagasa') return 'PAGASA/Weather';
-  const text =
-    `${item.title ?? ''} ${item.category ?? ''} ${item.ai_summary ?? ''} ${item.suspension_reason ?? ''}`.toLowerCase();
-  if (item.is_class_suspension) return 'Class Suspensions';
-  if (/heat|heat index/.test(text)) return 'Extreme Heat';
-  if (/air quality|aqi|smoke|unhealthy air/.test(text)) return 'Unhealthy Air';
-  if (/flood|heavy rain|rainfall/.test(text)) return 'Heavy Rain/Flood';
-  if (/safety tip/.test(text)) return 'Safety Tips';
-  if (item.ai_scope === 'local') return 'Local (LGU/Mayor)';
-  if (item.ai_scope === 'institution') return 'Institution';
-  if (item.ai_scope === 'weather') return 'PAGASA/Weather';
-  return 'Other';
+function categoryFor(item: AutomatedAnnouncement): AnnouncementCategory | null {
+  if (item.item_type === "pagasa") return "PAGASA/Weather";
+  if (
+    item.category === "Extreme Heat" ||
+    item.category === "Unhealthy Air" ||
+    item.category === "Heavy Rain/Flood" ||
+    item.category === "PAGASA/Weather"
+  ) {
+    return item.category;
+  }
+  return null;
 }
 
 function prettyError(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong.';
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function showAdminAlert(title: string, message: string) {
+  if (Platform.OS === "web") {
+    if (typeof window !== "undefined") window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
+
+function confirmAdminAction(
+  title: string,
+  message: string,
+  confirmLabel: string,
+  onConfirm: () => void,
+  confirmStyle: "default" | "destructive" = "default",
+) {
+  if (Platform.OS === "web") {
+    if (
+      typeof window !== "undefined" &&
+      window.confirm(`${title}\n\n${message}`)
+    ) {
+      onConfirm();
+    }
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: "Cancel", style: "cancel" },
+    { text: confirmLabel, style: confirmStyle, onPress: onConfirm },
+  ]);
 }
 
 export default function AdminScreen() {
-  const [section, setSection] = useState<AdminSection>('Manual');
+  const [section, setSection] = useState<AdminSection>("Manual");
+  const [darkMode, setDarkMode] = useState(true);
+  const styles = useMemo(() => createStyles(darkMode), [darkMode]);
   const [verified, setVerified] = useState(false);
-  const [screenError, setScreenError] = useState('');
+  const [screenError, setScreenError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const [notificationType, setNotificationType] = useState<
-    'institution' | 'local' | 'weather' | 'system'
-  >('local');
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
-  const [sourceName, setSourceName] = useState('');
-  const [sourceUrl, setSourceUrl] = useState('');
-  const [audience, setAudience] = useState<'all' | 'me' | 'institution'>('me');
+    "institution" | "local" | "weather" | "system"
+  >("local");
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [sourceName, setSourceName] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [audience, setAudience] = useState<"all" | "me" | "institution">("me");
   const [institutions, setInstitutions] = useState<
     { id: string; name: string; short_name: string | null }[]
   >([]);
-  const [institutionId, setInstitutionId] = useState('');
+  const [institutionId, setInstitutionId] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendResult, setSendResult] = useState('');
+  const [sendResult, setSendResult] = useState("");
 
   const [automated, setAutomated] = useState<AutomatedAnnouncement[]>([]);
-  const [category, setCategory] = useState<AnnouncementCategory | 'All'>('All');
-  const [search, setSearch] = useState('');
-  const [appliedSearch, setAppliedSearch] = useState('');
+  const [category, setCategory] = useState<AnnouncementCategory | "All">("All");
+  const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [pagasaAreaInputs, setPagasaAreaInputs] = useState<
+    Record<string, string>
+  >({});
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [rawText, setRawText] = useState('');
-  const [instruction, setInstruction] = useState('');
+  const [rawText, setRawText] = useState("");
+  const [instruction, setInstruction] = useState("");
   const [draft, setDraft] = useState<SystemDraft | null>(null);
   const [formatting, setFormatting] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -169,7 +193,7 @@ export default function AdminScreen() {
       published_at: string;
     }[]
   >([]);
-  const [systemResult, setSystemResult] = useState('');
+  const [systemResult, setSystemResult] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -178,12 +202,12 @@ export default function AdminScreen() {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (!data.session) {
-          router.replace('/auth/login');
+          router.replace("/auth/login");
           return;
         }
-        const profile = await adminRequest<{ role?: string }>('/auth/me');
-        if (profile.role !== 'admin') {
-          router.replace('/home');
+        const profile = await adminRequest<{ role?: string }>("/auth/me");
+        if (profile.role !== "admin") {
+          router.replace("/home");
           return;
         }
         const institutionResult = await adminRequest<{
@@ -192,7 +216,7 @@ export default function AdminScreen() {
             name: string;
             short_name: string | null;
           }[];
-        }>('/admin/features/institutions');
+        }>("/admin/features/institutions");
         if (active) {
           setInstitutions(institutionResult.institutions);
           setVerified(true);
@@ -215,25 +239,29 @@ export default function AdminScreen() {
     async (nextPage = 0, replace = true) => {
       setLoadingItems(true);
       try {
+        const params = new URLSearchParams({
+          page: String(nextPage),
+          limit: "20",
+          search: appliedSearch,
+          category: category === "All" ? "" : category,
+        });
         const response = await adminRequest<{
           items: AutomatedAnnouncement[];
           has_more: boolean;
-        }>(
-          `/admin/features/announcements?page=${nextPage}&limit=20&search=${encodeURIComponent(appliedSearch)}`,
-        );
+        }>(`/admin/features/announcements?${params.toString()}`);
         setAutomated((current) =>
           replace ? response.items : [...current, ...response.items],
         );
         setPage(nextPage);
         setHasMore(response.has_more);
       } catch (error) {
-        Alert.alert('Unable to load announcements', prettyError(error));
+        showAdminAlert("Unable to load announcements", prettyError(error));
       } finally {
         setLoadingItems(false);
         setRefreshing(false);
       }
     },
-    [appliedSearch],
+    [appliedSearch, category],
   );
 
   const loadSystemAnnouncements = useCallback(async () => {
@@ -245,20 +273,20 @@ export default function AdminScreen() {
           ai_summary: string | null;
           published_at: string;
         }[];
-      }>('/admin/features/system-announcements');
+      }>("/admin/features/system-announcements");
       setPublishedAnnouncements(response.announcements);
     } catch (error) {
-      Alert.alert('Unable to load system announcements', prettyError(error));
+      showAdminAlert("Unable to load system announcements", prettyError(error));
     }
   }, []);
 
   useEffect(() => {
     if (!verified) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (section === 'AI Announcements') {
+    if (section === "AI Announcements") {
       timer = setTimeout(() => void loadAutomated(), 0);
     }
-    if (section === 'System') {
+    if (section === "System") {
       timer = setTimeout(() => void loadSystemAnnouncements(), 0);
     }
     return () => {
@@ -266,39 +294,32 @@ export default function AdminScreen() {
     };
   }, [loadAutomated, loadSystemAnnouncements, section, verified]);
 
-  const filteredAnnouncements = useMemo(
-    () =>
-      category === 'All'
-        ? automated
-        : automated.filter((item) => categoryFor(item) === category),
-    [automated, category],
-  );
-
-  const sendManual = async (target: 'all' | 'me' | 'institution') => {
+  const sendManual = async (target: "all" | "me" | "institution") => {
     if (!title.trim() || !message.trim()) {
-      Alert.alert(
-        'Missing details',
-        'Enter a title and message before sending.',
+      showAdminAlert(
+        "Missing details",
+        "Enter a title and message before sending.",
       );
       return;
     }
-    if (target === 'institution' && !institutionId) {
-      Alert.alert(
-        'Choose an institution',
-        'Select an institution audience first.',
+    if (target === "institution" && !institutionId) {
+      showAdminAlert(
+        "Choose an institution",
+        "Select an institution audience first.",
       );
       return;
     }
     setSending(true);
-    setSendResult('');
+    setSendResult("");
     try {
       const result = await adminRequest<{
         sent: number;
         failed: number;
         no_token: number;
         audience_count: number;
-      }>('/admin/features/notifications/send', {
-        method: 'POST',
+        failure_details?: string[];
+      }>("/admin/features/notifications/send", {
+        method: "POST",
         body: JSON.stringify({
           type: notificationType,
           title: title.trim(),
@@ -306,14 +327,14 @@ export default function AdminScreen() {
           source_name: sourceName.trim() || undefined,
           source_url: sourceUrl.trim() || undefined,
           audience: target,
-          institution_id: target === 'institution' ? institutionId : undefined,
+          institution_id: target === "institution" ? institutionId : undefined,
         }),
       });
       setSendResult(
-        `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}`,
+        `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? ` · ${result.failure_details.join("; ")}` : ""}`,
       );
     } catch (error) {
-      Alert.alert('Send failed', prettyError(error));
+      showAdminAlert("Send failed", prettyError(error));
     } finally {
       setSending(false);
     }
@@ -321,19 +342,19 @@ export default function AdminScreen() {
 
   const formatDraft = async (value: string, draftId?: string) => {
     if (!value.trim()) {
-      Alert.alert(
-        'Add announcement text',
-        'Enter the announcement before formatting.',
+      showAdminAlert(
+        "Add announcement text",
+        "Enter the announcement before formatting.",
       );
       return;
     }
     setFormatting(true);
-    setSystemResult('');
+    setSystemResult("");
     try {
       const response = await adminRequest<SystemDraft>(
-        '/admin/features/system-drafts/format',
+        "/admin/features/system-drafts/format",
         {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify({
             raw_text: value.trim(),
             ...(draftId ? { draft_id: draftId } : {}),
@@ -343,7 +364,7 @@ export default function AdminScreen() {
       setDraft(response);
       setRawText(response.raw_text);
     } catch (error) {
-      Alert.alert('AI formatting failed', prettyError(error));
+      showAdminAlert("AI formatting failed", prettyError(error));
     } finally {
       setFormatting(false);
     }
@@ -351,7 +372,7 @@ export default function AdminScreen() {
 
   const reviseDraft = async () => {
     if (!draft || !instruction.trim()) {
-      Alert.alert('Add a revision instruction', 'Tell AI what to change.');
+      showAdminAlert("Add a revision instruction", "Tell AI what to change.");
       return;
     }
     setFormatting(true);
@@ -359,14 +380,14 @@ export default function AdminScreen() {
       const revised = await adminRequest<SystemDraft>(
         `/admin/features/system-drafts/${draft.id}/revise`,
         {
-          method: 'POST',
+          method: "POST",
           body: JSON.stringify({ instruction: instruction.trim() }),
         },
       );
       setDraft(revised);
-      setInstruction('');
+      setInstruction("");
     } catch (error) {
-      Alert.alert('Revision failed', prettyError(error));
+      showAdminAlert("Revision failed", prettyError(error));
     } finally {
       setFormatting(false);
     }
@@ -374,103 +395,162 @@ export default function AdminScreen() {
 
   const publishDraft = () => {
     if (!draft) return;
-    Alert.alert('Publish system announcement?', 'This will notify all users.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Publish',
-        onPress: () => {
-          void (async () => {
-            setPublishing(true);
-            try {
-              const result = await adminRequest<{
-                sent: number;
-                failed: number;
-                no_token: number;
-                announcement_id: number;
-              }>(`/admin/features/system-drafts/${draft.id}/publish`, {
-                method: 'POST',
-              });
-              setSystemResult(
-                `Published · Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}`,
-              );
-              setDraft(null);
-              setRawText('');
-              await loadSystemAnnouncements();
-            } catch (error) {
-              Alert.alert('Publish failed', prettyError(error));
-            } finally {
-              setPublishing(false);
-            }
-          })();
-        },
+    confirmAdminAction(
+      "Publish system announcement?",
+      "This will notify all users.",
+      "Publish",
+      () => {
+        void (async () => {
+          setPublishing(true);
+          try {
+            const result = await adminRequest<{
+              sent: number;
+              failed: number;
+              no_token: number;
+              announcement_id: number;
+            }>(`/admin/features/system-drafts/${draft.id}/publish`, {
+              method: "POST",
+            });
+            setSystemResult(
+              `Published · Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}`,
+            );
+            setDraft(null);
+            setRawText("");
+            await loadSystemAnnouncements();
+          } catch (error) {
+            showAdminAlert("Publish failed", prettyError(error));
+          } finally {
+            setPublishing(false);
+          }
+        })();
       },
-    ]);
+    );
   };
 
   const discardDraft = () => {
     if (!draft) {
-      setRawText('');
+      setRawText("");
       return;
     }
-    Alert.alert(
-      'Discard draft?',
-      'This draft and its review history will be discarded.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Discard',
-          style: 'destructive',
-          onPress: () => {
-            void adminRequest(`/admin/features/system-drafts/${draft.id}`, {
-              method: 'DELETE',
-            })
-              .then(() => {
-                setDraft(null);
-                setRawText('');
-                setInstruction('');
-              })
-              .catch((error: unknown) =>
-                Alert.alert('Unable to discard draft', prettyError(error)),
-              );
-          },
-        },
-      ],
+    confirmAdminAction(
+      "Discard draft?",
+      "This draft and its review history will be discarded.",
+      "Discard",
+      () => {
+        void adminRequest(`/admin/features/system-drafts/${draft.id}`, {
+          method: "DELETE",
+        })
+          .then(() => {
+            setDraft(null);
+            setRawText("");
+            setInstruction("");
+          })
+          .catch((error: unknown) =>
+            showAdminAlert("Unable to discard draft", prettyError(error)),
+          );
+      },
+      "destructive",
     );
   };
 
-  const resendAsTest = async (item: AutomatedAnnouncement) => {
+  const resendToMe = (item: AutomatedAnnouncement) => {
     const path =
-      item.item_type === 'pagasa'
+      item.item_type === "pagasa"
         ? `/admin/features/pagasa/${item.pagasa_id}/resend-test`
-        : item.item_type === 'safety_tip'
-          ? `/admin/features/safety-tips/${encodeURIComponent(item.hazard_id ?? '')}/resend-test`
-          : item.item_type === 'hazard'
-            ? `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? '')}/resend-test`
-            : `/admin/features/announcements/${item.announcement_id}/resend-test`;
-    try {
-      const result = await adminRequest<{
-        sent: number;
-        failed: number;
-        no_token: number;
-      }>(path, {
-        method: 'POST',
-      });
-      Alert.alert(
-        'Test push result',
-        `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}`,
-      );
-    } catch (error) {
-      Alert.alert('Test push failed', prettyError(error));
-    }
+        : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-test`;
+    confirmAdminAction(
+      "Re-send as test to me?",
+      "This sends a test copy only to your admin account.",
+      "Re-send",
+      () => {
+        void (async () => {
+          try {
+            const result = await adminRequest<{
+              sent: number;
+              failed: number;
+              no_token: number;
+              failure_details?: string[];
+            }>(path, { method: "POST" });
+            showAdminAlert(
+              "Admin test resend result",
+              `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? `\n${result.failure_details.join("\n")}` : ""}`,
+            );
+          } catch (error) {
+            showAdminAlert("Admin test resend failed", prettyError(error));
+          }
+        })();
+      },
+    );
   };
 
+  const resendToAllUsers = (item: AutomatedAnnouncement) => {
+    const path =
+      item.item_type === "pagasa"
+        ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
+        : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
+    confirmAdminAction(
+      "Re-send to all users?",
+      `This creates a test copy and sends it to every registered user, regardless of their saved location. ${item.place_name} may not apply to everyone.`,
+      "Send to all",
+      () => {
+        void (async () => {
+          try {
+            const result = await adminRequest<{
+              sent: number;
+              failed: number;
+              no_token: number;
+              audience_count: number;
+              failure_details?: string[];
+            }>(path, { method: "POST" });
+            showAdminAlert(
+              "All-user resend result",
+              `Audience: ${result.audience_count} · Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? `\n${result.failure_details.join("\n")}` : ""}`,
+            );
+          } catch (error) {
+            showAdminAlert("All-user resend failed", prettyError(error));
+          }
+        })();
+      },
+    );
+  };
+
+  const assignPagasaAreas = async (item: AutomatedAnnouncement) => {
+    if (item.pagasa_id === null) return;
+    const areas = (pagasaAreaInputs[item.id] ?? "")
+      .split(";")
+      .map((area) => area.trim())
+      .filter(Boolean);
+    if (!areas.length) {
+      showAdminAlert(
+        "Select affected cities",
+        "Enter one or more city names, optionally followed by the province, separated by semicolons.",
+      );
+      return;
+    }
+    try {
+      const response = await adminRequest<{ audience_count?: number }>(
+        `/admin/features/pagasa/${item.pagasa_id}/areas`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ affected_areas: areas }),
+        },
+      );
+      showAdminAlert(
+        "PAGASA alert targeted",
+        `The area selection was saved. ${response.audience_count ?? 0} users match those locations.`,
+      );
+      await loadAutomated(0);
+    } catch (error) {
+      showAdminAlert("Unable to assign PAGASA areas", prettyError(error));
+    }
+  };
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) {
-      Alert.alert('Unable to log out', error.message);
+      showAdminAlert("Unable to log out", error.message);
       return;
     }
-    router.replace('/auth/login');
+    router.replace("/auth/login");
   };
 
   if (loading) {
@@ -484,10 +564,10 @@ export default function AdminScreen() {
     return (
       <View style={styles.screen}>
         <Text style={styles.stateText}>
-          {screenError || 'Admin access is unavailable.'}
+          {screenError || "Admin access is unavailable."}
         </Text>
         <Pressable
-          onPress={() => router.replace('/auth/login')}
+          onPress={() => router.replace("/auth/login")}
           style={styles.primaryButton}
         >
           <Text style={styles.primaryButtonText}>Back to login</Text>
@@ -499,7 +579,11 @@ export default function AdminScreen() {
   return (
     <View style={styles.screen}>
       <LinearGradient
-        colors={['#211344', '#171022', '#100D1D']}
+        colors={
+          darkMode
+            ? ["#211344", "#171022", "#100D1D"]
+            : ["#FAF8FD", "#F1ECF8", "#E9E3F1"]
+        }
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.header}>
@@ -507,13 +591,25 @@ export default function AdminScreen() {
           <Text style={styles.eyebrow}>W.A.T.C.H. ADMIN</Text>
           <Text style={styles.headerTitle}>Control Center</Text>
         </View>
-        <Pressable onPress={signOut} accessibilityRole="button">
-          <Text style={styles.logout}>Log out</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Text style={styles.modeLabel}>{darkMode ? "Dark" : "Light"}</Text>
+          <Switch
+            value={darkMode}
+            onValueChange={setDarkMode}
+            accessibilityRole="switch"
+            accessibilityLabel="Dark mode"
+            trackColor={{ false: "#B9ACC9", true: "#8E53C8" }}
+            thumbColor={darkMode ? "#FFFFFF" : "#F7F2FC"}
+          />
+          <Pressable onPress={signOut} accessibilityRole="button">
+            <Text style={styles.logout}>Log out</Text>
+          </Pressable>
+        </View>
       </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.horizontalScroller}
         contentContainerStyle={styles.sectionTabs}
       >
         {SECTIONS.map((value) => (
@@ -534,9 +630,9 @@ export default function AdminScreen() {
         ))}
       </ScrollView>
 
-      {section === 'Manual' ? (
-        <ScrollView contentContainerStyle={styles.content}>
-          <GlassCard>
+      {section === "Manual" ? (
+        <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+          <GlassCard styles={styles} darkMode={darkMode}>
             <Text style={styles.cardTitle}>Send notification</Text>
             <Text style={styles.helper}>
               Test the notification tap and detail panel using your signed-in
@@ -544,13 +640,14 @@ export default function AdminScreen() {
             </Text>
             <Text style={styles.label}>Notification type</Text>
             <View style={styles.wrapRow}>
-              {(['institution', 'local', 'weather', 'system'] as const).map(
+              {(["institution", "local", "weather", "system"] as const).map(
                 (value) => (
                   <ChoiceChip
                     key={value}
                     label={value[0].toUpperCase() + value.slice(1)}
                     selected={notificationType === value}
                     onPress={() => setNotificationType(value)}
+                    styles={styles}
                   />
                 ),
               )}
@@ -559,7 +656,7 @@ export default function AdminScreen() {
               value={title}
               onChangeText={setTitle}
               placeholder="Title"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={styles.input}
               maxLength={80}
             />
@@ -567,7 +664,7 @@ export default function AdminScreen() {
               value={message}
               onChangeText={setMessage}
               placeholder="Message body"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={[styles.input, styles.multiline]}
               multiline
               textAlignVertical="top"
@@ -577,14 +674,14 @@ export default function AdminScreen() {
               value={sourceName}
               onChangeText={setSourceName}
               placeholder="Source name (optional)"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={styles.input}
             />
             <TextInput
               value={sourceUrl}
               onChangeText={setSourceUrl}
               placeholder="Source URL (optional)"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={styles.input}
               autoCapitalize="none"
               keyboardType="url"
@@ -593,23 +690,26 @@ export default function AdminScreen() {
             <View style={styles.wrapRow}>
               <ChoiceChip
                 label="Send to me only (test)"
-                selected={audience === 'me'}
-                onPress={() => setAudience('me')}
+                selected={audience === "me"}
+                onPress={() => setAudience("me")}
+                styles={styles}
               />
               <ChoiceChip
                 label="All users"
-                selected={audience === 'all'}
-                onPress={() => setAudience('all')}
+                selected={audience === "all"}
+                onPress={() => setAudience("all")}
+                styles={styles}
               />
               {institutions.length > 0 ? (
                 <ChoiceChip
                   label="By institution"
-                  selected={audience === 'institution'}
-                  onPress={() => setAudience('institution')}
+                  selected={audience === "institution"}
+                  onPress={() => setAudience("institution")}
+                  styles={styles}
                 />
               ) : null}
             </View>
-            {audience === 'institution' ? (
+            {audience === "institution" ? (
               <View style={styles.wrapRow}>
                 {institutions.map((item) => (
                   <ChoiceChip
@@ -617,6 +717,7 @@ export default function AdminScreen() {
                     label={item.short_name || item.name}
                     selected={institutionId === item.id}
                     onPress={() => setInstitutionId(item.id)}
+                    styles={styles}
                   />
                 ))}
               </View>
@@ -627,7 +728,7 @@ export default function AdminScreen() {
               onPress={() => void sendManual(audience)}
             >
               <Text style={styles.primaryButtonText}>
-                {sending ? 'Sending…' : 'Send notification'}
+                {sending ? "Sending…" : "Send notification"}
               </Text>
             </Pressable>
             {sendResult ? (
@@ -637,14 +738,14 @@ export default function AdminScreen() {
         </ScrollView>
       ) : null}
 
-      {section === 'AI Announcements' ? (
+      {section === "AI Announcements" ? (
         <View style={styles.flex}>
           <View style={styles.searchRow}>
             <TextInput
               value={search}
               onChangeText={setSearch}
               placeholder="Search announcements"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={[styles.input, styles.searchInput]}
               returnKeyType="search"
               onSubmitEditing={() => {
@@ -665,14 +766,16 @@ export default function AdminScreen() {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
+            style={styles.horizontalScroller}
             contentContainerStyle={styles.categoryTabs}
           >
-            {(['All', ...CATEGORIES] as const).map((value) => (
+            {(["All", ...CATEGORIES] as const).map((value) => (
               <ChoiceChip
                 key={value}
                 label={value}
                 selected={category === value}
                 onPress={() => setCategory(value)}
+                styles={styles}
               />
             ))}
           </ScrollView>
@@ -680,6 +783,7 @@ export default function AdminScreen() {
             <ActivityIndicator color="#C9A7FF" style={styles.loader} />
           ) : (
             <ScrollView
+              style={styles.flex}
               contentContainerStyle={styles.content}
               refreshControl={
                 <RefreshControl
@@ -692,10 +796,12 @@ export default function AdminScreen() {
                 />
               }
             >
-              {filteredAnnouncements.map((item) => (
-                <GlassCard key={item.id}>
+              {automated.map((item) => (
+                <GlassCard key={item.id} styles={styles} darkMode={darkMode}>
                   <View style={styles.cardHeadingRow}>
-                    <Text style={styles.badge}>{categoryFor(item)}</Text>
+                    {categoryFor(item) ? (
+                      <Text style={styles.badge}>{categoryFor(item)}</Text>
+                    ) : null}
                     <Text style={styles.date}>
                       {new Date(item.published_at).toLocaleString()}
                     </Text>
@@ -708,40 +814,79 @@ export default function AdminScreen() {
                           ? { hazardId: item.hazard_id }
                           : { pagasaId: String(item.pagasa_id) };
                       router.push({
-                        pathname: '/alert_page/announcement',
+                        pathname: "/alert_page/announcement",
                         params,
                       });
                     }}
                   >
                     <Text style={styles.cardTitle}>
-                      {item.title || 'Announcement'}
+                      {item.title || "Announcement"}
                     </Text>
                     <Text style={styles.bodyText} numberOfLines={3}>
                       {item.ai_summary ||
                         item.content ||
-                        'No summary available.'}
+                        "No summary available."}
                     </Text>
                     <Text style={styles.helper}>
-                      {item.source_name || item.source || 'W.A.T.C.H.'}
-                      {' · Sent '}
+                      {item.source_name || "W.A.T.C.H."}
+                      {" · "}
+                      {item.place_name}
+                      {" · Sent "}
                       {item.notification_counts.Sent ?? 0}
-                      {' · Delivered '}
+                      {" · Delivered "}
                       {item.notification_counts.Delivered ?? 0}
-                      {' · Read '}
+                      {" · Read "}
                       {item.notification_counts.Read ?? 0}
                     </Text>
                   </Pressable>
+                  {item.requires_area_review ? (
+                    <View style={styles.review}>
+                      <Text style={styles.warningNote}>
+                        Area not identified. This PAGASA alert is queued and
+                        will not be sent until you select its affected city or
+                        cities.
+                      </Text>
+                      <TextInput
+                        value={pagasaAreaInputs[item.id] ?? ""}
+                        onChangeText={(value) =>
+                          setPagasaAreaInputs((current) => ({
+                            ...current,
+                            [item.id]: value,
+                          }))
+                        }
+                        placeholder="City, Province; another city, Province"
+                        placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
+                        style={styles.input}
+                      />
+                      <Pressable
+                        onPress={() => void assignPagasaAreas(item)}
+                        style={styles.secondaryButton}
+                      >
+                        <Text style={styles.secondaryButtonText}>
+                          Assign area and notify matching users
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                   <Pressable
-                    onPress={() => void resendAsTest(item)}
+                    onPress={() => resendToMe(item)}
                     style={styles.secondaryButton}
                   >
                     <Text style={styles.secondaryButtonText}>
                       Re-send as test to me
                     </Text>
                   </Pressable>
+                  <Pressable
+                    onPress={() => resendToAllUsers(item)}
+                    style={styles.secondaryButton}
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      Re-send to all users
+                    </Text>
+                  </Pressable>
                 </GlassCard>
               ))}
-              {!filteredAnnouncements.length && !loadingItems ? (
+              {!automated.length && !loadingItems ? (
                 <Text style={styles.stateText}>
                   No announcements in this category.
                 </Text>
@@ -752,7 +897,7 @@ export default function AdminScreen() {
                   style={styles.secondaryButton}
                 >
                   <Text style={styles.secondaryButtonText}>
-                    {loadingItems ? 'Loading…' : 'Load more'}
+                    {loadingItems ? "Loading…" : "Load more"}
                   </Text>
                 </Pressable>
               ) : null}
@@ -761,9 +906,9 @@ export default function AdminScreen() {
         </View>
       ) : null}
 
-      {section === 'System' ? (
-        <ScrollView contentContainerStyle={styles.content}>
-          <GlassCard>
+      {section === "System" ? (
+        <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+          <GlassCard styles={styles} darkMode={darkMode}>
             <Text style={styles.cardTitle}>System announcement</Text>
             <Text style={styles.helper}>
               Draft, format, review, revise, then publish to all users.
@@ -772,7 +917,7 @@ export default function AdminScreen() {
               value={rawText}
               onChangeText={setRawText}
               placeholder="Write the announcement facts and details"
-              placeholderTextColor="#A99BB9"
+              placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
               style={[styles.input, styles.largeMultiline]}
               multiline
               textAlignVertical="top"
@@ -787,7 +932,7 @@ export default function AdminScreen() {
               onPress={() => void formatDraft(rawText, draft?.id)}
             >
               <Text style={styles.primaryButtonText}>
-                {formatting ? 'Formatting…' : 'Format with AI'}
+                {formatting ? "Formatting…" : "Format with AI"}
               </Text>
             </Pressable>
             {draft ? (
@@ -806,20 +951,26 @@ export default function AdminScreen() {
                   <InfoLine
                     label="Schedule / date"
                     value={draft.ai_json.schedule_or_date}
+                    styles={styles}
                   />
                 ) : null}
                 {draft.ai_json.impact ? (
-                  <InfoLine label="Impact" value={draft.ai_json.impact} />
+                  <InfoLine
+                    label="Impact"
+                    value={draft.ai_json.impact}
+                    styles={styles}
+                  />
                 ) : null}
                 {draft.ai_json.action_needed ? (
                   <InfoLine
                     label="Action needed"
                     value={draft.ai_json.action_needed}
+                    styles={styles}
                   />
                 ) : null}
                 {draft.ai_json.missing_info_note ? (
                   <Text style={styles.warningNote}>
-                    Missing information to review:{' '}
+                    Missing information to review:{" "}
                     {draft.ai_json.missing_info_note}
                   </Text>
                 ) : null}
@@ -830,7 +981,7 @@ export default function AdminScreen() {
                   value={instruction}
                   onChangeText={setInstruction}
                   placeholder="Ask AI to revise (e.g. make it shorter)"
-                  placeholderTextColor="#A99BB9"
+                  placeholderTextColor={darkMode ? "#A99BB9" : "#786D85"}
                   style={styles.input}
                   editable={!formatting && !publishing}
                 />
@@ -849,11 +1000,13 @@ export default function AdminScreen() {
                     label="Original text"
                     selected={false}
                     onPress={() => setRawText(draft.raw_text)}
+                    styles={styles}
                   />
                   <ChoiceChip
                     label="AI version"
                     selected={false}
                     onPress={() => setRawText(draft.ai_json.body)}
+                    styles={styles}
                   />
                 </View>
                 <Pressable
@@ -865,7 +1018,7 @@ export default function AdminScreen() {
                   ]}
                 >
                   <Text style={styles.primaryButtonText}>
-                    {publishing ? 'Publishing…' : 'Publish'}
+                    {publishing ? "Publishing…" : "Publish"}
                   </Text>
                 </Pressable>
                 <Pressable
@@ -882,7 +1035,7 @@ export default function AdminScreen() {
           </GlassCard>
           <Text style={styles.sectionTitle}>Past system announcements</Text>
           {publishedAnnouncements.map((item) => (
-            <GlassCard key={item.id}>
+            <GlassCard key={item.id} styles={styles} darkMode={darkMode}>
               <Text style={styles.badge}>SYSTEM</Text>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.bodyText}>{item.ai_summary}</Text>
@@ -892,7 +1045,7 @@ export default function AdminScreen() {
               <Pressable
                 onPress={() =>
                   router.push({
-                    pathname: '/alert_page/announcement',
+                    pathname: "/alert_page/announcement",
                     params: { announcementId: String(item.id) },
                   })
                 }
@@ -907,12 +1060,30 @@ export default function AdminScreen() {
   );
 }
 
-function GlassCard({ children }: { children: React.ReactNode }) {
+type AdminStyles = ReturnType<typeof createStyles>;
+
+function GlassCard({
+  children,
+  styles,
+  darkMode,
+}: {
+  children: React.ReactNode;
+  styles: AdminStyles;
+  darkMode: boolean;
+}) {
   return (
     <View style={styles.card}>
-      <BlurView intensity={38} tint="dark" style={StyleSheet.absoluteFill} />
+      <BlurView
+        intensity={38}
+        tint={darkMode ? "dark" : "light"}
+        style={StyleSheet.absoluteFill}
+      />
       <LinearGradient
-        colors={['rgba(41, 28, 72, 0.88)', 'rgba(20, 17, 40, 0.94)']}
+        colors={
+          darkMode
+            ? ["rgba(41, 28, 72, 0.88)", "rgba(20, 17, 40, 0.94)"]
+            : ["rgba(255, 255, 255, 0.94)", "rgba(247, 243, 252, 0.96)"]
+        }
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.cardContent}>{children}</View>
@@ -924,10 +1095,12 @@ function ChoiceChip({
   label,
   selected,
   onPress,
+  styles,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
+  styles: AdminStyles;
 }) {
   return (
     <Pressable
@@ -941,7 +1114,15 @@ function ChoiceChip({
   );
 }
 
-function InfoLine({ label, value }: { label: string; value: string }) {
+function InfoLine({
+  label,
+  value,
+  styles,
+}: {
+  label: string;
+  value: string;
+  styles: AdminStyles;
+}) {
   return (
     <Text style={styles.bodyText}>
       <Text style={styles.infoLabel}>{label}: </Text>
@@ -950,131 +1131,209 @@ function InfoLine({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#171022', paddingTop: 54 },
-  flex: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-  },
-  eyebrow: {
-    color: '#C9A7FF',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 23,
-    fontWeight: '700',
-    marginTop: 3,
-  },
-  logout: { color: '#D5B6FF', fontSize: 13, fontWeight: '700' },
-  sectionTabs: { gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
-  categoryTabs: { gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
-  chip: {
-    borderWidth: 1,
-    borderColor: 'rgba(220, 204, 255, 0.24)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 18,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-  },
-  activeChip: {
-    backgroundColor: 'rgba(117, 75, 208, 0.52)',
-    borderColor: 'rgba(220, 204, 255, 0.62)',
-  },
-  chipText: { color: '#BEB2CB', fontSize: 12, fontWeight: '600' },
-  activeChipText: { color: '#FFFFFF' },
-  content: { paddingHorizontal: 16, paddingBottom: 40, gap: 12 },
-  card: {
-    overflow: 'hidden',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(215, 193, 255, 0.20)',
-    backgroundColor: '#201733',
-  },
-  cardContent: { padding: 17, gap: 11 },
-  cardTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
-  helper: { color: '#A99BB9', fontSize: 12, lineHeight: 18 },
-  label: { color: '#E8DDF5', fontSize: 13, fontWeight: '700', marginTop: 4 },
-  input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(215, 193, 255, 0.22)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    color: '#FFFFFF',
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    minHeight: 44,
-  },
-  multiline: { minHeight: 100 },
-  largeMultiline: { minHeight: 150 },
-  wrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  primaryButton: {
-    borderRadius: 16,
-    paddingVertical: 13,
-    alignItems: 'center',
-    backgroundColor: '#5D3BA5',
-    borderWidth: 1,
-    borderColor: 'rgba(220, 204, 255, 0.4)',
-    marginTop: 4,
-  },
-  primaryButtonText: { color: '#FFFFFF', fontWeight: '800', fontSize: 14 },
-  secondaryButton: {
-    borderRadius: 14,
-    paddingVertical: 11,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(215, 193, 255, 0.25)',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    marginTop: 4,
-  },
-  secondaryButtonText: { color: '#D5B6FF', fontWeight: '700', fontSize: 13 },
-  disabled: { opacity: 0.55 },
-  result: { color: '#A7E7C3', fontSize: 13, fontWeight: '700', marginTop: 10 },
-  searchRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16 },
-  searchInput: { flex: 1 },
-  searchButton: {
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    justifyContent: 'center',
-    backgroundColor: '#5D3BA5',
-  },
-  searchButtonText: { color: '#FFFFFF', fontWeight: '700' },
-  loader: { marginTop: 30 },
-  cardHeadingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: 8,
-  },
-  badge: {
-    color: '#C9A7FF',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  date: { color: '#A99BB9', fontSize: 11 },
-  bodyText: { color: '#EEE6F7', fontSize: 14, lineHeight: 21 },
-  review: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(215,193,255,0.2)',
-    paddingTop: 16,
-    gap: 10,
-  },
-  previewTitle: { color: '#FFFFFF', fontSize: 21, fontWeight: '800' },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '700',
-    marginTop: 12,
-  },
-  warningNote: { color: '#FFD18D', lineHeight: 20, fontWeight: '600' },
-  infoLabel: { color: '#D5B6FF', fontWeight: '800' },
-  linkText: { color: '#D5B6FF', fontWeight: '700', marginTop: 8 },
-  stateText: { color: '#D0C5DE', textAlign: 'center', padding: 26 },
-});
+function createStyles(darkMode: boolean) {
+  const colors = darkMode
+    ? {
+        text: "#FFFFFF",
+        muted: "#A99BB9",
+        softText: "#BEB2CB",
+        accentText: "#D5B6FF",
+        label: "#E8DDF5",
+        body: "#EEE6F7",
+        border: "rgba(215, 193, 255, 0.22)",
+        chipBorder: "rgba(220, 204, 255, 0.24)",
+        chipActiveBorder: "rgba(220, 204, 255, 0.62)",
+        chipBackground: "rgba(255,255,255,0.06)",
+        chipActive: "rgba(117, 75, 208, 0.52)",
+        card: "#201733",
+        input: "rgba(255,255,255,0.06)",
+        button: "#5D3BA5",
+        badge: "#C9A7FF",
+        state: "#D0C5DE",
+      }
+    : {
+        text: "#241B32",
+        muted: "#6E647B",
+        softText: "#5D526B",
+        accentText: "#5A2A8D",
+        label: "#39284F",
+        body: "#30263D",
+        border: "rgba(83, 55, 116, 0.20)",
+        chipBorder: "rgba(83, 55, 116, 0.22)",
+        chipActiveBorder: "rgba(99, 48, 150, 0.55)",
+        chipBackground: "rgba(73, 48, 104, 0.06)",
+        chipActive: "rgba(148, 105, 196, 0.22)",
+        card: "#FDFBFF",
+        input: "rgba(73, 48, 104, 0.05)",
+        button: "#6935A6",
+        badge: "#65359A",
+        state: "#5D526B",
+      };
+
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: darkMode ? "#171022" : "#F6F3FA",
+      paddingTop: 54,
+    },
+    flex: { flex: 1, minHeight: 0 },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 20,
+      paddingBottom: 14,
+    },
+    headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+    modeLabel: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+    eyebrow: {
+      color: darkMode ? "#C9A7FF" : "#65359A",
+      fontSize: 10,
+      fontWeight: "800",
+      letterSpacing: 1,
+    },
+    headerTitle: {
+      color: colors.text,
+      fontSize: 23,
+      fontWeight: "700",
+      marginTop: 3,
+    },
+    logout: { color: colors.accentText, fontSize: 13, fontWeight: "700" },
+    horizontalScroller: { flexGrow: 0 },
+    sectionTabs: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingBottom: 12,
+    },
+    categoryTabs: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingBottom: 12,
+    },
+    chip: {
+      borderWidth: 1,
+      borderColor: colors.chipBorder,
+      backgroundColor: colors.chipBackground,
+      borderRadius: 18,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
+    },
+    activeChip: {
+      backgroundColor: colors.chipActive,
+      borderColor: colors.chipActiveBorder,
+    },
+    chipText: { color: colors.softText, fontSize: 12, fontWeight: "600" },
+    activeChipText: { color: colors.text },
+    content: { paddingHorizontal: 16, paddingBottom: 40, gap: 12 },
+    card: {
+      overflow: "hidden",
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    cardContent: { padding: 17, gap: 11 },
+    cardTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
+    helper: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+    label: {
+      color: colors.label,
+      fontSize: 13,
+      fontWeight: "700",
+      marginTop: 4,
+    },
+    input: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.input,
+      color: colors.text,
+      paddingHorizontal: 13,
+      paddingVertical: 11,
+      minHeight: 44,
+    },
+    multiline: { minHeight: 100 },
+    largeMultiline: { minHeight: 150 },
+    wrapRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    primaryButton: {
+      borderRadius: 16,
+      paddingVertical: 13,
+      alignItems: "center",
+      backgroundColor: colors.button,
+      borderWidth: 1,
+      borderColor: colors.chipActiveBorder,
+      marginTop: 4,
+    },
+    primaryButtonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 14 },
+    secondaryButton: {
+      borderRadius: 14,
+      paddingVertical: 11,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.chipBackground,
+      marginTop: 4,
+    },
+    secondaryButtonText: {
+      color: colors.accentText,
+      fontWeight: "700",
+      fontSize: 13,
+    },
+    disabled: { opacity: 0.55 },
+    result: {
+      color: darkMode ? "#A7E7C3" : "#26734D",
+      fontSize: 13,
+      fontWeight: "700",
+      marginTop: 10,
+    },
+    searchRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16 },
+    searchInput: { flex: 1, minWidth: 0 },
+    searchButton: {
+      borderRadius: 14,
+      paddingHorizontal: 16,
+      justifyContent: "center",
+      backgroundColor: colors.button,
+    },
+    searchButtonText: { color: "#FFFFFF", fontWeight: "700" },
+    loader: { marginTop: 30 },
+    cardHeadingRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 8,
+      flexWrap: "wrap",
+    },
+    badge: {
+      color: colors.badge,
+      fontSize: 11,
+      fontWeight: "900",
+      letterSpacing: 0.5,
+    },
+    date: { color: colors.muted, fontSize: 11 },
+    bodyText: { color: colors.body, fontSize: 14, lineHeight: 21 },
+    review: {
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 16,
+      gap: 10,
+    },
+    previewTitle: { color: colors.text, fontSize: 21, fontWeight: "800" },
+    sectionTitle: {
+      color: colors.text,
+      fontSize: 17,
+      fontWeight: "700",
+      marginTop: 12,
+    },
+    warningNote: {
+      color: darkMode ? "#FFD18D" : "#875000",
+      lineHeight: 20,
+      fontWeight: "600",
+    },
+    infoLabel: { color: colors.accentText, fontWeight: "800" },
+    linkText: { color: colors.accentText, fontWeight: "700", marginTop: 8 },
+    stateText: { color: colors.state, textAlign: "center", padding: 26 },
+  });
+}

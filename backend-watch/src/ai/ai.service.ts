@@ -10,28 +10,26 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { createHash, timingSafeEqual } from 'crypto';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import {
+  hazardTemplateKey,
+  renderHazardTemplate,
+} from '../weather/hazard-templates';
+import {
   AnnouncementAiDetails,
   AnnouncementClassification,
   parseAnnouncementClassification,
   parseAnnouncementAiDetails,
 } from './announcement-classifier';
 import {
+  parseSystemAnnouncement,
+  type SystemAnnouncementFormat,
+} from './system-announcement-format';
+import {
   parseWeatherSafetyTips,
   WeatherSafetyTips,
 } from './weather-safety-tips';
 
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-
-export type SystemAnnouncementFormat = {
-  title: string;
-  summary: string;
-  body: string;
-  key_points: string[];
-  schedule_or_date: string | null;
-  impact: string | null;
-  action_needed: string | null;
-  missing_info_note: string | null;
-};
+export type { SystemAnnouncementFormat } from './system-announcement-format';
 
 function staticWeatherSafetyTips(
   hazardType: string,
@@ -164,20 +162,26 @@ export class AiService {
     measurements: Record<string, number>;
   }) {
     const safeMeasurements = this.validateMeasurements(input.measurements);
-    const prompt = [
-      'Write brief, practical weather hazard explanation and safety tips.',
-      'Risk classification is rule-based and authoritative; do not change it.',
-      'Use only provided numeric measurements. Do not invent facts or declare evacuation.',
-      'Return only JSON with keys explanation (string) and safetyTips (array of 3 short strings).',
-      `Hazard type: ${input.hazardType}`,
-      `Risk level: ${input.riskLevel}`,
-      `Measurements: ${JSON.stringify(safeMeasurements)}`,
-    ].join('\n');
-    const fallback = this.staticSafetyGuidance(
-      input.hazardType,
-      input.riskLevel,
-    );
-    return this.generateCached('hazard-guidance', prompt, fallback);
+    const guidance = renderHazardTemplate({
+      key: hazardTemplateKey(null, input.hazardType),
+      hazardType: input.hazardType,
+      severity: input.riskLevel,
+      place: 'your area',
+      observedAt: new Date().toISOString(),
+      sourceName: 'W.A.T.C.H. weather data',
+      measurements: {
+        heatIndexC: safeMeasurements.heatIndexC,
+        rainMm: safeMeasurements.rainMm,
+        aqi: safeMeasurements.aqi,
+      },
+    });
+    return {
+      explanation: guidance.summary,
+      safetyTips: [
+        ...guidance.safetyTips.do_list,
+        ...guidance.safetyTips.dont_list,
+      ].slice(0, 3),
+    };
   }
 
   async formatSystemAnnouncement(input: {
@@ -206,91 +210,8 @@ export class AiService {
       .filter(Boolean)
       .join('\n');
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        return this.parseSystemAnnouncement(
-          await this.requestConfiguredJson(prompt),
-        );
-      } catch (error) {
-        this.logger.warn(
-          `System announcement formatting attempt ${attempt + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        );
-      }
-    }
-    throw new ServiceUnavailableException(
-      'AI could not produce a valid system announcement. Please review the text and retry.',
-    );
-  }
-
-  private parseSystemAnnouncement(output: string): SystemAnnouncementFormat {
-    let value: unknown;
-    try {
-      value = JSON.parse(
-        output
-          .trim()
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/\s*```$/, ''),
-      );
-    } catch {
-      throw new Error('AI returned malformed system announcement JSON.');
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error('AI system announcement must be a JSON object.');
-    }
-    const result = value as Record<string, unknown>;
-    const keys = [
-      'title',
-      'summary',
-      'body',
-      'key_points',
-      'schedule_or_date',
-      'impact',
-      'action_needed',
-      'missing_info_note',
-    ];
-    const validText = (item: unknown, maximum: number) =>
-      typeof item === 'string' &&
-      item.trim().length > 0 &&
-      item.length <= maximum;
-    const validOptional = (item: unknown) =>
-      item === null || (typeof item === 'string' && item.length <= 1000);
-    if (
-      Object.keys(result).length !== keys.length ||
-      keys.some((key) => !(key in result)) ||
-      !validText(result.title, 120) ||
-      !validText(result.summary, 500) ||
-      !validText(result.body, 8000) ||
-      !Array.isArray(result.key_points) ||
-      result.key_points.length > 12 ||
-      !result.key_points.every((point) => validText(point, 300)) ||
-      !validOptional(result.schedule_or_date) ||
-      !validOptional(result.impact) ||
-      !validOptional(result.action_needed) ||
-      !validOptional(result.missing_info_note)
-    ) {
-      throw new Error(
-        'AI system announcement did not match the required schema.',
-      );
-    }
-    return {
-      title: (result.title as string).trim(),
-      summary: (result.summary as string).trim(),
-      body: (result.body as string).trim(),
-      key_points: (result.key_points as string[]).map((point) => point.trim()),
-      schedule_or_date:
-        typeof result.schedule_or_date === 'string'
-          ? result.schedule_or_date.trim()
-          : null,
-      impact: typeof result.impact === 'string' ? result.impact.trim() : null,
-      action_needed:
-        typeof result.action_needed === 'string'
-          ? result.action_needed.trim()
-          : null,
-      missing_info_note:
-        typeof result.missing_info_note === 'string'
-          ? result.missing_info_note.trim()
-          : null,
-    };
+    const output = await this.requestConfiguredJson(prompt);
+    return parseSystemAnnouncement(output, rawText);
   }
 
   async summarizeAnnouncement(input: {
@@ -506,26 +427,26 @@ export class AiService {
     location: string;
     measurements: Record<string, number>;
   }): Promise<WeatherSafetyTips> {
-    const prompt = [
-      'Provide practical, short weather safety advice. The rule-based risk level is authoritative; never alter it.',
-      'Use only the supplied measurements and do not claim official warnings, evacuation orders, or facts not provided.',
-      'Return only JSON with exactly these keys: summary (one sentence), do (3-5 short actionable strings), prepare (3-5 strings), avoid (3-5 strings).',
-      'For heat, prioritize hydration, shade, and checking on vulnerable people; do not recommend a go-bag. For typhoons, include a go-bag, charged devices, and evacuation routes. For heavy rain, avoid flood-prone roads.',
-      'End the summary with or include: Follow official PAGASA/LGU advisories.',
-      `Hazard: ${input.hazardType}`,
-      `Risk level: ${input.riskLevel}`,
-      `Location: ${input.location}`,
-      `Measurements: ${JSON.stringify(input.measurements)}`,
-    ].join('\n');
-    try {
-      const output = await this.requestConfiguredJson(prompt);
-      return parseWeatherSafetyTips(output);
-    } catch (error) {
-      this.logger.warn(
-        `AI safety tip generation failed; using reviewed static guidance: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      return staticWeatherSafetyTips(input.hazardType, input.riskLevel);
-    }
+    const measurements = this.validateMeasurements(input.measurements);
+    const guidance = renderHazardTemplate({
+      key: hazardTemplateKey(null, input.hazardType),
+      hazardType: input.hazardType,
+      severity: input.riskLevel,
+      place: input.location,
+      observedAt: new Date().toISOString(),
+      sourceName: 'W.A.T.C.H. weather data',
+      measurements: {
+        heatIndexC: measurements.heatIndexC,
+        rainMm: measurements.rainMm,
+        aqi: measurements.aqi,
+      },
+    });
+    return {
+      summary: guidance.summary,
+      do: guidance.safetyTips.do_list,
+      prepare: guidance.safetyTips.prepare_list,
+      avoid: guidance.safetyTips.dont_list,
+    };
   }
 
   async generateStructuredSafetyTip(input: {
@@ -540,36 +461,27 @@ export class AiService {
     dont_list: string[];
     emergency_note: string;
   }> {
-    const prompt = [
-      'Create one short, practical safety-tip notification for a continuing weather hazard. Use simple language.',
-      'The rule-based hazard and severity are authoritative. Use only supplied measurements; never invent an official warning or evacuation order.',
-      'Return only JSON with exactly: title (short string), short_summary (one short sentence), do_list (2-4 short strings), dont_list (2-4 short strings), emergency_note (short string).',
-      `Hazard: ${input.hazardType}`,
-      `Severity: ${input.riskLevel}`,
-      `Location: ${input.location}`,
-      `Current measurements: ${JSON.stringify(input.measurements)}`,
-    ].join('\n');
-    try {
-      return this.parseStructuredSafetyTip(
-        await this.requestConfiguredJson(prompt),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Structured safety tip generation fell back to reviewed guidance: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-      const fallback = staticWeatherSafetyTips(
-        input.hazardType,
-        input.riskLevel,
-      );
-      return {
-        title: `Safety tip: ${input.hazardType}`,
-        short_summary: fallback.summary,
-        do_list: fallback.do.slice(0, 3),
-        dont_list: fallback.avoid.slice(0, 3),
-        emergency_note:
-          'For immediate danger, contact local emergency services and follow official local advisories.',
-      };
-    }
+    const measurements = this.validateMeasurements(input.measurements);
+    const guidance = renderHazardTemplate({
+      key: hazardTemplateKey(null, input.hazardType),
+      hazardType: input.hazardType,
+      severity: input.riskLevel,
+      place: input.location,
+      observedAt: new Date().toISOString(),
+      sourceName: 'W.A.T.C.H. weather data',
+      measurements: {
+        heatIndexC: measurements.heatIndexC,
+        rainMm: measurements.rainMm,
+        aqi: measurements.aqi,
+      },
+    });
+    return {
+      title: guidance.title,
+      short_summary: guidance.summary,
+      do_list: guidance.safetyTips.do_list,
+      dont_list: guidance.safetyTips.dont_list,
+      emergency_note: guidance.safetyTips.emergency_note,
+    };
   }
 
   private async requestConfiguredJson(prompt: string) {

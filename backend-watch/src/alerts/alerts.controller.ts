@@ -94,6 +94,15 @@ export class AlertsController {
     return this.alerts.getUserAlerts(req.user.id, query.locationId);
   }
 
+  @Get('weather-events')
+  getUserWeatherEvents(
+    @Req() req: AuthenticatedRequest,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.alerts.getUserWeatherEvents(req.user.id, page, limit);
+  }
+
   @Get('announcements/:id')
   getAnnouncement(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.alerts.getAnnouncement(req.user.id, id);

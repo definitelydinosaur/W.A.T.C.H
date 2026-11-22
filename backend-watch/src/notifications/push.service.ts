@@ -76,7 +76,9 @@ export class PushService {
         `Notification dedupe check failed: ${priorError.message}`,
       );
     }
-    if (prior) return { sent: false, duplicate: true };
+    if (prior) {
+      return { sent: false, duplicate: true, deliveryError: null };
+    }
 
     const { data: profile, error: profileError } = await this.supabase
       .from('user_info')
@@ -191,6 +193,12 @@ export class PushService {
         duplicate: false,
         notificationId,
         noToken: !token || !Expo.isExpoPushToken(token),
+        deliveryError:
+          !token || !Expo.isExpoPushToken(token)
+            ? 'No valid Expo push token is registered for this user.'
+            : !allowsPush
+              ? 'The user notification preferences prevent push delivery.'
+              : null,
       };
     }
 
@@ -242,7 +250,12 @@ export class PushService {
         `Notification status update failed: ${updateError.message}`,
       );
     }
-    return { sent: status === 'Sent', duplicate: false, notificationId };
+    return {
+      sent: status === 'Sent',
+      duplicate: false,
+      notificationId,
+      deliveryError: status === 'Failed' ? deliveryError : null,
+    };
   }
 
   @Cron('*/15 * * * *', { waitForCompletion: true })

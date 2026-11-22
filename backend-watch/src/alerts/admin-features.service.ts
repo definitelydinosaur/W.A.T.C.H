@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { AiService, SystemAnnouncementFormat } from '../ai/ai.service';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { PushService } from '../notifications/push.service';
+import { HazardFeedService } from './hazard-feed.service';
 
 type ManualSendInput = {
   type: 'institution' | 'local' | 'weather' | 'system';
@@ -107,7 +108,12 @@ type StoredDraft = {
 };
 
 type AdminNotificationKind =
-  'announcement_local' | 'announcement_institution' | 'weather' | 'system';
+  | 'announcement_local'
+  | 'announcement_institution'
+  | 'weather'
+  | 'weather_hazard'
+  | 'safety_tip'
+  | 'system';
 
 @Injectable()
 export class AdminFeaturesService {
@@ -117,6 +123,7 @@ export class AdminFeaturesService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly ai: AiService,
     private readonly push: PushService,
+    private readonly hazardFeed: HazardFeedService,
   ) {}
 
   async getInstitutions() {
@@ -197,6 +204,20 @@ export class AdminFeaturesService {
   }
 
   async getAutomatedAnnouncements(
+    pageValue?: string,
+    limitValue?: string,
+    searchValue?: string,
+    categoryValue?: string,
+  ) {
+    return this.hazardFeed.getAdminEvents({
+      page: pageValue,
+      limit: limitValue,
+      search: searchValue,
+      category: categoryValue,
+    });
+  }
+
+  async getLegacyAutomatedAnnouncements(
     pageValue?: string,
     limitValue?: string,
     searchValue?: string,
@@ -464,7 +485,7 @@ export class AdminFeaturesService {
     };
   }
 
-  async resendAnnouncementToAdmin(id: string, adminId: string) {
+  async resendAnnouncementToAllUsers(id: string, adminId: string) {
     const announcementId = Number(id);
     if (!Number.isSafeInteger(announcementId) || announcementId < 1) {
       throw new BadRequestException(
@@ -473,7 +494,9 @@ export class AdminFeaturesService {
     }
     const { data: announcement, error } = await this.supabase
       .from('announcements')
-      .select('id,title,ai_summary,content,source_name,source_url,ai_scope')
+      .select(
+        'id,title,ai_summary,content,source_name,source_url,ai_scope,category',
+      )
       .eq('id', announcementId)
       .neq('source', 'admin_manual')
       .maybeSingle()
@@ -486,6 +509,7 @@ export class AdminFeaturesService {
           source_name: string | null;
           source_url: string | null;
           ai_scope: string | null;
+          category: string | null;
         },
         { merge: false }
       >();
@@ -502,28 +526,34 @@ export class AdminFeaturesService {
         : announcement.ai_scope === 'institution'
           ? 'announcement_institution'
           : 'announcement_local';
-    const result = await this.push.sendUserNotification({
-      userId: adminId,
-      title: announcement.title ?? 'W.A.T.C.H. Alert',
-      body: announcement.ai_summary ?? announcement.content ?? '',
-      data: {},
-      kind,
-      announcementId: String(announcement.id),
-      sourceName: announcement.source_name,
+    const title = announcement.title ?? 'W.A.T.C.H. Alert';
+    const body = announcement.ai_summary ?? announcement.content ?? '';
+    const replayId = await this.createReplayAnnouncement({
+      title,
+      body,
+      sourceName: announcement.source_name ?? 'W.A.T.C.H.',
       sourceUrl: announcement.source_url,
-      ignorePreferences: true,
+      category: announcement.category ?? announcement.ai_scope,
+      aiScope: announcement.ai_scope,
     });
-    const noToken = 'noToken' in result && result.noToken === true;
-    return {
-      ...result,
-      sent: result.sent ? 1 : 0,
-      failed: result.sent || noToken || result.duplicate ? 0 : 1,
-      no_token: noToken ? 1 : 0,
-      audience_count: 1,
-    };
+    const recipients = await this.getRecipients('me', adminId);
+    const result = await this.sendToUsers(recipients, {
+      title,
+      body,
+      kind,
+      announcementId: String(replayId),
+      sourceName: announcement.source_name ?? 'W.A.T.C.H.',
+      sourceUrl: announcement.source_url,
+    });
+    return { ...result, audience_count: recipients.length };
   }
 
-  async resendHazardToAdmin(id: string, adminId: string, safetyTip: boolean) {
+  async resendHazardToAllUsers(
+    id: string,
+    adminId: string,
+    safetyTip: boolean,
+    audience: 'me' | 'all' = 'me',
+  ) {
     const { data: hazard, error } = await this.supabase
       .from('hazards')
       .select('id,category,hazard_type,risk_level,ai_summary,safety_tips')
@@ -546,29 +576,42 @@ export class AdminFeaturesService {
       );
     }
     if (!hazard) throw new NotFoundException('Weather hazard was not found.');
-    const result = await this.push.sendUserNotification({
-      userId: adminId,
-      title: safetyTip
-        ? `Safety tip: ${hazard.category ?? hazard.hazard_type ?? 'Weather hazard'}`
-        : (hazard.category ?? hazard.hazard_type ?? 'Weather hazard'),
-      body: hazard.ai_summary ?? 'See the weather alert for full details.',
-      data: safetyTip ? { tip_key: `admin-test-${randomUUID()}` } : {},
+    const recipients = await this.getRecipients(audience, adminId);
+    const title = safetyTip
+      ? `Safety tip: ${hazard.category ?? hazard.hazard_type ?? 'Weather hazard'}`
+      : (hazard.category ?? hazard.hazard_type ?? 'Weather hazard');
+    const body = hazard.ai_summary ?? 'See the weather alert for full details.';
+    const replayId = safetyTip
+      ? null
+      : await this.createReplayAnnouncement({
+          title,
+          body,
+          sourceName: 'W.A.T.C.H. Weather Alert',
+          sourceUrl: null,
+          category: hazard.category ?? hazard.hazard_type,
+          aiScope: 'weather',
+        });
+    const result = await this.sendToUsers(recipients, {
+      title,
+      body,
       kind: safetyTip ? 'safety_tip' : 'weather_hazard',
-      hazardId: hazard.id,
       sourceName: 'W.A.T.C.H. Weather Alert',
-      ignorePreferences: true,
+      sourceUrl: null,
+      ...(safetyTip
+        ? {
+            hazardId: hazard.id,
+            data: { tip_key: `admin-replay-${randomUUID()}` },
+          }
+        : { announcementId: String(replayId) }),
     });
-    const noToken = 'noToken' in result && result.noToken === true;
-    return {
-      ...result,
-      sent: result.sent ? 1 : 0,
-      failed: result.sent || noToken || result.duplicate ? 0 : 1,
-      no_token: noToken ? 1 : 0,
-      audience_count: 1,
-    };
+    return { ...result, audience_count: recipients.length };
   }
 
-  async resendPagasaAlertToAdmin(id: string, adminId: string) {
+  async resendPagasaAlertToAllUsers(
+    id: string,
+    adminId: string,
+    audience: 'me' | 'all' = 'me',
+  ) {
     const alertId = Number(id);
     if (!Number.isSafeInteger(alertId) || alertId < 1) {
       throw new BadRequestException(
@@ -598,45 +641,25 @@ export class AdminFeaturesService {
     const title = alert.event ?? 'PAGASA Alert';
     const body =
       alert.content ?? 'See the official PAGASA advisory for details.';
-    const { data: announcement, error: insertError } = await this.supabase
-      .from('announcements')
-      .insert({
-        title,
-        content: body,
-        ai_summary: body,
-        source: 'admin_test_replay',
-        source_name: 'PAGASA',
-        category: 'weather',
-        ai_scope: 'weather',
-        status: 'published',
-        published_at: alert.published_at ?? new Date().toISOString(),
-      })
-      .select('id')
-      .single()
-      .overrideTypes<{ id: number }, { merge: false }>();
-    if (insertError || !announcement) {
-      throw new ServiceUnavailableException(
-        `PAGASA test alert could not be prepared: ${insertError?.message ?? 'No row returned'}`,
-      );
-    }
-    const result = await this.push.sendUserNotification({
-      userId: adminId,
+    const replayId = await this.createReplayAnnouncement({
       title,
       body,
-      data: {},
-      kind: 'weather',
-      announcementId: String(announcement.id),
       sourceName: 'PAGASA',
-      ignorePreferences: true,
+      sourceUrl: null,
+      category: 'weather',
+      aiScope: 'weather',
+      publishedAt: alert.published_at,
     });
-    const noToken = 'noToken' in result && result.noToken === true;
-    return {
-      ...result,
-      sent: result.sent ? 1 : 0,
-      failed: result.sent || noToken || result.duplicate ? 0 : 1,
-      no_token: noToken ? 1 : 0,
-      audience_count: 1,
-    };
+    const recipients = await this.getRecipients(audience, adminId);
+    const result = await this.sendToUsers(recipients, {
+      title,
+      body,
+      kind: 'weather',
+      announcementId: String(replayId),
+      sourceName: 'PAGASA',
+      sourceUrl: null,
+    });
+    return { ...result, audience_count: recipients.length };
   }
 
   async formatSystemDraft(
@@ -1063,21 +1086,59 @@ export class AdminFeaturesService {
     return [...new Set(ids)];
   }
 
+  private async createReplayAnnouncement(input: {
+    title: string;
+    body: string;
+    sourceName: string;
+    sourceUrl: string | null;
+    category: string | null;
+    aiScope: string | null;
+    publishedAt?: string | null;
+  }) {
+    const { data, error } = await this.supabase
+      .from('announcements')
+      .insert({
+        title: input.title,
+        content: input.body,
+        ai_summary: input.body,
+        source: 'admin_test_replay',
+        source_name: input.sourceName,
+        source_url: input.sourceUrl,
+        category: input.category,
+        ai_scope: input.aiScope,
+        status: 'published',
+        published_at: input.publishedAt ?? new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+      .overrideTypes<{ id: number }, { merge: false }>();
+    if (error || !data) {
+      throw new ServiceUnavailableException(
+        `Announcement replay could not be prepared: ${error?.message ?? 'No row returned'}`,
+      );
+    }
+    return data.id;
+  }
+
   private async sendToUsers(
     userIds: string[],
     input: {
-      announcementId: string;
       kind: AdminNotificationKind;
       title: string;
       body: string;
       sourceName: string;
       sourceUrl: string | null;
-    },
+      data?: Record<string, string>;
+    } & (
+      | { announcementId: string; hazardId?: never }
+      | { hazardId: string; announcementId?: never }
+    ),
   ) {
     let sent = 0;
     let failed = 0;
     let no_token = 0;
     let duplicate = 0;
+    const failureDetails: string[] = [];
     for (let offset = 0; offset < userIds.length; offset += 100) {
       const batch = userIds.slice(offset, offset + 100);
       const results = await Promise.all(
@@ -1087,9 +1148,11 @@ export class AdminFeaturesService {
               userId,
               title: input.title,
               body: input.body,
-              data: {},
+              data: input.data ?? {},
               kind: input.kind,
-              announcementId: input.announcementId,
+              ...('announcementId' in input
+                ? { announcementId: input.announcementId }
+                : { hazardId: input.hazardId }),
               sourceName: input.sourceName,
               sourceUrl: input.sourceUrl,
               ignorePreferences: true,
@@ -1098,12 +1161,26 @@ export class AdminFeaturesService {
               sent: result.sent,
               duplicate: result.duplicate,
               noToken: 'noToken' in result && result.noToken === true,
+              failureDetail:
+                'deliveryError' in result &&
+                typeof result.deliveryError === 'string'
+                  ? result.deliveryError
+                  : null,
             };
           } catch (error) {
+            const failureDetail =
+              error instanceof Error
+                ? error.message
+                : 'Unknown notification error.';
             this.logger.error(
-              `Admin notification failed for user ${userId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              `Admin notification failed for user ${userId}: ${failureDetail}`,
             );
-            return { sent: false, duplicate: false, noToken: false };
+            return {
+              sent: false,
+              duplicate: false,
+              noToken: false,
+              failureDetail,
+            };
           }
         }),
       );
@@ -1111,10 +1188,19 @@ export class AdminFeaturesService {
         if (result.sent) sent += 1;
         else if (result.duplicate) duplicate += 1;
         else if (result.noToken) no_token += 1;
-        else failed += 1;
+        else {
+          failed += 1;
+          if (result.failureDetail) failureDetails.push(result.failureDetail);
+        }
       }
     }
-    return { sent, failed, no_token, duplicate };
+    return {
+      sent,
+      failed,
+      no_token,
+      duplicate,
+      failure_details: [...new Set(failureDetails)].slice(0, 5),
+    };
   }
 
   private async resetDraftAfterPublishFailure(draftId: string) {

@@ -211,6 +211,112 @@ export function parseAnnouncementAiDetails(
   };
 }
 
+export function hasUnsupportedAnnouncementClaims(
+  sourceText: string,
+  classification: AnnouncementClassification,
+  details: AnnouncementAiDetails,
+) {
+  const text = sourceText.toLocaleLowerCase();
+  const dates = [classification.effective_date, details.effective_date].filter(
+    (date): date is string => Boolean(date),
+  );
+  if (dates.some((date) => !sourceMentionsDate(text, date))) return true;
+
+  if (
+    details.affected_levels &&
+    !sourceMentionsLevels(text, details.affected_levels)
+  ) {
+    return true;
+  }
+  if (
+    details.is_class_suspension &&
+    !/\b(no classes|class(?:es)? (?:are )?suspended|suspension of classes|suspend(?:ing)? classes)\b/i.test(
+      sourceText,
+    )
+  ) {
+    return true;
+  }
+  if (
+    details.suspension_reason &&
+    !sourceMentionsReason(text, details.suspension_reason)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function sourceMentionsDate(sourceText: string, value: string) {
+  const isoDate = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  const date = isoDate
+    ? new Date(
+        Date.UTC(
+          Number(isoDate[1]),
+          Number(isoDate[2]) - 1,
+          Number(isoDate[3]),
+        ),
+      )
+    : new Date(value);
+  if (!Number.isFinite(date.getTime())) return false;
+  const year = String(date.getUTCFullYear());
+  const monthNumber = String(date.getUTCMonth() + 1);
+  const day = String(date.getUTCDate());
+  const paddedMonth = monthNumber.padStart(2, '0');
+  const paddedDay = day.padStart(2, '0');
+  const monthLong = date
+    .toLocaleString('en-US', {
+      month: 'long',
+      timeZone: 'UTC',
+    })
+    .toLocaleLowerCase();
+  const monthShort = date
+    .toLocaleString('en-US', {
+      month: 'short',
+      timeZone: 'UTC',
+    })
+    .toLocaleLowerCase();
+  return [
+    `${year}-${paddedMonth}-${paddedDay}`,
+    `${year}/${paddedMonth}/${paddedDay}`,
+    `${paddedMonth}/${paddedDay}/${year}`,
+    `${monthLong} ${day}, ${year}`,
+    `${monthShort} ${day}, ${year}`,
+    `${day} ${monthLong} ${year}`,
+    `${day} ${monthShort} ${year}`,
+    `${monthLong} ${day}`,
+    `${monthShort} ${day}`,
+    `${day} ${monthLong}`,
+    `${day} ${monthShort}`,
+  ].some((candidate) => sourceText.includes(candidate));
+}
+
+function sourceMentionsLevels(sourceText: string, levels: string) {
+  const normalizedLevels = levels.toLocaleLowerCase().trim();
+  if (/^(all|all grade|all year|all class|all levels)/.test(normalizedLevels)) {
+    return /\b(all (?:grade |year |class )?levels|all classes)\b/i.test(
+      sourceText,
+    );
+  }
+  const claims =
+    normalizedLevels.match(
+      /\b(?:grade|year|level|kindergarten|kinder)\s*\d*(?:\s*(?:-|to|through)\s*(?:grade|year|level)?\s*\d+)?\b/g,
+    ) ?? [];
+  return (
+    claims.length > 0 &&
+    claims.every((claim) => sourceText.includes(claim.replace(/\s+/g, ' ')))
+  );
+}
+
+function sourceMentionsReason(sourceText: string, reason: SuspensionReason) {
+  const patterns: Record<SuspensionReason, RegExp> = {
+    weather: /\b(weather|rain|storm|typhoon|wind)\b/i,
+    unhealthy_air: /\b(air quality|aqi|smoke|haze|pollution)\b/i,
+    extreme_heat: /\b(heat|heat index|high temperature|extreme temperature)\b/i,
+    flood: /\b(flood|flooding|floodwater)\b/i,
+    other: /\b(reason|due to|because of)\b/i,
+  };
+  return patterns[reason].test(sourceText);
+}
+
 export function announcementContentHash(text: string) {
   return createHash('sha256')
     .update(text.trim().replace(/\s+/g, ' ').toLowerCase())

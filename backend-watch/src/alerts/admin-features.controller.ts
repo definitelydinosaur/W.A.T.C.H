@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -11,15 +12,19 @@ import {
 } from '@nestjs/common';
 import {
   IsIn,
+  IsArray,
   IsOptional,
   IsString,
   IsUrl,
   IsUUID,
   MaxLength,
+  ArrayMaxSize,
+  ArrayMinSize,
   MinLength,
 } from 'class-validator';
 import { Request } from 'express';
 import { AdminAuthGuard } from '../auth/admin-auth.guard';
+import { AlertsService } from './alerts.service';
 import { AdminFeaturesService } from './admin-features.service';
 
 type AdminRequest = Request & { user: { id: string } };
@@ -73,10 +78,23 @@ class ReviseSystemDraftDto {
   instruction!: string;
 }
 
+class AssignPagasaAreasDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MinLength(2, { each: true })
+  @MaxLength(100, { each: true })
+  affected_areas!: string[];
+}
+
 @Controller('admin/features')
 @UseGuards(AdminAuthGuard)
 export class AdminFeaturesController {
-  constructor(private readonly features: AdminFeaturesService) {}
+  constructor(
+    private readonly features: AdminFeaturesService,
+    private readonly alerts: AlertsService,
+  ) {}
 
   @Get('institutions')
   getInstitutions() {
@@ -96,37 +114,83 @@ export class AdminFeaturesController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('search') search?: string,
+    @Query('category') category?: string,
   ) {
-    return this.features.getAutomatedAnnouncements(page, limit, search);
+    return this.features.getAutomatedAnnouncements(
+      page,
+      limit,
+      search,
+      category,
+    );
   }
 
   @Post('announcements/:id/resend-test')
-  resendAnnouncementToAdmin(
+  resendAnnouncementToAllUsers(
     @Param('id') id: string,
     @Req() request: AdminRequest,
   ) {
-    return this.features.resendAnnouncementToAdmin(id, request.user.id);
+    return this.features.resendAnnouncementToAllUsers(id, request.user.id);
   }
 
   @Post('hazards/:id/resend-test')
-  resendHazardToAdmin(@Param('id') id: string, @Req() request: AdminRequest) {
-    return this.features.resendHazardToAdmin(id, request.user.id, false);
-  }
-
-  @Post('safety-tips/:hazardId/resend-test')
-  resendSafetyTipToAdmin(
-    @Param('hazardId') hazardId: string,
-    @Req() request: AdminRequest,
-  ) {
-    return this.features.resendHazardToAdmin(hazardId, request.user.id, true);
-  }
-
-  @Post('pagasa/:id/resend-test')
-  resendPagasaAlertToAdmin(
+  resendHazardToAllUsers(
     @Param('id') id: string,
     @Req() request: AdminRequest,
   ) {
-    return this.features.resendPagasaAlertToAdmin(id, request.user.id);
+    return this.features.resendHazardToAllUsers(id, request.user.id, false);
+  }
+
+  @Post('hazards/:id/resend-all')
+  resendHazardToAllUsersNow(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendHazardToAllUsers(
+      id,
+      request.user.id,
+      false,
+      'all',
+    );
+  }
+
+  @Post('safety-tips/:hazardId/resend-test')
+  resendSafetyTipToAllUsers(
+    @Param('hazardId') hazardId: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendHazardToAllUsers(
+      hazardId,
+      request.user.id,
+      true,
+    );
+  }
+
+  @Post('pagasa/:id/resend-test')
+  resendPagasaAlertToAllUsers(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendPagasaAlertToAllUsers(id, request.user.id);
+  }
+
+  @Post('pagasa/:id/resend-all')
+  resendPagasaAlertToAllUsersNow(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendPagasaAlertToAllUsers(
+      id,
+      request.user.id,
+      'all',
+    );
+  }
+
+  @Patch('pagasa/:id/areas')
+  assignPagasaAreas(
+    @Param('id') id: string,
+    @Body() body: AssignPagasaAreasDto,
+  ) {
+    return this.alerts.assignPagasaAreas(id, body.affected_areas);
   }
 
   @Post('system-drafts/format')
