@@ -199,6 +199,8 @@ export class AuthService {
       throw new BadRequestException('Unable to load your account role.');
     }
     return { role: data?.role ?? 'user' };
+  }
+
   // Account deletion
   async deleteAccount(accessToken: string) {
     const {

@@ -46,15 +46,15 @@ export class AuthController {
   getCurrentUser(@Req() request: AuthenticatedRequest) {
     return this.authService.getProfileRole(request.user.id);
   }
-@Delete('delete-account')
-deleteAccount(@Headers('authorization') authorization: string) {
-  if (!authorization || !authorization.startsWith('Bearer ')) {
-    throw new UnauthorizedException('Authentication token is required.');
+
+  @Delete('delete-account')
+  deleteAccount(@Headers('authorization') authorization: string) {
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      throw new UnauthorizedException('Authentication token is required.');
+    }
+
+    const accessToken = authorization.substring(7);
+
+    return this.authService.deleteAccount(accessToken);
   }
-
-  const accessToken = authorization.substring(7);
-
-  return this.authService.deleteAccount(accessToken);
-}
-
 }
