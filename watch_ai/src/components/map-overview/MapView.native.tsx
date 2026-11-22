@@ -1,11 +1,8 @@
-import React, { useEffect, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
-import RNMapView, {
-  Circle,
-  Marker,
-  type MapType,
-  type Region,
-} from 'react-native-maps';
+import React, { useEffect, useRef, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import type RNMapViewType from 'react-native-maps';
+import type { MapType, Region } from 'react-native-maps';
 import {
   MapStyleKey,
   MapViewProps,
@@ -45,7 +42,25 @@ const DARK_MAP_STYLE = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
 ];
 
-export default function MapView({
+const isExpoGo =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+export default function MapView(props: MapViewProps) {
+  if (isExpoGo) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>
+          Map Overview requires the W.A.T.C.H. development build. Install it
+          and reopen this screen to view the map.
+        </Text>
+      </View>
+    );
+  }
+
+  return <NativeMapView {...props} />;
+}
+
+function NativeMapView({
   latitude,
   longitude,
   label,
@@ -55,7 +70,30 @@ export default function MapView({
   showHazards = true,
   onHazardPress,
 }: MapViewProps) {
-  const ref = useRef<RNMapView>(null);
+  const [maps, setMaps] = useState<typeof import('react-native-maps') | null>(
+    null,
+  );
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const ref = useRef<React.ElementRef<typeof RNMapViewType>>(null);
+
+  useEffect(() => {
+    let active = true;
+    void import('react-native-maps')
+      .then((module) => {
+        if (active) setMaps(module);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error('[map] unable to load native map module:', error);
+        setMapLoadError(
+          error instanceof Error ? error.message : 'Unknown native map error.',
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!focus) return;
@@ -67,7 +105,28 @@ export default function MapView({
       longitudeDelta: span,
     };
     ref.current?.animateToRegion(region, 650);
-  }, [focus]);
+  }, [focus, maps]);
+
+  if (mapLoadError) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>
+          The native map module is unavailable. Install a fresh W.A.T.C.H.
+          development build, then restart the app.
+        </Text>
+      </View>
+    );
+  }
+
+  if (!maps) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>Loading map...</Text>
+      </View>
+    );
+  }
+
+  const { default: RNMapView, Circle, Marker } = maps;
 
   return (
     <View style={styles.container}>
@@ -143,4 +202,6 @@ export default function MapView({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827' },
+  unavailable: { alignItems: 'center', justifyContent: 'center', padding: 24 },
+  unavailableText: { color: '#fff', textAlign: 'center' },
 });

@@ -13,6 +13,7 @@ import { randomUUID } from 'crypto';
 import { AiService } from '../ai/ai.service';
 import {
   AnnouncementClassification,
+  AnnouncementAiDetails,
   announcementsConflict,
   matchesAnnouncementAudience,
   shouldSkipOldAnnouncement,
@@ -50,6 +51,11 @@ interface AnnouncementRow {
   city: string | null;
   institution_id: string | null;
   conflict_flag: boolean;
+  ai_scope: AnnouncementAiDetails['scope'] | null;
+  is_class_suspension: boolean;
+  suspension_reason: AnnouncementAiDetails['suspension_reason'];
+  affected_levels: string | null;
+  ai_key_points: string[];
 }
 
 interface UserAudienceRow {
@@ -258,7 +264,7 @@ export class AlertsService {
       .eq('id', announcementId)
       .eq('status', 'pending_review')
       .select(
-        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag',
+        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
       )
       .maybeSingle();
     if (error) {
@@ -363,7 +369,7 @@ export class AlertsService {
     await this.push.sendUserNotification({
       userId,
       hazardId,
-      kind: 'weather_hazard',
+      kind: 'weather',
       sourceName: 'W.A.T.C.H. test simulation',
       title: `${typeName} - ${riskLevel} near ${locationName}`,
       body: `${guidance.do[0]}\n${guidance.do[1]}`,
@@ -393,7 +399,7 @@ export class AlertsService {
     const result = await this.supabase
       .from('notifications')
       .select(
-        'id,announcement_id,hazard_id,title,body,data,status,kind,source_name,source_url,sent_at,created_at,read_at,deleted_at,announcement:announcements(id,title,content,ai_summary,published_at,source,source_url,category,city,institution_id),hazard:hazards(id,category,severity,ai_summary,hazard_type,risk_level,safety_tips,created_at,expires_at,location_id)',
+        'id,announcement_id,hazard_id,title,body,data,status,kind,source_name,source_url,sent_at,created_at,read_at,deleted_at,announcement:announcements(id,title,content,ai_summary,published_at,source,source_url,category,institution_id),hazard:hazards(id,category,severity,ai_summary,hazard_type,risk_level,safety_tips,created_at,expires_at,location_id)',
       )
       .eq('user_id', userId)
       .is('deleted_at', null)
@@ -704,13 +710,20 @@ export class AlertsService {
     }
 
     const conflict = await this.findConflicts(source, post, classification);
+    const aiDetails = await this.ai.classifyAnnouncementDetails({
+      text: redactContactDetails(post.text),
+      sourceName: source.school_name,
+      sourceType: source.source_type === 'institution' ? 'institution' : 'lgu',
+      summary: classification.summary,
+      effectiveDate: classification.effective_date,
+    });
     const status: AnnouncementStatus =
       classification.confidence < 0.7 || conflict.length
         ? 'pending_review'
         : 'published';
     const summary = attributeSummary(
       source.school_name,
-      classification.summary,
+      aiDetails.short_summary,
     );
     const title =
       post.text
@@ -721,6 +734,7 @@ export class AlertsService {
     const announcementResult = await this.supabase
       .from('announcements')
       .insert({
+        source_name: source.school_name,
         source: source.school_name,
         title,
         content: post.text,
@@ -732,7 +746,15 @@ export class AlertsService {
         source_url: post.url,
         category: classification.category,
         affects_location: classification.affects_location,
-        effective_date: classification.effective_date?.slice(0, 10) ?? null,
+        effective_date:
+          aiDetails.effective_date?.slice(0, 10) ??
+          classification.effective_date?.slice(0, 10) ??
+          null,
+        ai_scope: aiDetails.scope,
+        is_class_suspension: aiDetails.is_class_suspension,
+        suspension_reason: aiDetails.suspension_reason,
+        affected_levels: aiDetails.affected_levels,
+        ai_key_points: aiDetails.key_points,
         scope: classification.scope,
         confidence: classification.confidence,
         status,
@@ -741,7 +763,7 @@ export class AlertsService {
         conflict_flag: conflict.length > 0,
       })
       .select(
-        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag',
+        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
       )
       .single();
     const { error } = announcementResult;
@@ -846,9 +868,8 @@ export class AlertsService {
       }
     }
     const kind =
-      announcement.source_type === 'institution'
-        ? 'announcement_institution'
-        : 'announcement_local';
+      announcement.ai_scope ??
+      (announcement.source_type === 'institution' ? 'institution' : 'local');
     const categoryLabels: Record<string, string> = {
       class_suspension: 'Class Suspension',
       holiday_no_class: 'No Classes',
@@ -858,8 +879,13 @@ export class AlertsService {
       evacuation: 'Evacuation',
       other: 'Local Alert',
     };
-    const title = `${categoryLabels[announcement.category ?? 'other'] ?? 'Local Alert'} - ${announcement.source} (${kind === 'announcement_local' ? 'Local' : 'Institution'})`;
-    const body = `${announcement.ai_summary ?? announcement.title}\nFor further details, please visit ${announcement.source_url ?? 'the official source'}`;
+    const sourceTitle = announcement.source.slice(0, 52);
+    const title = announcement.is_class_suspension
+      ? `No Classes · ${sourceTitle}`
+      : `${categoryLabels[announcement.category ?? 'other'] ?? 'Local Alert'} · ${sourceTitle}`;
+    const body = (announcement.ai_summary ?? announcement.title)
+      .slice(0, 240)
+      .trim();
     for (const profile of users) {
       const homeCity = profile.home_location_id
         ? cityByLocation.get(profile.home_location_id)
@@ -892,11 +918,7 @@ export class AlertsService {
         sourceUrl: announcement.source_url,
         title,
         body,
-        data: {
-          type: 'announcement',
-          announcementId: String(announcement.id),
-          url: announcement.source_url ?? '',
-        },
+        data: {},
       });
     }
   }
@@ -958,7 +980,20 @@ function isAnnouncementRow(value: unknown): value is AnnouncementRow {
     (typeof value.city === 'string' || value.city === null) &&
     (typeof value.institution_id === 'string' ||
       value.institution_id === null) &&
-    typeof value.conflict_flag === 'boolean'
+    typeof value.conflict_flag === 'boolean' &&
+    (value.ai_scope === null ||
+      value.ai_scope === 'institution' ||
+      value.ai_scope === 'local' ||
+      value.ai_scope === 'weather') &&
+    typeof value.is_class_suspension === 'boolean' &&
+    (value.suspension_reason === null ||
+      ['weather', 'unhealthy_air', 'extreme_heat', 'flood', 'other'].includes(
+        String(value.suspension_reason),
+      )) &&
+    (typeof value.affected_levels === 'string' ||
+      value.affected_levels === null) &&
+    Array.isArray(value.ai_key_points) &&
+    value.ai_key_points.every((point) => typeof point === 'string')
   );
 }
 
