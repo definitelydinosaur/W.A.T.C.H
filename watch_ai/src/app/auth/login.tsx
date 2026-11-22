@@ -27,7 +27,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
-  const { AnimatedView, animatedStyle, isTransitioning } = useAuthCardTransition();
+  const { AnimatedView, animatedStyle, isTransitioning } =
+    useAuthCardTransition();
 
   const handleLogin = async () => {
     const trimmedEmail = email.trim().toLowerCase();
@@ -44,7 +45,10 @@ export default function LoginScreen() {
     }
 
     if (!apiUrl) {
-      Alert.alert('Login unavailable', 'Set EXPO_PUBLIC_API_URL to your backend URL.');
+      Alert.alert(
+        'Login unavailable',
+        'Set EXPO_PUBLIC_API_URL to your backend URL.',
+      );
       return;
     }
 
@@ -69,12 +73,25 @@ export default function LoginScreen() {
       if (!response.ok) {
         const message = Array.isArray(result.message)
           ? result.message.join('\n')
-          : result.message ?? 'Please check your credentials and try again.';
+          : (result.message ?? 'Please check your credentials and try again.');
         throw new Error(message);
       }
 
       if (!result.accessToken || !result.refreshToken) {
         throw new Error('The server did not return a valid login session.');
+      }
+
+      const profileResponse = await fetch(`${apiUrl}/auth/me`, {
+        headers: { Authorization: `Bearer ${result.accessToken}` },
+      });
+      const profile: { role?: string; message?: string | string[] } =
+        await profileResponse.json();
+      if (!profileResponse.ok) {
+        throw new Error(
+          Array.isArray(profile.message)
+            ? profile.message.join('\n')
+            : (profile.message ?? 'Your account role could not be loaded.'),
+        );
       }
 
       const { error } = await supabase.auth.setSession({
@@ -86,12 +103,19 @@ export default function LoginScreen() {
         throw new Error(error.message);
       }
 
-      const welcomeName = result.user?.name?.trim() || trimmedEmail.split('@')[0];
-      router.replace({ pathname: '/home', params: { welcomeName } });
+      const welcomeName =
+        result.user?.name?.trim() || trimmedEmail.split('@')[0];
+      if (profile.role === 'admin') {
+        router.replace('/admin');
+      } else {
+        router.replace({ pathname: '/home', params: { welcomeName } });
+      }
     } catch (error) {
       Alert.alert(
         'Login failed',
-        error instanceof Error ? error.message : 'Unable to connect to the server. Please try again.',
+        error instanceof Error
+          ? error.message
+          : 'Unable to connect to the server. Please try again.',
       );
     } finally {
       clearTimeout(loadingTimeout);
@@ -115,7 +139,11 @@ export default function LoginScreen() {
           style={[styles.animatedContainer, animatedStyle]}
         >
           <View style={styles.cardWrap}>
-            <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
+            <BlurView
+              intensity={40}
+              tint="light"
+              style={StyleSheet.absoluteFill}
+            />
             <LinearGradient
               colors={['rgba(60,60,90,0.35)', 'rgba(150,150,170,0.25)']}
               start={{ x: 0, y: 0 }}
@@ -158,7 +186,9 @@ export default function LoginScreen() {
                   />
                   <Text
                     style={styles.forgotPasswordText}
-                    onPress={() => alert('Temporary: forgot password screen not ready yet')}
+                    onPress={() =>
+                      alert('Temporary: forgot password screen not ready yet')
+                    }
                   >
                     Forgot Password?
                   </Text>
@@ -197,8 +227,8 @@ export default function LoginScreen() {
                   Create Account
                 </Text>
               </Text>
+            </View>
           </View>
-        </View>
         </AnimatedView>
       </KeyboardAvoidingView>
       {showSlowLoading && (
