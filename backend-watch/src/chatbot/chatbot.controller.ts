@@ -48,8 +48,6 @@ export class ChatbotController {
 
   @Post()
   async chat(@Body() body: ChatRequestDto) {
-    console.log('Received chatbot request:', body);
-
     return this.chatbotService.sendMessage(
       body.question,
       body.history || [],

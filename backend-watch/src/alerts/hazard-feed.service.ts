@@ -72,9 +72,30 @@ type PagasaRow = {
   notification_announcement_id: number | null;
 };
 
+type WeatherAlertEventRow = {
+  id: string;
+  alert_type: 'extreme_heat' | 'unhealthy_air' | 'heavy_rain' | 'pagasa_weather';
+  city: string;
+  province: string | null;
+  area_key: string;
+  severity: string;
+  measurement: unknown;
+  measured_at: string;
+  sustained_since: string;
+  title: string;
+  ai_summary: string;
+  safety: unknown;
+  source: 'weather_auto' | 'pagasa';
+  source_name: string;
+  source_url: string | null;
+  status: 'active' | 'resolved';
+  resolved_at: string | null;
+  notified_count: number;
+};
+
 type FeedEvent = {
   id: string;
-  item_type: 'hazard' | 'pagasa';
+  item_type: 'hazard' | 'pagasa' | 'weather_event';
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -201,6 +222,40 @@ export class HazardFeedService {
 
     const notifiedEvents = visible.flatMap((event) => {
       const notification = notificationByEvent.get(event.id);
+      if (
+        event.item_type === 'weather_event' &&
+        event.hazard_ids.length === 0 &&
+        event.source_type === 'weather_auto'
+      ) {
+        return [
+          {
+            ...event,
+            id: event.id,
+            user_id: userId,
+            announcement_id: null,
+            hazard_id: null,
+            status: 'Sent',
+            kind: 'weather',
+            created_at: event.published_at,
+            read_at: null,
+            deleted_at: null,
+            body: event.content,
+            hazard: {
+              hazard_type: event.category,
+              risk_level: event.severity,
+              ai_summary: event.ai_summary,
+              safety_tips: event.safety_tips,
+              source_type: event.source_type,
+              source_name: event.source_name,
+              city: event.city,
+              province: event.province,
+              observed_at: event.observed_at,
+              measurements: event.measurements,
+            },
+            announcement: null,
+          },
+        ];
+      }
       if (!notification) return [];
       return [
         {
@@ -246,7 +301,7 @@ export class HazardFeedService {
   }
 
   private async loadEvents(): Promise<FeedEvent[]> {
-    const [hazardsResult, locations, pagasaResult] = await Promise.all([
+    const [hazardsResult, locations, pagasaResult, weatherEventsResult] = await Promise.all([
       this.supabase
         .from('hazards')
         .select(
@@ -262,6 +317,11 @@ export class HazardFeedService {
         )
         .order('published_at', { ascending: false })
         .limit(EVENT_PAGE_LIMIT),
+      this.supabase
+        .from('weather_alert_events')
+        .select('id,alert_type,city,province,area_key,severity,measurement,measured_at,sustained_since,title,ai_summary,safety,source,source_name,source_url,status,resolved_at,notified_count')
+        .order('measured_at', { ascending: false })
+        .limit(EVENT_PAGE_LIMIT),
     ]);
     if (hazardsResult.error) {
       throw new ServiceUnavailableException(
@@ -273,21 +333,22 @@ export class HazardFeedService {
         `PAGASA alerts could not be loaded: ${pagasaResult.error.message}`,
       );
     }
+    if (weatherEventsResult.error) {
+      throw new ServiceUnavailableException(
+        `Weather alert events could not be loaded: ${weatherEventsResult.error.message}`,
+      );
+    }
     const hazardRows = (hazardsResult.data ?? []) as HazardRow[];
     const pagasaRows = (pagasaResult.data ?? []) as PagasaRow[];
+    const weatherEventRows =
+      (weatherEventsResult.data ?? []) as WeatherAlertEventRow[];
     const locationById = new Map(
       locations.map((location) => [location.loc_id, location]),
     );
-    const resolvedHazards = hazardRows
-      .filter((hazard) => !isTestHazard(hazard))
-      .map((hazard) => this.toHazardEvent(hazard, locationById, locations))
-      .filter((event): event is FeedEvent => event !== null);
-    const dedupedHazards = dedupeHazards(resolvedHazards);
-    const counts = await this.getNotifications(
-      [...new Set(dedupedHazards.flatMap((event) => event.hazard_ids))],
-      [],
+    // Map/flood hazards belong to the map, not automated weather announcements.
+    const dedicatedEvents = weatherEventRows.map((event) =>
+      this.toWeatherAlertEvent(event),
     );
-    applyCounts(dedupedHazards, counts);
 
     const pagasaIds = pagasaRows
       .map((alert) => alert.notification_announcement_id)
@@ -299,10 +360,52 @@ export class HazardFeedService {
         this.toPagasaEvent(alert, locations, pagasaCounts),
       ),
     );
-    return [...dedupedHazards, ...pagasaEvents].sort(
+    return [...dedicatedEvents, ...pagasaEvents].sort(
       (left, right) =>
         Date.parse(right.published_at) - Date.parse(left.published_at),
     );
+  }
+
+  private toWeatherAlertEvent(event: WeatherAlertEventRow): FeedEvent {
+    const category =
+      event.alert_type === 'extreme_heat'
+        ? 'Extreme Heat'
+        : event.alert_type === 'unhealthy_air'
+          ? 'Unhealthy Air'
+          : event.alert_type === 'heavy_rain'
+            ? 'Heavy Rain/Flood'
+            : 'PAGASA/Weather';
+    return {
+      id: `weather-event-${event.id}`,
+      item_type: 'weather_event',
+      announcement_id: null,
+      hazard_id: null,
+      pagasa_id: null,
+      title: event.title,
+      content: event.ai_summary,
+      ai_summary: event.ai_summary,
+      source_name: event.source_name,
+      source_url: event.source_url,
+      source_type: event.source,
+      category,
+      severity: event.severity,
+      event_type: event.alert_type,
+      area_key: event.area_key,
+      city: event.city,
+      province: event.province,
+      place_name: event.province ? `${event.city}, ${event.province}` : event.city,
+      affected_areas: [event.city],
+      requires_area_review: false,
+      published_at: event.measured_at,
+      observed_at: event.measured_at,
+      measurements: event.measurement,
+      notification_counts: {},
+      audience_count: event.notified_count,
+      hazard_ids: [],
+      active: event.status === 'active',
+      window_key: event.id,
+      safety_tips: event.safety,
+    };
   }
 
   private toHazardEvent(

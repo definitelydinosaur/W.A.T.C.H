@@ -109,6 +109,11 @@ export class AdminFeaturesController {
     return this.features.sendManualNotification(request.user.id, body);
   }
 
+  @Post('notifications/test')
+  sendTestPush(@Req() request: AdminRequest) {
+    return this.features.sendTestPush(request.user.id);
+  }
+
   @Get('announcements')
   getAnnouncements(
     @Query('page') page?: string,
@@ -130,6 +135,22 @@ export class AdminFeaturesController {
     @Req() request: AdminRequest,
   ) {
     return this.features.resendAnnouncementToAllUsers(id, request.user.id);
+  }
+
+  @Post('weather-events/:id/resend-test')
+  resendWeatherEventToMe(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendWeatherEvent(id, request.user.id, 'me');
+  }
+
+  @Post('weather-events/:id/resend-all')
+  resendWeatherEventToAffectedCity(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendWeatherEvent(id, request.user.id, 'all');
   }
 
   @Post('hazards/:id/resend-test')

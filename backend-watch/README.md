@@ -11,16 +11,35 @@ npm install
 Copy-Item .env.example .env
 ```
 
-Set at least `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env`. The service-role key is server-only. Configure `AI_PROVIDER`, `AI_API_KEY`, and `AI_MODEL` for announcement classification and generated weather guidance. `AI_PROVIDER` supports `anthropic` and `gemini`. The older `/ai` helper endpoints use `GEMINI_API_KEY` separately.
+Set `SUPABASE_URL` and either `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in `.env`. These service keys are server-only. AI uses the shared backend provider layer; `AI_PROVIDER` supports `gemini`, `groq`, `openrouter`, and `anthropic`. Gemini is the default provider and `gemini-3.5-flash-lite` is the default model. Set `AI_API_KEY` to enable AI. Without it, the backend still starts and official-source classification/summaries use source-only fallbacks; system announcement formatting reports that AI is not configured. Weather alert summaries remain rule/template-based.
+
+The optional `CHATBOT_API_URL` points to a separately deployed chatbot service. Leave it empty to disable chatbot requests without affecting backend startup.
+
+Free-tier providers may use submitted data to improve their products; Google's unpaid Gemini API terms also say human reviewers may process prompts and outputs. Google requires API users to be at least 18 and prohibits API clients directed to or likely accessed by under-18s. W.A.T.C.H. is student-facing, so **do not enable Google's unpaid Gemini API for the deployed app** unless Google confirms your use is permitted. Do not send sensitive, confidential, personal, or user-linked data to any free-tier provider. The backend's announcement prompts contain announcement text only; they do not include user profile fields, tokens, or saved locations. Review your provider's current terms before production use.
+
+### AI setup and smoke test
+
+For an environment whose audience is allowed by the selected provider's terms, create a Gemini key at [Google AI Studio API keys](https://aistudio.google.com/apikey), then put it in `AI_API_KEY` in the ignored `backend-watch/.env`. Use `AI_PROVIDER=gemini` and `AI_MODEL=gemini-3.5-flash-lite`; leave `AI_BASE_URL` empty unless using a compatible API proxy. Keep the key on the backend, never in Expo variables or app code. See Google's [current model documentation](https://ai.google.dev/gemini-api/docs/models) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits); quotas depend on project/account and can change.
+
+To smoke-test, sign in as an admin, open the **System** section, enter `System maintenance tomorrow 10pm to 12am, app may not work`, and press **Format with AI**. `AI is not configured` means `AI_API_KEY` is blank; HTTP 401/403 means the provider rejected the key/account; HTTP 429 means a rate limit was reached; HTTP 404 means check provider/model/base URL; and `AI response was invalid after one repair attempt` means the model response did not pass JSON/schema validation. Classification and summaries use source-only fallbacks when AI fails; this admin formatting action reports the failure instead.
 
 Optional variables:
 
 - `FACEBOOK_ACCESS_TOKEN` — authorized Meta Graph API access for eligible public pages.
-- `EXPO_ACCESS_TOKEN` — authenticated Expo push delivery.
+- `EXPO_ACCESS_TOKEN` — only needed if Expo enhanced push security is enabled.
+- `AI_BASE_URL` — optional provider API root override.
+- `CHATBOT_API_URL` — optional chatbot service base URL; omitted means chatbot is unavailable.
+- `WEATHER_ALERT_SUSTAINED_MINUTES` — sustained weather-condition duration (default `60`).
+- `TRUSTED_ANNOUNCEMENT_DOMAINS` — comma-separated trusted source hostnames.
+- `ANNOUNCEMENT_ADMIN_TOKEN` — optional server-only token for legacy admin confirmation flows.
+- `WATCH_ADMIN_PASSWORD` — only needed by the one-time `scripts/bootstrap-admin.mjs` script.
+- `HAZARD_CONSECUTIVE_READINGS` — consecutive fresh readings required by the legacy hazard monitor.
 - `SAFETY_TIP_INTERVAL_HOURS` — ongoing hazard-tip interval, from 2 to 3 hours (default `3`).
 - `SAFETY_TIP_MAX_PER_HAZARD_USER` — maximum ongoing tips per hazard and user (default `3`, maximum `5`).
 - `ENABLE_TEST_ENDPOINTS=true` — enables the test-hazard endpoint; leave off outside development.
 - `PORT` — API port, default `3000`.
+
+The AI provider uses JSON mode where the provider supports it, applies bounded retries/backoff for temporary errors, and validates generated JSON before use. Current Gemini model limits are project/tier-specific and can change; check them in Google AI Studio's rate-limit page.
 
 Run the API:
 
@@ -41,6 +60,8 @@ Push-token registration also needs [202611080001_push_token_registration.sql](./
 Apply [202611190001_announcement_classification_and_safety_tips.sql](./supabase/migrations/202611190001_announcement_classification_and_safety_tips.sql) in the Supabase SQL editor for the announcements-to-institutions foreign key, its backfill, structured classification fields, and safety-tip notification kind/deduplication index. Its `NOTICE` reports matched and unmatched announcement rows. The alert list uses the named FK and a default left embed, so local/PAGASA announcements remain visible with a null institution.
 
 Apply [202611200001_admin_system_announcements.sql](./supabase/migrations/202611200001_admin_system_announcements.sql) after the classification migration. It adds `is_admin()`, the system announcement scope/kind, RLS-protected admin drafts, and idempotency indexes.
+
+Apply [202611230002_notifications_service_role_grants.sql](./supabase/migrations/202611230002_notifications_service_role_grants.sql) to ensure the backend service-role key can insert and update notification records. Admin notification sends rely on the backend's `SUPABASE_SERVICE_ROLE_KEY` (or legacy `SUPABASE_SERVICE_KEY`); do not use an anon/publishable key for either variable.
 
 Create or update the administrator account without storing a password in source control:
 

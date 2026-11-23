@@ -126,6 +126,10 @@ export class AdminFeaturesService {
     private readonly hazardFeed: HazardFeedService,
   ) {}
 
+  async sendTestPush(adminId: string) {
+    return this.push.sendTestPushToUser(adminId);
+  }
+
   async getInstitutions() {
     const { data, error } = await this.supabase
       .from('institutions')
@@ -483,6 +487,53 @@ export class AdminFeaturesService {
       limit,
       has_more: items.length > start + limit,
     };
+  }
+
+  async resendWeatherEvent(
+    id: string,
+    adminId: string,
+    audience: 'me' | 'all',
+  ) {
+    const { data: event, error } = await this.supabase
+      .from('weather_alert_events')
+      .select('id,title,ai_summary,city,province,source_name,source_url,alert_type,severity,measurement,safety,measured_at,notified_count')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) {
+      throw new ServiceUnavailableException(
+        `Weather alert event could not be loaded: ${error.message}`,
+      );
+    }
+    if (!event) throw new NotFoundException('Weather alert event was not found.');
+    const recipients =
+      audience === 'me'
+        ? [adminId]
+        : await this.getRecipientsByCity(event.city, event.province);
+    const replayId = await this.createReplayAnnouncement({
+      title: event.title,
+      body: event.ai_summary,
+      sourceName: event.source_name,
+      sourceUrl: event.source_url,
+      category: event.alert_type,
+      aiScope: 'weather',
+    });
+    const result = await this.sendToUsers(recipients, {
+      title: event.title,
+      body: event.ai_summary,
+      kind: 'weather',
+      announcementId: String(replayId),
+      sourceName: event.source_name,
+      sourceUrl: event.source_url,
+    });
+    if (audience === 'all') {
+      await this.supabase
+        .from('weather_alert_events')
+        .update({
+          notified_count: event.notified_count ?? recipients.length,
+        })
+        .eq('id', id);
+    }
+    return { ...result, audience_count: recipients.length };
   }
 
   async resendAnnouncementToAllUsers(id: string, adminId: string) {
@@ -1028,6 +1079,41 @@ export class AdminFeaturesService {
       );
     }
     return { announcements: data ?? [] };
+  }
+
+  private async getRecipientsByCity(city: string, province: string | null) {
+    const { data, error } = await this.supabase
+      .from('locations')
+      .select('user_id,city,province')
+      .not('user_id', 'is', null);
+    if (error) {
+      throw new ServiceUnavailableException(
+        `Affected-city audience could not be loaded: ${error.message}`,
+      );
+    }
+    const normalizedCity = city.trim().toLocaleLowerCase();
+    const normalizedProvince =
+      province?.trim().toLocaleLowerCase() ?? '';
+    return [
+      ...new Set(
+        (data ?? [])
+          .filter((row) => {
+            if (
+              typeof row.user_id !== 'string' ||
+              typeof row.city !== 'string'
+            )
+              return false;
+            if (row.city.trim().toLocaleLowerCase() !== normalizedCity)
+              return false;
+            return (
+              !normalizedProvince ||
+              typeof row.province !== 'string' ||
+              row.province.trim().toLocaleLowerCase() === normalizedProvince
+            );
+          })
+          .map((row) => row.user_id as string),
+      ),
+    ];
   }
 
   private async getRecipients(

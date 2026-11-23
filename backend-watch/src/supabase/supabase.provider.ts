@@ -7,10 +7,10 @@ export const SupabaseProvider = {
   provide: SUPABASE_CLIENT,
   inject: [ConfigService],
   useFactory: (configService: ConfigService) => {
-    const supabaseUrl = configService.get<string>('SUPABASE_URL');
+    const supabaseUrl = configService.get<string>('SUPABASE_URL')?.trim();
     const supabaseKey =
-      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
-      configService.get<string>('SUPABASE_SERVICE_KEY');
+      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim() ||
+      configService.get<string>('SUPABASE_SERVICE_KEY')?.trim();
 
     if (!supabaseUrl || !supabaseKey) {
       throw new Error(
@@ -18,6 +18,12 @@ export const SupabaseProvider = {
       );
     }
 
-    return createClient(supabaseUrl, supabaseKey);
+    return createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
   },
 };

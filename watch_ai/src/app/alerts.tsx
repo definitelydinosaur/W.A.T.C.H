@@ -189,13 +189,22 @@ export default function AlertsScreen() {
   const [undoLabel, setUndoLabel] = useState('');
   const alertsLength = useRef(0);
   const paging = useRef(false);
+  const requestVersion = useRef(0);
+  const activeFilter = useRef(filter);
   const notificationOffset = useRef(0);
   const weatherPage = useRef(0);
 
   const loadAlerts = useCallback(
     async (reset = true) => {
+      if (filter !== activeFilter.current) return;
       if (!reset && paging.current) return;
-      if (!reset) paging.current = true;
+      const requestId = reset
+        ? ++requestVersion.current
+        : requestVersion.current;
+      paging.current = true;
+      const isCurrentRequest = () =>
+        requestId === requestVersion.current &&
+        filter === activeFilter.current;
       if (reset) {
         setLoading(true);
         setError('');
@@ -205,6 +214,7 @@ export default function AlertsScreen() {
       }
       const { data: sessionData, error: sessionError } =
         await supabase.auth.getSession();
+      if (!isCurrentRequest()) return;
       if (sessionError) {
         setError(sessionError.message);
         setLoading(false);
@@ -246,6 +256,7 @@ export default function AlertsScreen() {
           start,
           start + PAGE_SIZE - 1,
         );
+        if (!isCurrentRequest()) return;
         if (queryError) {
           setError(queryError.message);
           setLoading(false);
@@ -289,6 +300,7 @@ export default function AlertsScreen() {
             );
             result = (await response.json()) as typeof result;
           } catch (requestError) {
+            if (!isCurrentRequest()) return;
             setError(
               requestError instanceof Error
                 ? requestError.message
@@ -299,6 +311,7 @@ export default function AlertsScreen() {
             paging.current = false;
             return;
           }
+          if (!isCurrentRequest()) return;
           if (!response.ok) {
             const message = Array.isArray(result.message)
               ? result.message.join('\n')
@@ -320,6 +333,7 @@ export default function AlertsScreen() {
       const rows = [...notificationRows, ...weatherRows].sort(
         (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at),
       );
+      if (!isCurrentRequest()) return;
       setAlerts((current) => {
         const next = reset ? rows : [...current, ...rows];
         alertsLength.current = next.length;
@@ -581,9 +595,13 @@ export default function AlertsScreen() {
             key={value}
             onPress={() => {
               if (value !== filter) {
+                activeFilter.current = value;
+                requestVersion.current += 1;
+                paging.current = false;
                 alertsLength.current = 0;
                 setAlerts([]);
                 setHasMore(true);
+                setLoading(true);
                 setFilter(value);
               }
             }}
@@ -623,6 +641,7 @@ export default function AlertsScreen() {
         </View>
       ) : (
         <FlatList
+          key={filter}
           data={visibleAlerts}
           keyExtractor={(item) => item.id}
           renderItem={renderAlert}

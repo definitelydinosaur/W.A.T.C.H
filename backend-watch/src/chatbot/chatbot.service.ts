@@ -1,64 +1,57 @@
 import {
   Injectable,
-  InternalServerErrorException,
+  Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { isAxiosError } from 'axios';
 
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
 @Injectable()
 export class ChatbotService {
-  private readonly chatbotApiUrl: string;
+  private readonly logger = new Logger(ChatbotService.name);
+  private readonly chatbotApiUrl: string | null;
 
   constructor(
-  private readonly httpService: HttpService,
-  private readonly configService: ConfigService,
-) {
-  const apiUrl = this.configService.get<string>('CHATBOT_API_URL');
-
-  if (!apiUrl) {
-    throw new Error('CHATBOT_API_URL is not configured!');
+    private readonly httpService: HttpService,
+    configService: ConfigService,
+  ) {
+    const apiUrl = configService.get<string>('CHATBOT_API_URL')?.trim();
+    this.chatbotApiUrl = apiUrl ? apiUrl.replace(/\/+$/, '') : null;
   }
 
-  this.chatbotApiUrl = apiUrl.replace(/\/+$/, '');
-}
-  async sendMessage(question: string, history: any[] = []) {
+  async sendMessage(question: string, history: ChatMessage[] = []) {
+    if (!this.chatbotApiUrl) {
+      throw new ServiceUnavailableException(
+        'The chatbot is currently unavailable. Try again later.',
+      );
+    }
+
     try {
       const response = await firstValueFrom(
         this.httpService.post(
           `${this.chatbotApiUrl}/chat`,
-          {
-            question,
-            history,
-          },
+          { question, history },
+          { timeout: 5000 },
         ),
       );
-
       return response.data;
-
     } catch (error: unknown) {
-      const errorDetails = isAxiosError(error)
-        ? error.response?.data || error.message
-        : error instanceof Error
-          ? error.message
-          : String(error);
-
-      console.error(
-        'Chatbot API error:',
-        JSON.stringify(errorDetails, null, 2),
-      );
-
-      if (isAxiosError(error) && error.code === 'ECONNREFUSED') {
-        throw new ServiceUnavailableException(
-          'The chatbot service is currently unavailable.',
+      if (isAxiosError(error)) {
+        const status = error.response?.status;
+        this.logger.warn(
+          status
+            ? `Chatbot service returned HTTP ${status}.`
+            : `Chatbot service request failed (${error.code ?? 'network error'}).`,
         );
+      } else {
+        this.logger.warn('Chatbot service request failed.');
       }
-
-      throw new InternalServerErrorException(
-        'Failed to process chatbot request.',
+      throw new ServiceUnavailableException(
+        'The chatbot is currently unavailable. Try again later.',
       );
     }
   }

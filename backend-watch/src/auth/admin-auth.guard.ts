@@ -23,10 +23,9 @@ export class AdminAuthGuard implements CanActivate {
     }
 
     const supabaseUrl = this.config.get<string>('SUPABASE_URL')?.trim();
-    const serviceKey = (
-      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
-      this.config.get<string>('SUPABASE_SERVICE_KEY')
-    )?.trim();
+    const serviceKey =
+      this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim() ||
+      this.config.get<string>('SUPABASE_SERVICE_KEY')?.trim();
     if (!supabaseUrl || !serviceKey) {
       throw new Error('Supabase server credentials are not configured.');
     }

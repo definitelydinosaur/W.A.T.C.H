@@ -38,7 +38,7 @@ type SystemDraft = {
 };
 type AutomatedAnnouncement = {
   id: string;
-  item_type: "hazard" | "pagasa";
+  item_type: "hazard" | "pagasa" | "weather_event";
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -340,6 +340,28 @@ export default function AdminScreen() {
     }
   };
 
+  const sendTestPush = async () => {
+    setSending(true);
+    setSendResult("");
+    try {
+      const result = await adminRequest<{
+        sent: boolean;
+        no_token: boolean;
+        raw: unknown;
+        delivery_error: string | null;
+      }>("/admin/features/notifications/test", { method: "POST" });
+      setSendResult(
+        result.sent
+          ? `Test push ticket accepted.\nRaw Expo response: ${JSON.stringify(result.raw)}`
+          : `Test push failed.\n${result.delivery_error ?? "Unknown Expo error"}\nRaw Expo response: ${JSON.stringify(result.raw)}`,
+      );
+    } catch (error) {
+      showAdminAlert("Test push failed", prettyError(error));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const formatDraft = async (value: string, draftId?: string) => {
     if (!value.trim()) {
       showAdminAlert(
@@ -408,11 +430,12 @@ export default function AdminScreen() {
               failed: number;
               no_token: number;
               announcement_id: number;
+              failure_details?: string[];
             }>(`/admin/features/system-drafts/${draft.id}/publish`, {
               method: "POST",
             });
             setSystemResult(
-              `Published · Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}`,
+              `Published · Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? ` · ${result.failure_details.join("; ")}` : ""}`,
             );
             setDraft(null);
             setRawText("");
@@ -457,7 +480,9 @@ export default function AdminScreen() {
     const path =
       item.item_type === "pagasa"
         ? `/admin/features/pagasa/${item.pagasa_id}/resend-test`
-        : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-test`;
+        : item.item_type === "weather_event"
+          ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-test`
+          : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-test`;
     confirmAdminAction(
       "Re-send as test to me?",
       "This sends a test copy only to your admin account.",
@@ -487,10 +512,14 @@ export default function AdminScreen() {
     const path =
       item.item_type === "pagasa"
         ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
-        : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
+        : item.item_type === "weather_event"
+          ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-all`
+          : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
     confirmAdminAction(
       "Re-send to all users?",
-      `This creates a test copy and sends it to every registered user, regardless of their saved location. ${item.place_name} may not apply to everyone.`,
+      item.item_type === "weather_event"
+        ? `This sends the event only to users in ${item.place_name}.`
+        : `This creates a test copy and sends it to every registered user, regardless of their saved location. ${item.place_name} may not apply to everyone.`,
       "Send to all",
       () => {
         void (async () => {
@@ -729,6 +758,15 @@ export default function AdminScreen() {
             >
               <Text style={styles.primaryButtonText}>
                 {sending ? "Sending…" : "Send notification"}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.secondaryButton, sending && styles.disabled]}
+              disabled={sending}
+              onPress={() => void sendTestPush()}
+            >
+              <Text style={styles.secondaryButtonText}>
+                Send test push to my device
               </Text>
             </Pressable>
             {sendResult ? (
