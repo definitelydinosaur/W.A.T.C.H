@@ -249,4 +249,9 @@ export class AdminFeaturesController {
   getSystemAnnouncements() {
     return this.features.getSystemAnnouncements();
   }
+
+  @Delete('system-announcements/:id')
+  removeSystemAnnouncement(@Param('id') id: string) {
+    return this.features.removeSystemAnnouncement(id);
+  }
 }

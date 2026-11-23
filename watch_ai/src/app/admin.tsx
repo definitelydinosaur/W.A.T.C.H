@@ -7,13 +7,13 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
+import { SymbolView } from "expo-symbols";
 import { router } from "expo-router";
 import supabase from "../lib/supabase";
 
@@ -160,7 +160,7 @@ export default function AdminScreen() {
   const [message, setMessage] = useState("");
   const [sourceName, setSourceName] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
-  const [audience, setAudience] = useState<"all" | "me" | "institution">("me");
+  const [audience, setAudience] = useState<"all" | "institution">("all");
   const [institutions, setInstitutions] = useState<
     { id: string; name: string; short_name: string | null }[]
   >([]);
@@ -194,6 +194,9 @@ export default function AdminScreen() {
     }[]
   >([]);
   const [systemResult, setSystemResult] = useState("");
+  const [removingAnnouncementId, setRemovingAnnouncementId] = useState<
+    number | null
+  >(null);
 
   useEffect(() => {
     let active = true;
@@ -280,6 +283,35 @@ export default function AdminScreen() {
     }
   }, []);
 
+  const removeSystemAnnouncement = (
+    item: (typeof publishedAnnouncements)[number],
+  ) => {
+    confirmAdminAction(
+      "Remove system announcement?",
+      `"${item.title}" will be removed from the past system announcements list.`,
+      "Remove",
+      () => {
+        void (async () => {
+          setRemovingAnnouncementId(item.id);
+          try {
+            await adminRequest(
+              `/admin/features/system-announcements/${item.id}`,
+              { method: "DELETE" },
+            );
+            setPublishedAnnouncements((current) =>
+              current.filter((announcement) => announcement.id !== item.id),
+            );
+          } catch (error) {
+            showAdminAlert("Unable to remove announcement", prettyError(error));
+          } finally {
+            setRemovingAnnouncementId(null);
+          }
+        })();
+      },
+      "destructive",
+    );
+  };
+
   useEffect(() => {
     if (!verified) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -294,7 +326,7 @@ export default function AdminScreen() {
     };
   }, [loadAutomated, loadSystemAnnouncements, section, verified]);
 
-  const sendManual = async (target: "all" | "me" | "institution") => {
+  const sendManual = async (target: "all" | "institution") => {
     if (!title.trim() || !message.trim()) {
       showAdminAlert(
         "Missing details",
@@ -335,28 +367,6 @@ export default function AdminScreen() {
       );
     } catch (error) {
       showAdminAlert("Send failed", prettyError(error));
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const sendTestPush = async () => {
-    setSending(true);
-    setSendResult("");
-    try {
-      const result = await adminRequest<{
-        sent: boolean;
-        no_token: boolean;
-        raw: unknown;
-        delivery_error: string | null;
-      }>("/admin/features/notifications/test", { method: "POST" });
-      setSendResult(
-        result.sent
-          ? `Test push ticket accepted.\nRaw Expo response: ${JSON.stringify(result.raw)}`
-          : `Test push failed.\n${result.delivery_error ?? "Unknown Expo error"}\nRaw Expo response: ${JSON.stringify(result.raw)}`,
-      );
-    } catch (error) {
-      showAdminAlert("Test push failed", prettyError(error));
     } finally {
       setSending(false);
     }
@@ -476,38 +486,6 @@ export default function AdminScreen() {
     );
   };
 
-  const resendToMe = (item: AutomatedAnnouncement) => {
-    const path =
-      item.item_type === "pagasa"
-        ? `/admin/features/pagasa/${item.pagasa_id}/resend-test`
-        : item.item_type === "weather_event"
-          ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-test`
-          : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-test`;
-    confirmAdminAction(
-      "Re-send as test to me?",
-      "This sends a test copy only to your admin account.",
-      "Re-send",
-      () => {
-        void (async () => {
-          try {
-            const result = await adminRequest<{
-              sent: number;
-              failed: number;
-              no_token: number;
-              failure_details?: string[];
-            }>(path, { method: "POST" });
-            showAdminAlert(
-              "Admin test resend result",
-              `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? `\n${result.failure_details.join("\n")}` : ""}`,
-            );
-          } catch (error) {
-            showAdminAlert("Admin test resend failed", prettyError(error));
-          }
-        })();
-      },
-    );
-  };
-
   const resendToAllUsers = (item: AutomatedAnnouncement) => {
     const path =
       item.item_type === "pagasa"
@@ -621,15 +599,30 @@ export default function AdminScreen() {
           <Text style={styles.headerTitle}>Control Center</Text>
         </View>
         <View style={styles.headerActions}>
-          <Text style={styles.modeLabel}>{darkMode ? "Dark" : "Light"}</Text>
-          <Switch
-            value={darkMode}
-            onValueChange={setDarkMode}
-            accessibilityRole="switch"
-            accessibilityLabel="Dark mode"
-            trackColor={{ false: "#B9ACC9", true: "#8E53C8" }}
-            thumbColor={darkMode ? "#FFFFFF" : "#F7F2FC"}
-          />
+          <Pressable
+            onPress={() => setDarkMode((current) => !current)}
+            accessibilityRole="button"
+            accessibilityLabel={`Switch to ${darkMode ? "light" : "dark"} mode`}
+            style={styles.themeButton}
+          >
+            <SymbolView
+              name={
+                darkMode
+                  ? {
+                      ios: "moon.fill",
+                      android: "dark_mode",
+                      web: "dark_mode",
+                    }
+                  : {
+                      ios: "sun.max.fill",
+                      android: "light_mode",
+                      web: "light_mode",
+                    }
+              }
+              tintColor={darkMode ? "#D5B6FF" : "#65359A"}
+              size={20}
+            />
+          </Pressable>
           <Pressable onPress={signOut} accessibilityRole="button">
             <Text style={styles.logout}>Log out</Text>
           </Pressable>
@@ -718,12 +711,6 @@ export default function AdminScreen() {
             <Text style={styles.label}>Audience</Text>
             <View style={styles.wrapRow}>
               <ChoiceChip
-                label="Send to me only (test)"
-                selected={audience === "me"}
-                onPress={() => setAudience("me")}
-                styles={styles}
-              />
-              <ChoiceChip
                 label="All users"
                 selected={audience === "all"}
                 onPress={() => setAudience("all")}
@@ -758,15 +745,6 @@ export default function AdminScreen() {
             >
               <Text style={styles.primaryButtonText}>
                 {sending ? "Sending…" : "Send notification"}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.secondaryButton, sending && styles.disabled]}
-              disabled={sending}
-              onPress={() => void sendTestPush()}
-            >
-              <Text style={styles.secondaryButtonText}>
-                Send test push to my device
               </Text>
             </Pressable>
             {sendResult ? (
@@ -906,14 +884,6 @@ export default function AdminScreen() {
                       </Pressable>
                     </View>
                   ) : null}
-                  <Pressable
-                    onPress={() => resendToMe(item)}
-                    style={styles.secondaryButton}
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      Re-send as test to me
-                    </Text>
-                  </Pressable>
                   <Pressable
                     onPress={() => resendToAllUsers(item)}
                     style={styles.secondaryButton}
@@ -1074,7 +1044,21 @@ export default function AdminScreen() {
           <Text style={styles.sectionTitle}>Past system announcements</Text>
           {publishedAnnouncements.map((item) => (
             <GlassCard key={item.id} styles={styles} darkMode={darkMode}>
-              <Text style={styles.badge}>SYSTEM</Text>
+              <View style={styles.cardHeadingRow}>
+                <Text style={styles.badge}>SYSTEM</Text>
+                <Pressable
+                  onPress={() => removeSystemAnnouncement(item)}
+                  disabled={removingAnnouncementId !== null}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${item.title}`}
+                  style={styles.removeAnnouncementButton}
+                >
+                  <Text style={styles.removeAnnouncementIcon}>
+                    {removingAnnouncementId === item.id ? "…" : "×"}
+                  </Text>
+                </Pressable>
+              </View>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.bodyText}>{item.ai_summary}</Text>
               <Text style={styles.date}>
@@ -1223,7 +1207,16 @@ function createStyles(darkMode: boolean) {
       paddingBottom: 14,
     },
     headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-    modeLabel: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+    themeButton: {
+      width: 34,
+      height: 34,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 17,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.chipBackground,
+    },
     eyebrow: {
       color: darkMode ? "#C9A7FF" : "#65359A",
       fontSize: 10,
@@ -1343,6 +1336,19 @@ function createStyles(darkMode: boolean) {
       alignItems: "center",
       gap: 8,
       flexWrap: "wrap",
+    },
+    removeAnnouncementButton: {
+      width: 28,
+      height: 28,
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: 14,
+      backgroundColor: colors.chipBackground,
+    },
+    removeAnnouncementIcon: {
+      color: colors.muted,
+      fontSize: 22,
+      lineHeight: 25,
     },
     badge: {
       color: colors.badge,

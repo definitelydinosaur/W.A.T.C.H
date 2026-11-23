@@ -1081,6 +1081,27 @@ export class AdminFeaturesService {
     return { announcements: data ?? [] };
   }
 
+  async removeSystemAnnouncement(id: string) {
+    const { data, error } = await this.supabase
+      .from('announcements')
+      .update({ status: 'rejected' })
+      .eq('id', id)
+      .eq('ai_scope', 'system')
+      .eq('status', 'published')
+      .select('id')
+      .maybeSingle()
+      .overrideTypes<{ id: number }, { merge: false }>();
+    if (error) {
+      throw new ServiceUnavailableException(
+        `System announcement could not be removed: ${error.message}`,
+      );
+    }
+    if (!data) {
+      throw new NotFoundException('Published system announcement was not found.');
+    }
+    return { announcement_id: data.id, removed: true };
+  }
+
   private async getRecipientsByCity(city: string, province: string | null) {
     const { data, error } = await this.supabase
       .from('locations')

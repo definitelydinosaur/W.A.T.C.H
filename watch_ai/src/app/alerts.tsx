@@ -6,6 +6,7 @@ import {
   Linking,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -190,6 +191,7 @@ export default function AlertsScreen() {
   const alertsLength = useRef(0);
   const paging = useRef(false);
   const requestVersion = useRef(0);
+  const activeRequestController = useRef<AbortController | null>(null);
   const activeFilter = useRef(filter);
   const notificationOffset = useRef(0);
   const weatherPage = useRef(0);
@@ -202,9 +204,17 @@ export default function AlertsScreen() {
         ? ++requestVersion.current
         : requestVersion.current;
       paging.current = true;
+      if (reset) activeRequestController.current?.abort();
       const isCurrentRequest = () =>
         requestId === requestVersion.current &&
         filter === activeFilter.current;
+      const abortController = new AbortController();
+      activeRequestController.current = abortController;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
+      }, 30_000);
       if (reset) {
         setLoading(true);
         setError('');
@@ -212,142 +222,157 @@ export default function AlertsScreen() {
         notificationOffset.current = 0;
         weatherPage.current = 0;
       }
-      const { data: sessionData, error: sessionError } =
-        await supabase.auth.getSession();
-      if (!isCurrentRequest()) return;
-      if (sessionError) {
-        setError(sessionError.message);
-        setLoading(false);
-        setRefreshing(false);
-        paging.current = false;
-        return;
-      }
-      const currentUserId = sessionData.session?.user.id;
-      if (!currentUserId) {
-        setError('Sign in to view your alerts.');
-        setLoading(false);
-        setRefreshing(false);
-        paging.current = false;
-        return;
-      }
-      setUserId(currentUserId);
-      const start = reset ? 0 : notificationOffset.current;
-      const shouldLoadNotifications = filter !== 'Weather';
-      let query = supabase
-        .from('notifications')
-        .select(SELECT_FIELDS)
-        .eq('user_id', currentUserId)
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false });
-      if (filter === 'All') {
-        query = query.not(
-          'kind',
-          'in',
-          '(weather_hazard,weather,safety_tip)',
-        );
-      } else if (filter === 'Institution')
-        query = query.in('kind', ['announcement_institution', 'institution']);
-      else if (filter === 'Local')
-        query = query.in('kind', ['announcement_local', 'local']);
-      else if (filter === 'System') query = query.eq('kind', 'system');
-      let notificationRows: AlertRow[] = [];
-      if (shouldLoadNotifications) {
-        const { data, error: queryError } = await query.range(
-          start,
-          start + PAGE_SIZE - 1,
+      try {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+        if (!isCurrentRequest()) return;
+        if (sessionError) {
+          setError(sessionError.message);
+          return;
+        }
+        const currentUserId = sessionData.session?.user.id;
+        if (!currentUserId) {
+          setError('Sign in to view your alerts.');
+          return;
+        }
+        setUserId(currentUserId);
+        const start = reset ? 0 : notificationOffset.current;
+        const shouldLoadNotifications = filter !== 'Weather';
+        let query = supabase
+          .from('notifications')
+          .select(SELECT_FIELDS)
+          .eq('user_id', currentUserId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false });
+        if (filter === 'All') {
+          query = query.not(
+            'kind',
+            'in',
+            '(weather_hazard,weather,safety_tip)',
+          );
+        } else if (filter === 'Institution')
+          query = query.in('kind', ['announcement_institution', 'institution']);
+        else if (filter === 'Local')
+          query = query.in('kind', ['announcement_local', 'local']);
+        else if (filter === 'System') query = query.eq('kind', 'system');
+        let notificationRows: AlertRow[] = [];
+        if (shouldLoadNotifications) {
+          const { data, error: queryError } = await query
+            .abortSignal(abortController.signal)
+            .range(start, start + PAGE_SIZE - 1);
+          if (!isCurrentRequest()) return;
+          if (queryError) {
+            setError(
+              timedOut
+                ? 'Loading alerts timed out. Please try again.'
+                : queryError.message,
+            );
+            return;
+          }
+          notificationRows = (data ?? [])
+            .map(normalizeAlertRow)
+            .filter((row): row is AlertRow => row !== null);
+        }
+
+        let weatherRows: AlertRow[] = [];
+        let weatherHasMore = false;
+        if (filter === 'Weather' || filter === 'All') {
+          if (!API_URL) {
+            if (filter === 'Weather') {
+              setError(
+                'Set EXPO_PUBLIC_API_URL to load location-aware weather alerts.',
+              );
+              return;
+            }
+          } else {
+            let response: Response;
+            let result: {
+              alerts?: unknown[];
+              has_more?: boolean;
+              message?: string | string[];
+            };
+            try {
+              response = await fetch(
+                `${API_URL}/alerts/weather-events?page=${weatherPage.current}&limit=${PAGE_SIZE}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${sessionData.session?.access_token ?? ''}`,
+                  },
+                  signal: abortController.signal,
+                },
+              );
+              result = (await response.json()) as typeof result;
+            } catch (requestError) {
+              if (!isCurrentRequest()) return;
+              setError(
+                timedOut
+                  ? 'Loading alerts timed out. Please try again.'
+                  : requestError instanceof Error
+                    ? requestError.message
+                    : 'Unable to load location-aware weather alerts.',
+              );
+              return;
+            }
+            if (!isCurrentRequest()) return;
+            if (!response.ok) {
+              const message = Array.isArray(result.message)
+                ? result.message.join('\n')
+                : (result.message ??
+                  `Weather alerts failed (HTTP ${response.status}).`);
+              setError(message);
+              return;
+            }
+            weatherRows = (result.alerts ?? [])
+              .map(normalizeAlertRow)
+              .filter((row): row is AlertRow => row !== null);
+            weatherHasMore = result.has_more === true;
+            if (weatherHasMore) weatherPage.current += 1;
+          }
+        }
+        const rows = [...notificationRows, ...weatherRows].sort(
+          (left, right) =>
+            Date.parse(right.created_at) - Date.parse(left.created_at),
         );
         if (!isCurrentRequest()) return;
-        if (queryError) {
-          setError(queryError.message);
+        setAlerts((current) => {
+          const next = reset ? rows : [...current, ...rows];
+          alertsLength.current = next.length;
+          return next;
+        });
+        notificationOffset.current += notificationRows.length;
+        setHasMore(
+          notificationRows.length === PAGE_SIZE || weatherHasMore,
+        );
+      } catch (requestError) {
+        if (!isCurrentRequest()) return;
+        setError(
+          timedOut
+            ? 'Loading alerts timed out. Please try again.'
+            : requestError instanceof Error
+              ? requestError.message
+              : 'Unable to load alerts.',
+        );
+      } finally {
+        clearTimeout(timeout);
+        if (activeRequestController.current === abortController) {
+          activeRequestController.current = null;
+        }
+        if (isCurrentRequest()) {
           setLoading(false);
           setRefreshing(false);
           paging.current = false;
-          return;
-        }
-        notificationRows = (data ?? [])
-          .map(normalizeAlertRow)
-          .filter((row): row is AlertRow => row !== null);
-      }
-
-      let weatherRows: AlertRow[] = [];
-      let weatherHasMore = false;
-      if (filter === 'Weather' || filter === 'All') {
-        if (!API_URL) {
-          if (filter === 'Weather') {
-            setError(
-              'Set EXPO_PUBLIC_API_URL to load location-aware weather alerts.',
-            );
-            setLoading(false);
-            setRefreshing(false);
-            paging.current = false;
-            return;
-          }
-        } else {
-          let response: Response;
-          let result: {
-            alerts?: unknown[];
-            has_more?: boolean;
-            message?: string | string[];
-          };
-          try {
-            response = await fetch(
-              `${API_URL}/alerts/weather-events?page=${weatherPage.current}&limit=${PAGE_SIZE}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${sessionData.session?.access_token ?? ''}`,
-                },
-              },
-            );
-            result = (await response.json()) as typeof result;
-          } catch (requestError) {
-            if (!isCurrentRequest()) return;
-            setError(
-              requestError instanceof Error
-                ? requestError.message
-                : 'Unable to load location-aware weather alerts.',
-            );
-            setLoading(false);
-            setRefreshing(false);
-            paging.current = false;
-            return;
-          }
-          if (!isCurrentRequest()) return;
-          if (!response.ok) {
-            const message = Array.isArray(result.message)
-              ? result.message.join('\n')
-              : (result.message ??
-                `Weather alerts failed (HTTP ${response.status}).`);
-            setError(message);
-            setLoading(false);
-            setRefreshing(false);
-            paging.current = false;
-            return;
-          }
-          weatherRows = (result.alerts ?? [])
-            .map(normalizeAlertRow)
-            .filter((row): row is AlertRow => row !== null);
-          weatherHasMore = result.has_more === true;
-          if (weatherHasMore) weatherPage.current += 1;
         }
       }
-      const rows = [...notificationRows, ...weatherRows].sort(
-        (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at),
-      );
-      if (!isCurrentRequest()) return;
-      setAlerts((current) => {
-        const next = reset ? rows : [...current, ...rows];
-        alertsLength.current = next.length;
-        return next;
-      });
-      notificationOffset.current += notificationRows.length;
-      setHasMore(
-        notificationRows.length === PAGE_SIZE || weatherHasMore,
-      );
-      setLoading(false);
-      setRefreshing(false);
-      paging.current = false;
     },
     [filter],
+  );
+
+  useEffect(
+    () => () => {
+      requestVersion.current += 1;
+      activeRequestController.current?.abort();
+    },
+    [],
   );
 
   useEffect(() => {
@@ -589,7 +614,15 @@ export default function AlertsScreen() {
           <Text style={styles.clearAll}>Clear all</Text>
         </Pressable>
       </View>
-      <View style={styles.filters}>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        directionalLockEnabled
+        scrollEnabled
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroller}
+        contentContainerStyle={styles.filters}
+      >
         {FILTERS.map((value) => (
           <Pressable
             key={value}
@@ -620,7 +653,7 @@ export default function AlertsScreen() {
             </Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
       {loading ? (
         <View style={styles.skeletonList}>
           {[0, 1, 2].map((item) => (
@@ -707,6 +740,13 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16,
     paddingBottom: 14,
+  },
+  filterScroller: {
+    width: '100%',
+    flexGrow: 0,
+    flexShrink: 0,
+    zIndex: 1,
+    elevation: 1,
   },
   filterChip: {
     borderWidth: 1,
