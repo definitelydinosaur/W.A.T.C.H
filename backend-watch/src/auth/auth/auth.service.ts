@@ -4,11 +4,9 @@ import {
   ConflictException,
   UnauthorizedException,
   InternalServerErrorException,
-  Inject,
   Injectable,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -22,18 +20,14 @@ type AuthUser = {
 
 @Injectable()
 export class AuthService {
+  private readonly authClient: SupabaseClient;
   private readonly profiles: SupabaseClient;
 
-  constructor(
-    @Inject(SUPABASE_CLIENT)
-    private readonly supabaseClient: SupabaseClient,
-    configService: ConfigService,
-  ) {
+  constructor(configService: ConfigService) {
     const supabaseUrl = configService.get<string>('SUPABASE_URL')?.trim();
-    const supabaseKey = (
-      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
-      configService.get<string>('SUPABASE_SERVICE_KEY')
-    )?.trim();
+    const supabaseKey =
+      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim() ||
+      configService.get<string>('SUPABASE_SERVICE_KEY')?.trim();
 
     if (!supabaseUrl || !supabaseKey) {
       throw new Error(
@@ -41,23 +35,24 @@ export class AuthService {
       );
     }
 
-    // Sign-in stores a user session on the shared client. Profile reads and
-    // writes stay on this client so they keep using the service role.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    this.profiles = createClient(supabaseUrl, supabaseKey, {
+    const clientOptions = {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
-    });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    this.authClient = createClient(supabaseUrl, supabaseKey, clientOptions);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    this.profiles = createClient(supabaseUrl, supabaseKey, clientOptions);
   }
 
   async register(registerDto: RegisterDto) {
     const { fullName, password } = registerDto;
     const email = registerDto.email.trim().toLowerCase();
 
-    const { data, error } = await this.supabaseClient.auth.signUp({
+    const { data, error } = await this.authClient.auth.signUp({
       email,
       password,
       options: {
@@ -103,7 +98,7 @@ export class AuthService {
     const normalizedEmail = email.trim().toLowerCase();
 
     const { data, error } =
-      await this.supabaseClient.auth.verifyOtp({
+      await this.authClient.auth.verifyOtp({
         email: normalizedEmail,
         token: token.trim(),
         type: 'signup',
@@ -157,7 +152,7 @@ export class AuthService {
     const { password } = loginDto;
 
     const { data, error } =
-      await this.supabaseClient.auth.signInWithPassword({
+      await this.authClient.auth.signInWithPassword({
         email,
         password,
       });
@@ -206,14 +201,14 @@ export class AuthService {
     const {
       data: { user },
       error: authError,
-    } = await this.supabaseClient.auth.getUser(accessToken);
+    } = await this.authClient.auth.getUser(accessToken);
 
     if (authError || !user) {
       throw new UnauthorizedException('Invalid or expired session.');
     }
 
     const { error: deleteError } =
-      await this.supabaseClient.auth.admin.deleteUser(user.id);
+      await this.profiles.auth.admin.deleteUser(user.id);
 
     if (deleteError) {
       console.error('ACCOUNT DELETION ERROR:', deleteError);

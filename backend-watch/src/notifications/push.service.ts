@@ -76,7 +76,9 @@ export class PushService {
         `Notification dedupe check failed: ${priorError.message}`,
       );
     }
-    if (prior) return { sent: false, duplicate: true };
+    if (prior) {
+      return { sent: false, duplicate: true, deliveryError: null };
+    }
 
     const { data: profile, error: profileError } = await this.supabase
       .from('user_info')
@@ -191,6 +193,12 @@ export class PushService {
         duplicate: false,
         notificationId,
         noToken: !token || !Expo.isExpoPushToken(token),
+        deliveryError:
+          !token || !Expo.isExpoPushToken(token)
+            ? 'No valid Expo push token is registered for this user.'
+            : !allowsPush
+              ? 'The user notification preferences prevent push delivery.'
+              : null,
       };
     }
 
@@ -216,7 +224,11 @@ export class PushService {
         : 'Failed';
       for (const ticket of tickets) {
         if (ticket.status === 'error') {
-          deliveryError = ticket.message;
+          const ticketCode =
+            ticket.details?.error && typeof ticket.details.error === 'string'
+              ? `${ticket.details.error}: `
+              : '';
+          deliveryError = `${ticketCode}${ticket.message}`;
           this.logger.error(`Expo push rejected a message: ${ticket.message}`);
           if (ticket.details?.error === 'DeviceNotRegistered') {
             await this.clearInvalidToken(input.userId, token);
@@ -242,12 +254,85 @@ export class PushService {
         `Notification status update failed: ${updateError.message}`,
       );
     }
-    return { sent: status === 'Sent', duplicate: false, notificationId };
+    return {
+      sent: status === 'Sent',
+      duplicate: false,
+      notificationId,
+      deliveryError: status === 'Failed' ? deliveryError : null,
+    };
   }
 
-  @Cron('*/15 * * * *', { waitForCompletion: true })
+  async sendTestPushToUser(userId: string) {
+    const { data: profile, error: profileError } = await this.supabase
+      .from('user_info')
+      .select('expo_push_token')
+      .eq('id', userId)
+      .maybeSingle();
+    if (profileError) {
+      throw new Error(`Push token could not be loaded: ${profileError.message}`);
+    }
+    let token =
+      typeof profile?.expo_push_token === 'string'
+        ? profile.expo_push_token
+        : null;
+    if (!token) {
+      const { data: pushToken, error: tokenError } = await this.supabase
+        .from('push_tokens')
+        .select('expo_push_token')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (tokenError) {
+        throw new Error(`Registered push token could not be loaded: ${tokenError.message}`);
+      }
+      token =
+        typeof pushToken?.expo_push_token === 'string'
+          ? pushToken.expo_push_token
+          : null;
+    }
+    if (!token) {
+      return { sent: false, no_token: true, raw: null, delivery_error: 'No Expo push token is registered for this device.' };
+    }
+    if (!Expo.isExpoPushToken(token)) {
+      return { sent: false, no_token: true, raw: null, delivery_error: 'The registered token is not an Expo push token.' };
+    }
+    const message: ExpoPushMessage = {
+      to: token,
+      title: 'W.A.T.C.H. test push',
+      body: 'Test push from the admin panel.',
+      data: { test_push: 'true' },
+      sound: 'default',
+      channelId: 'weather-alerts',
+      priority: 'high',
+    };
+    try {
+      const tickets = await this.expo.sendPushNotificationsAsync([message]);
+      const ticket = tickets[0];
+      if (ticket?.status === 'error') {
+        const code =
+          ticket.details?.error && typeof ticket.details.error === 'string'
+            ? `${ticket.details.error}: `
+            : '';
+        return {
+          sent: false,
+          no_token: false,
+          raw: tickets,
+          delivery_error: `${code}${ticket.message}`,
+        };
+      }
+      return { sent: ticket?.status === 'ok', no_token: false, raw: tickets, delivery_error: null };
+    } catch (error) {
+      const deliveryError =
+        error instanceof Error ? error.message : 'Unknown Expo push error.';
+      return { sent: false, no_token: false, raw: null, delivery_error: deliveryError };
+    }
+  }
+
+  @Cron('*/1 * * * *', { waitForCompletion: true })
   async updateDeliveryReceipts() {
-    const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
     const { data, error } = await this.supabase
       .from('notifications')
       .select('id,user_id,expo_ticket_ids')
@@ -292,6 +377,10 @@ export class PushService {
               `Invalid Expo token could not be cleared: ${profileError.message}`,
             );
           }
+          await this.supabase
+            .from('push_tokens')
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq('user_id', row.user_id);
         }
 
         const status = values.some((receipt) => receipt.status === 'ok')

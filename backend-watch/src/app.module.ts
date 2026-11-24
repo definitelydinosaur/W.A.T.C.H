@@ -11,6 +11,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AlertsModule } from './alerts/alerts.module';
 import { HealthController } from './health/health.controller';
 import { ChatbotModule } from './chatbot/chatbot.module';
+import { validateEnvironment } from './config/environment';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ChatbotModule } from './chatbot/chatbot.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: join(__dirname, '..', '.env'),
+      validate: validateEnvironment,
     }),
     AuthModule,
     WeatherModule,

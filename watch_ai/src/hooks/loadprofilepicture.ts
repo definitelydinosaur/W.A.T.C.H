@@ -1,11 +1,12 @@
-import { useCallback, useState } from 'react';
-import supabase from '../lib/supabase';
+import { useCallback, useState } from "react";
+import supabase from "../lib/supabase";
 
-const API_URL = 'https://w-a-t-c-h.onrender.com';
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, "");
 
 export function useProfilePicture() {
-  const [profilePictureUrl, setProfilePictureUrl] =
-    useState<string | null>(null);
+  const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(
+    null,
+  );
 
   const [loading, setLoading] = useState(true);
 
@@ -25,8 +26,12 @@ export function useProfilePicture() {
         return;
       }
 
+      if (!API_URL) {
+        throw new Error("Set EXPO_PUBLIC_API_URL to your backend URL.");
+      }
+
       const response = await fetch(`${API_URL}/profile/picture`, {
-        method: 'GET',
+        method: "GET",
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
@@ -38,12 +43,11 @@ export function useProfilePicture() {
         );
       }
 
-      const result: { profile_pic: string | null } =
-        await response.json();
+      const result: { profile_pic: string | null } = await response.json();
 
       setProfilePictureUrl(result.profile_pic);
     } catch (error) {
-      console.error('Profile picture error:', error);
+      console.error("Profile picture error:", error);
     } finally {
       setLoading(false);
     }

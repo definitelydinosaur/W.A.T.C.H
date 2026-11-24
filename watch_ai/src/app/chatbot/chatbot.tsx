@@ -86,13 +86,11 @@ export default function Chatbot({
     if (!text || isLoading) return;
 
     if (!API_URL) {
-      console.error('EXPO_PUBLIC_API_URL is missing.');
-
       setMessages((current) => [
         ...current,
         {
           id: `${Date.now()}-error`,
-          text: 'Chatbot configuration is missing. Please contact support.',
+          text: 'The chatbot is currently unavailable. Try again later.',
           role: 'assistant',
         },
       ]);
@@ -132,12 +130,7 @@ export default function Chatbot({
       );
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        console.error('Chatbot API response:', errorBody);
-
-        throw new Error(
-          `Chatbot request failed with status ${response.status}`,
-        );
+        throw new Error(`Chatbot request failed with status ${response.status}`);
       }
 
       const data: ChatbotResponse = await response.json();
@@ -155,13 +148,15 @@ export default function Chatbot({
       setMessages((current) => [...current, assistantMessage]);
 
     } catch (error) {
-      console.error('Chatbot error:', error);
-
+      const message =
+        error instanceof Error && error.message.includes('status 503')
+          ? 'The chatbot is currently unavailable. Try again later.'
+          : 'Sorry, I could not connect to the chatbot service. Please try again.';
       setMessages((current) => [
         ...current,
         {
           id: `${Date.now()}-error`,
-          text: 'Sorry, I could not connect to the chatbot service. Please try again.',
+          text: message,
           role: 'assistant',
         },
       ]);

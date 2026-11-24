@@ -57,6 +57,22 @@ interface NotificationDetail {
     suspension_reason: string | null;
     affected_levels: string | null;
     ai_key_points: string[] | null;
+    pagasa_alert?:
+      | {
+          event: string | null;
+          alert_status: string | null;
+          severity: string | null;
+          published_at: string | null;
+          content: string | null;
+        }
+      | {
+          event: string | null;
+          alert_status: string | null;
+          severity: string | null;
+          published_at: string | null;
+          content: string | null;
+        }[]
+      | null;
     system_details?: {
       schedule_or_date?: string | null;
       impact?: string | null;
@@ -73,6 +89,12 @@ interface NotificationDetail {
     ai_summary: string | null;
     safety_tips: SafetyTips | null;
     expires_at: string | null;
+    source_type?: string | null;
+    source_name?: string | null;
+    city?: string | null;
+    province?: string | null;
+    observed_at?: string | null;
+    measurements?: Record<string, unknown> | null;
   } | null;
   pagasa_alert?: {
     event: string | null;
@@ -97,6 +119,26 @@ function getTipItems(...values: unknown[]): string[] {
     if (items.length) return items.map((item) => item.trim());
   }
   return [];
+}
+
+function formatHazardMeasurements(
+  measurements: Record<string, unknown> | null | undefined,
+) {
+  if (!measurements) return '';
+  const fields: [string, string, string][] = [
+    ['heatIndexC', 'Heat index', '°C'],
+    ['rainMm', 'Rainfall', ' mm/h'],
+    ['windKph', 'Wind', ' km/h'],
+    ['aqi', 'AQI', ''],
+  ];
+  return fields
+    .flatMap(([key, label, unit]) => {
+      const value = measurements[key];
+      return typeof value === 'number' && Number.isFinite(value)
+        ? [`${label}: ${value.toFixed(1)}${unit}`]
+        : [];
+    })
+    .join(' · ');
 }
 
 function getDefaultSafetyGuidance(hazardText: string) {
@@ -294,7 +336,7 @@ export default function AnnouncementScreen() {
       let query = supabase
         .from('notifications')
         .select(
-          'id,title,body,kind,status,read_at,source_name,source_url,created_at,announcement_id,hazard_id,announcement:announcements(ai_summary,source_name,published_at,source,source_url,category,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points,institution:institutions!announcements_institution_id_fkey(name,short_name)),hazard:hazards(category,severity,hazard_type,risk_level,ai_summary,safety_tips,expires_at)',
+          'id,title,body,kind,status,read_at,source_name,source_url,created_at,announcement_id,hazard_id,announcement:announcements(ai_summary,content,source_name,published_at,source,source_url,category,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points,pagasa_alert:pagasa_alerts!announcements_pagasa_alert_id_fkey(event,alert_status,severity,published_at,content),institution:institutions!announcements_institution_id_fkey(name,short_name)),hazard:hazards(category,severity,hazard_type,risk_level,ai_summary,safety_tips,expires_at,source_type,source_name,city,province,observed_at,measurements)',
         )
         .eq('user_id', userId)
         .is('deleted_at', null);
@@ -315,7 +357,14 @@ export default function AnnouncementScreen() {
       let row: NotificationDetail;
       let isSavedNotification = Boolean(data);
       if (data) {
-        row = data as unknown as NotificationDetail;
+        const savedRow = data as unknown as NotificationDetail;
+        const linkedPagasa = savedRow.announcement?.pagasa_alert;
+        row = {
+          ...savedRow,
+          pagasa_alert: Array.isArray(linkedPagasa)
+            ? (linkedPagasa[0] ?? null)
+            : (linkedPagasa ?? null),
+        };
       } else if (selectedAnnouncementId || legacyAnnouncementId) {
         const id = selectedAnnouncementId ?? legacyAnnouncementId;
         const { data: announcement, error: announcementError } = await supabase
@@ -378,7 +427,7 @@ export default function AnnouncementScreen() {
         const { data: hazard, error: hazardError } = await supabase
           .from('hazards')
           .select(
-            'id,category,severity,hazard_type,risk_level,ai_summary,safety_tips,expires_at,created_at',
+            'id,category,severity,hazard_type,risk_level,ai_summary,safety_tips,expires_at,created_at,source_type,source_name,city,province,observed_at,measurements',
           )
           .eq('id', selectedHazardId)
           .maybeSingle();
@@ -405,6 +454,12 @@ export default function AnnouncementScreen() {
             ai_summary: hazard.ai_summary,
             safety_tips: hazard.safety_tips,
             expires_at: hazard.expires_at,
+            source_type: hazard.source_type,
+            source_name: hazard.source_name,
+            city: hazard.city,
+            province: hazard.province,
+            observed_at: hazard.observed_at,
+            measurements: hazard.measurements,
           },
         };
         isSavedNotification = false;
@@ -509,7 +564,7 @@ export default function AnnouncementScreen() {
     .join(' ');
   const isDisasterAdvisory =
     Boolean(hazard) ||
-    /heat|flood|rain|typhoon|storm|wind|air quality|aqi|disaster|evacuat/i.test(
+    /heat|flood|rain|typhoon|storm|wind|air quality|aqi|weather|disaster|evacuat/i.test(
       hazardText,
     );
   const isFacebookAnnouncement = Boolean(
@@ -582,7 +637,10 @@ export default function AnnouncementScreen() {
   const sourceName = detail?.pagasa_alert
     ? 'PAGASA'
     : hazard
-      ? 'W.A.T.C.H. Weather Alert'
+      ? hazard.source_name ??
+        (hazard.source_type === 'weather_auto'
+          ? 'W.A.T.C.H. weather detection (not an official advisory)'
+          : 'W.A.T.C.H. Weather Alert')
       : (detail?.source_name ??
         detail?.announcement?.source_name ??
         detail?.announcement?.source ??
@@ -642,17 +700,45 @@ export default function AnnouncementScreen() {
             ) : null}
             <Text style={styles.title}>{detail.title}</Text>
             <Text style={styles.timestamp}>
-              {sourceName} · {dateLabel}
+              Source: {sourceName} · {dateLabel}
             </Text>
             {hazard ? (
-              <Text style={styles.hazardSeverity}>
-                {hazard.risk_level ?? hazard.severity ?? 'Weather'} advisory
-              </Text>
+              <>
+                <Text style={styles.hazardSeverity}>
+                  {hazard.risk_level ?? hazard.severity ?? 'Weather'} advisory
+                </Text>
+                {[hazard.city, hazard.province].filter(Boolean).length ? (
+                  <Text style={styles.detailLine}>
+                    Affected area: {[hazard.city, hazard.province].filter(Boolean).join(', ')}
+                  </Text>
+                ) : null}
+                {hazard.observed_at ? (
+                  <Text style={styles.detailLine}>
+                    Measured at: {new Date(hazard.observed_at).toLocaleString()}
+                  </Text>
+                ) : null}
+                {formatHazardMeasurements(hazard.measurements) ? (
+                  <Text style={styles.detailLine}>
+                    Measurements: {formatHazardMeasurements(hazard.measurements)}
+                  </Text>
+                ) : null}
+              </>
             ) : null}
             <Text style={styles.sectionTitle}>
               {isSystemAnnouncement ? 'Announcement details' : 'AI summary'}
             </Text>
             <Text style={styles.summary}>{summary}</Text>
+            {detail.announcement?.content &&
+            !['admin_manual', 'admin_system', 'admin_test_replay'].includes(
+              detail.announcement.source ?? '',
+            ) ? (
+              <>
+                <Text style={styles.sectionTitle}>Original source text</Text>
+                <Text style={styles.original}>
+                  {detail.announcement.content}
+                </Text>
+              </>
+            ) : null}
             {detail.announcement ? (
               <>
                 {isSystemAnnouncement && detail.announcement.system_details ? (

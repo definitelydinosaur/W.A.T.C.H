@@ -1,7 +1,6 @@
-import * as Clipboard from 'expo-clipboard';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useState } from "react";
 import {
   Alert,
   Linking,
@@ -11,11 +10,11 @@ import {
   StyleSheet,
   Text,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Path, Rect } from 'react-native-svg';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Path, Rect } from "react-native-svg";
 
-const SUPPORT_EMAIL = '';
+const SUPPORT_EMAIL = "";
 
 export default function ContactUsScreen() {
   const router = useRouter();
@@ -25,7 +24,7 @@ export default function ContactUsScreen() {
     if (router.canGoBack()) {
       router.back();
     } else {
-      router.replace('/settings_page/help_support');
+      router.replace("/settings_page/help_support");
     }
   };
 
@@ -34,12 +33,13 @@ export default function ContactUsScreen() {
 
     setIsCopying(true);
     try {
+      const Clipboard = await import("expo-clipboard");
       await Clipboard.setStringAsync(SUPPORT_EMAIL);
-      Alert.alert('Copied', 'The support email address has been copied.');
+      Alert.alert("Copied", "The support email address has been copied.");
     } catch (error) {
       Alert.alert(
-        'Unable to copy email',
-        error instanceof Error ? error.message : 'Please try again.',
+        "Unable to copy email",
+        error instanceof Error ? error.message : "Please try again.",
       );
     } finally {
       setIsCopying(false);
@@ -53,14 +53,19 @@ export default function ContactUsScreen() {
       await Linking.openURL(`mailto:${SUPPORT_EMAIL}`);
     } catch (error) {
       Alert.alert(
-        'Unable to open email',
-        error instanceof Error ? error.message : 'No email application is available.',
+        "Unable to open email",
+        error instanceof Error
+          ? error.message
+          : "No email application is available.",
       );
     }
   };
 
   return (
-    <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
+    <LinearGradient
+      colors={["#F8F7FB", "#E7E1F3", "#CEC3E2"]}
+      style={styles.background}
+    >
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -93,7 +98,8 @@ export default function ContactUsScreen() {
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.intro}>
-              Have a question or need help? Reach out to the W.A.T.C.H. support team.
+              Have a question or need help? Reach out to the W.A.T.C.H. support
+              team.
             </Text>
 
             <View style={styles.contactCard}>
@@ -125,7 +131,7 @@ export default function ContactUsScreen() {
 
               <View style={styles.emailRow}>
                 <Text style={styles.emailPlaceholder}>
-                  {SUPPORT_EMAIL || 'Email address will be added here'}
+                  {SUPPORT_EMAIL || "Email address will be added here"}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -214,10 +220,10 @@ const styles = StyleSheet.create({
   },
   panel: {
     flex: 1,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderRadius: 38,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#4B32B5',
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#4B32B5",
     shadowOffset: { width: 0, height: 12 },
     shadowOpacity: 0.12,
     shadowRadius: 28,
@@ -225,22 +231,22 @@ const styles = StyleSheet.create({
   },
   header: {
     height: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 18,
   },
   backButton: {
     width: 48,
     height: 48,
-    justifyContent: 'center',
-    alignItems: 'flex-start',
+    justifyContent: "center",
+    alignItems: "flex-start",
   },
   headerTitle: {
     flex: 1,
-    color: '#342448',
+    color: "#342448",
     fontSize: 23,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontWeight: "700",
+    textAlign: "center",
   },
   headerSpacer: { width: 48 },
   scrollView: { flex: 1 },
@@ -251,7 +257,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   intro: {
-    color: '#342C46',
+    color: "#342C46",
     fontSize: 14,
     lineHeight: 21,
     marginBottom: 4,
@@ -261,65 +267,65 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#E3E4EC',
-    backgroundColor: '#FAFAFD',
+    borderColor: "#E3E4EC",
+    backgroundColor: "#FAFAFD",
     gap: 12,
   },
   cardHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 10,
   },
   iconCircle: {
     width: 36,
     height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 18,
-    backgroundColor: '#F0ECFA',
+    backgroundColor: "#F0ECFA",
   },
   cardTitle: {
-    color: '#342C46',
+    color: "#342C46",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   emailRow: {
     minHeight: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 12,
     paddingLeft: 2,
   },
   emailPlaceholder: {
     flex: 1,
-    color: '#6A6475',
+    color: "#6A6475",
     fontSize: 13,
   },
   copyButton: {
     width: 36,
     height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 12,
-    backgroundColor: '#F0ECFA',
+    backgroundColor: "#F0ECFA",
   },
   emailButton: {
     minHeight: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 14,
-    backgroundColor: '#4B32B5',
+    backgroundColor: "#4B32B5",
   },
   emailButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   buttonPressed: { opacity: 0.7 },
   buttonDisabled: { opacity: 0.45 },
   placeholder: {
-    color: '#6A6475',
+    color: "#6A6475",
     fontSize: 13,
     lineHeight: 19,
   },
