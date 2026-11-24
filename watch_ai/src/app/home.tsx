@@ -51,6 +51,7 @@ import {
   weatherDescription,
 } from "../lib/weather";
 import supabase from "../lib/supabase";
+import { profileApi } from "../lib/profile-api";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const TAB_BAR_WIDTH = SCREEN_WIDTH + 80;
@@ -636,6 +637,74 @@ export default function HomeScreen() {
   const [activeHazard, setActiveHazard] = useState<ActiveHazard | null>(null);
   const [hazardPanel, setHazardPanel] = useState<HazardGuidance | null>(null);
   const [baseCity, setSelectedCity] = useState<CityData>(CITIES[0]);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void (async () => {
+        try {
+          const { profile } = await profileApi<{
+            profile: {
+              home_location: {
+                address: string;
+                city: string | null;
+                province: string | null;
+                latitude: number;
+                longitude: number;
+              } | null;
+            };
+          }>("/profile");
+          if (!active) return;
+          const location = profile.home_location;
+          if (!location) return;
+          const normalizeCityName = (value: string) =>
+            value
+              .toLocaleLowerCase()
+              .replace(/\b(city|municipality)\b/g, "")
+              .replace(/[.,]/g, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+          const cityName = location.city?.trim() ?? "";
+          const normalizedCity = normalizeCityName(cityName);
+          const matched = CITIES.filter((city) =>
+            normalizedCity
+              ? normalizeCityName(city.name) === normalizedCity
+              : !city.country.startsWith("Barangay ·") &&
+                normalizeCityName(location.address).includes(
+                  normalizeCityName(city.name),
+                ),
+          ).sort(
+            (left, right) =>
+              normalizeCityName(right.name).length -
+              normalizeCityName(left.name).length,
+          )[0];
+          const name = matched?.name || cityName;
+          if (
+            !name ||
+            !Number.isFinite(location.latitude) ||
+            !Number.isFinite(location.longitude)
+          ) {
+            console.warn("Saved home location is missing a city or coordinates.");
+            return;
+          }
+          const city = matched ?? CITIES[0];
+          setSelectedCity({
+            ...city,
+            name,
+            country: location.province
+              ? `${city.country.split(" · ")[0]} · ${location.province}`
+              : city.country,
+            latitude: location.latitude,
+            longitude: location.longitude,
+          });
+        } catch (error) {
+          console.warn("Unable to load saved home weather location:", error);
+        }
+      })();
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
   const [cityQuery, setCityQuery] = useState("");
   const filteredCities = useMemo(() => {
     const q = cityQuery.trim().toLowerCase();
@@ -832,7 +901,10 @@ export default function HomeScreen() {
   useEffect(() => {
     let active = true;
     let channel: ReturnType<typeof supabase.channel> | null = null;
+    let started = false;
     const loadUnreadCount = async () => {
+      if (started) return;
+      started = true;
       const { data: sessionData, error: sessionError } =
         await supabase.auth.getSession();
       if (sessionError) {
@@ -858,8 +930,14 @@ export default function HomeScreen() {
         if (active) setUnreadAlertCount(count ?? 0);
       };
       await refreshCount();
+      const topic = `home-alert-count-${userId}`;
+      for (const existing of supabase.getChannels()) {
+        if (existing.topic === `realtime:${topic}`) {
+          await supabase.removeChannel(existing);
+        }
+      }
       channel = supabase
-        .channel(`home-alert-count-${userId}`)
+        .channel(topic)
         .on(
           "postgres_changes",
           {

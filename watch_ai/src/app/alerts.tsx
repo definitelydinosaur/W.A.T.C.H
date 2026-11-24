@@ -15,6 +15,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import supabase from '../lib/supabase';
+import { useAppTheme } from '../theme/theme-context';
 
 type AlertFilter = 'All' | 'Local' | 'Institution' | 'Weather' | 'System';
 type AlertKind =
@@ -179,6 +180,7 @@ function riskColor(level: string | null | undefined) {
 
 export default function AlertsScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const [userId, setUserId] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [filter, setFilter] = useState<AlertFilter>('All');
@@ -237,23 +239,23 @@ export default function AlertsScreen() {
         }
         setUserId(currentUserId);
         const start = reset ? 0 : notificationOffset.current;
-        const shouldLoadNotifications = filter !== 'Weather';
+        const shouldLoadNotifications = true;
         let query = supabase
           .from('notifications')
           .select(SELECT_FIELDS)
           .eq('user_id', currentUserId)
           .is('deleted_at', null)
           .order('created_at', { ascending: false });
-        if (filter === 'All') {
-          query = query.not(
-            'kind',
-            'in',
-            '(weather_hazard,weather,safety_tip)',
-          );
-        } else if (filter === 'Institution')
+        if (filter === 'Institution')
           query = query.in('kind', ['announcement_institution', 'institution']);
         else if (filter === 'Local')
           query = query.in('kind', ['announcement_local', 'local']);
+        else if (filter === 'Weather')
+          query = query.in('kind', [
+            'weather_hazard',
+            'weather',
+            'safety_tip',
+          ]);
         else if (filter === 'System') query = query.eq('kind', 'system');
         let notificationRows: AlertRow[] = [];
         if (shouldLoadNotifications) {
@@ -333,9 +335,19 @@ export default function AlertsScreen() {
           (left, right) =>
             Date.parse(right.created_at) - Date.parse(left.created_at),
         );
+        const uniqueRows = [...new Map(
+          rows.map((row) => [
+            row.announcement_id
+              ? `announcement:${row.announcement_id}`
+              : row.hazard_id
+                ? `hazard:${row.hazard_id}`
+                : `${row.kind}:${row.id}:${row.created_at}`,
+            row,
+          ]),
+        ).values()];
         if (!isCurrentRequest()) return;
         setAlerts((current) => {
-          const next = reset ? rows : [...current, ...rows];
+          const next = reset ? uniqueRows : [...current, ...uniqueRows];
           alertsLength.current = next.length;
           return next;
         });
@@ -524,12 +536,12 @@ export default function AlertsScreen() {
             params: { notificationId: item.id },
           })
         }
-        style={styles.card}
+        style={[styles.card, { borderColor: `${displayed.onPrimary}44` }]}
         accessibilityRole="button"
       >
         <BlurView intensity={38} tint="dark" style={StyleSheet.absoluteFill} />
         <LinearGradient
-          colors={['rgba(41, 28, 72, 0.88)', 'rgba(20, 17, 40, 0.94)']}
+          colors={[displayed.gradient[1], displayed.gradient[2]]}
           style={StyleSheet.absoluteFill}
         />
         <View style={styles.cardTop}>
@@ -537,17 +549,28 @@ export default function AlertsScreen() {
             <Text
               style={[
                 styles.typeBadge,
-                isSystem && { color: '#A7E7C3' },
+                { color: displayed.onPrimary },
                 isWeather && { color: riskColor(severity) },
               ]}
             >
               {isSystem ? '●  ' : isWeather ? '⚠  ' : ''}
               {badge}
             </Text>
-            <Text style={styles.locationBadge}>{locationLabel}</Text>
+            <Text
+              style={[styles.locationBadge, { color: displayed.onPrimary }]}
+            >
+              {locationLabel}
+            </Text>
           </View>
           <View style={styles.cardActions}>
-            {unread ? <View style={styles.unreadDot} /> : null}
+            {unread ? (
+              <View
+                style={[
+                  styles.unreadDot,
+                  { backgroundColor: displayed.accent },
+                ]}
+              />
+            ) : null}
             <Pressable
               onPress={(event) => {
                 event.stopPropagation();
@@ -558,25 +581,39 @@ export default function AlertsScreen() {
               accessibilityLabel="Delete alert"
               style={styles.trashButton}
             >
-              <Text style={styles.trashIcon}>×</Text>
+              <Text
+                style={[styles.trashIcon, { color: displayed.onPrimary }]}
+              >
+                ×
+              </Text>
             </Pressable>
           </View>
         </View>
-        <Text style={styles.cardTitle}>{item.title}</Text>
-        <Text numberOfLines={3} style={styles.summary}>
+        <Text style={[styles.cardTitle, { color: displayed.onPrimary }]}>
+          {item.title}
+        </Text>
+        <Text
+          numberOfLines={3}
+          style={[styles.summary, { color: displayed.onPrimary }]}
+        >
           {summary}
         </Text>
         <View style={styles.cardFooter}>
-          <Text numberOfLines={1} style={styles.source}>
+          <Text
+            numberOfLines={1}
+            style={[styles.source, { color: displayed.onPrimary }]}
+          >
             {item.source_name ?? 'W.A.T.C.H.'}
           </Text>
-          <Text style={styles.time}>{relativeTime(item.created_at)}</Text>
+          <Text style={[styles.time, { color: displayed.onPrimary }]}>
+            {relativeTime(item.created_at)}
+          </Text>
         </View>
         {sourceUrl ? (
-          <Text style={styles.externalText}>
+          <Text style={[styles.externalText, { color: displayed.onPrimary }]}>
             For further details, please visit{' '}
             <Text
-              style={styles.externalLink}
+              style={[styles.externalLink, { color: displayed.onPrimary }]}
               onPress={(event) => {
                 event.stopPropagation();
                 void Linking.openURL(sourceUrl).catch((linkError: unknown) => {
@@ -600,18 +637,20 @@ export default function AlertsScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: displayed.gradient[2] }]}>
       <LinearGradient
-        colors={['#211344', '#171022', '#100D1D']}
+        colors={displayed.gradient}
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} accessibilityRole="button">
-          <Text style={styles.back}>‹</Text>
+          <Text style={[styles.back, { color: displayed.onPrimary }]}>‹</Text>
         </Pressable>
-        <Text style={styles.title}>Alerts</Text>
+        <Text style={[styles.title, { color: displayed.onPrimary }]}>Alerts</Text>
         <Pressable onPress={clearAll} accessibilityRole="button">
-          <Text style={styles.clearAll}>Clear all</Text>
+          <Text style={[styles.clearAll, { color: displayed.onPrimary }]}>
+            Clear all
+          </Text>
         </Pressable>
       </View>
       <ScrollView
@@ -641,12 +680,15 @@ export default function AlertsScreen() {
             style={[
               styles.filterChip,
               filter === value && styles.filterChipActive,
+              filter === value && { backgroundColor: displayed.primary },
+              { borderColor: `${displayed.onPrimary}66` },
             ]}
           >
             <Text
               style={[
                 styles.filterText,
                 filter === value && styles.filterTextActive,
+                { color: displayed.onPrimary },
               ]}
             >
               {value}
@@ -657,19 +699,32 @@ export default function AlertsScreen() {
       {loading ? (
         <View style={styles.skeletonList}>
           {[0, 1, 2].map((item) => (
-            <View key={item} style={styles.skeletonCard}>
-              <ActivityIndicator color="#C9A7FF" />
+            <View
+              key={item}
+              style={[
+                styles.skeletonCard,
+                { backgroundColor: displayed.primaryDark },
+              ]}
+            >
+              <ActivityIndicator color={displayed.onPrimary} />
             </View>
           ))}
         </View>
       ) : error ? (
         <View style={styles.state}>
-          <Text style={styles.stateMessage}>{error}</Text>
+          <Text style={[styles.stateMessage, { color: displayed.onPrimary }]}>
+            {error}
+          </Text>
           <Pressable
             onPress={() => void loadAlerts()}
-            style={styles.retryButton}
+            style={[
+              styles.retryButton,
+              { backgroundColor: displayed.primary },
+            ]}
           >
-            <Text style={styles.retryText}>Retry</Text>
+            <Text style={[styles.retryText, { color: displayed.onPrimary }]}>
+              Retry
+            </Text>
           </Pressable>
         </View>
       ) : (
@@ -683,8 +738,8 @@ export default function AlertsScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              tintColor="#D5B6FF"
-              colors={['#C9A7FF']}
+              tintColor={displayed.onPrimary}
+              colors={[displayed.primary]}
               onRefresh={() => {
                 setRefreshing(true);
                 void loadAlerts();
@@ -696,7 +751,7 @@ export default function AlertsScreen() {
           }}
           onEndReachedThreshold={0.4}
           ListEmptyComponent={
-            <Text style={styles.stateMessage}>
+            <Text style={[styles.stateMessage, { color: displayed.onPrimary }]}>
               No alerts yet. We&apos;ll notify you about announcements and
               weather in your area.
             </Text>
@@ -704,10 +759,22 @@ export default function AlertsScreen() {
         />
       )}
       {undoIds ? (
-        <View style={styles.snackbar}>
-          <Text style={styles.snackbarText}>{undoLabel}</Text>
+        <View
+          style={[
+            styles.snackbar,
+            {
+              backgroundColor: displayed.primaryDark,
+              borderColor: `${displayed.onPrimary}66`,
+            },
+          ]}
+        >
+          <Text style={[styles.snackbarText, { color: displayed.onPrimary }]}>
+            {undoLabel}
+          </Text>
           <Pressable onPress={() => void undoDelete()}>
-            <Text style={styles.undoText}>Undo</Text>
+            <Text style={[styles.undoText, { color: displayed.onPrimary }]}>
+              Undo
+            </Text>
           </Pressable>
           <Pressable
             onPress={() => {
@@ -715,7 +782,11 @@ export default function AlertsScreen() {
               setUndoLabel('');
             }}
           >
-            <Text style={styles.dismissSnack}>×</Text>
+            <Text
+              style={[styles.dismissSnack, { color: displayed.onPrimary }]}
+            >
+              ×
+            </Text>
           </Pressable>
         </View>
       ) : null}

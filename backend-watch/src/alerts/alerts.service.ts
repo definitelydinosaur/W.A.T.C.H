@@ -27,6 +27,7 @@ import {
   extractAreaMentions,
   HazardAreaLocation,
   normalizeAreaKey,
+  placeName,
 } from '../weather/hazard-area';
 import {
   hazardTemplateKey,
@@ -47,7 +48,7 @@ type AnnouncementStatus = 'published' | 'pending_review' | 'rejected';
 interface AnnouncementRow {
   id: number;
   source_id: number | null;
-  source_type: 'lgu' | 'institution' | 'manual';
+  source_type: 'lgu' | 'institution' | 'manual' | 'pagasa';
   source: string;
   source_url: string | null;
   title: string;
@@ -1025,6 +1026,97 @@ export class AlertsService {
     post: RawPost,
     facebookPostId: number,
   ) {
+    if (source.source_type === 'pagasa') {
+      const classification = await this.ai.classifyLocalAnnouncement({
+        text: redactContactDetails(post.text),
+        sourceName: 'PAGASA Visayas',
+        city: null,
+        postedAt: post.postedAt,
+      });
+      if (
+        !classification.is_relevant ||
+        !/weather|thunder|rain|storm|typhoon|cyclone|heat|aqi|advisory|forecast|monsoon|flood/i.test(
+          `${classification.category} ${classification.summary} ${post.text}`,
+        )
+      ) {
+        return { ignored: true, reason: 'PAGASA post is not weather-related' };
+      }
+      const aiDetails = await this.ai.classifyAnnouncementDetails({
+        text: redactContactDetails(post.text),
+        sourceName: 'PAGASA Visayas',
+        sourceType: 'lgu',
+        summary: classification.summary,
+        effectiveDate: classification.effective_date,
+      });
+
+      const { data: locations, error: locationsError } = await this.supabase
+        .from('locations')
+        .select('loc_id,user_id,city,province,latitude,longitude');
+      if (locationsError) {
+        throw new ServiceUnavailableException(
+          `PAGASA affected locations could not be loaded: ${locationsError.message}`,
+        );
+      }
+      const affectedAreas = extractAreaMentions(
+        post.text,
+        (locations ?? []) as HazardAreaLocation[],
+      );
+      const status: AnnouncementStatus = affectedAreas.length
+        ? classification.confidence >= 0.7
+          ? 'published'
+          : 'pending_review'
+        : 'pending_review';
+      const title =
+        aiDetails.short_summary
+          .split(/[.!?\n]/)[0]
+          ?.trim()
+          .slice(0, 80) || 'PAGASA Visayas Weather Advisory';
+      const announcementResult = await this.supabase
+        .from('announcements')
+        .insert({
+          source_name: 'PAGASA Visayas',
+          source: 'PAGASA Visayas',
+          title,
+          content: post.text,
+          published_at: post.postedAt,
+          ai_summary: aiDetails.short_summary,
+          source_type: 'pagasa',
+          source_id: source.id,
+          facebook_post_id: facebookPostId,
+          source_url: post.url,
+          category: 'weather',
+          affects_location: affectedAreas.map(placeName).join(', ') || null,
+          ai_scope: 'weather',
+          ai_key_points: aiDetails.key_points,
+          scope: affectedAreas.length ? 'citywide' : 'unknown',
+          confidence: classification.confidence,
+          status,
+          city: affectedAreas[0]?.city ?? null,
+          institution_id: null,
+          conflict_flag: false,
+        })
+        .select(
+          'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
+        )
+        .single();
+      const { error } = announcementResult;
+      const announcement: unknown = announcementResult.data;
+      if (error || !isAnnouncementRow(announcement)) {
+        if (error?.code === '23505') return { duplicate: true };
+        throw new ServiceUnavailableException(
+          `PAGASA announcement could not be saved: ${error?.message ?? 'Invalid announcement row'}`,
+        );
+      }
+      if (status === 'published') {
+        await this.notifyPagasaArea(announcement as AnnouncementRow, affectedAreas);
+      }
+      return {
+        published: status === 'published',
+        pending_review: status === 'pending_review',
+        announcement_id: (announcement as AnnouncementRow).id,
+      };
+    }
+
     const classification = await this.ai.classifyLocalAnnouncement({
       text: redactContactDetails(post.text),
       sourceName: source.school_name,
@@ -1217,7 +1309,73 @@ export class AlertsService {
     );
   }
 
+  private async notifyPagasaArea(
+    announcement: AnnouncementRow,
+    affectedAreas: HazardAreaLocation[],
+  ) {
+    const { data: profiles, error: profilesError } = await this.supabase
+      .from('user_info')
+      .select('id,home_location_id,notification_prefs');
+    if (profilesError) {
+      throw new ServiceUnavailableException(
+        `PAGASA recipients could not be loaded: ${profilesError.message}`,
+      );
+    }
+    const locationIds = [
+      ...new Set(
+        (profiles ?? [])
+          .map((profile) => Number(profile.home_location_id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
+      ),
+    ];
+    if (!locationIds.length) return;
+    const { data: locations, error: locationsError } = await this.supabase
+      .from('locations')
+      .select('loc_id,user_id,city,province,latitude,longitude')
+      .in('loc_id', locationIds);
+    if (locationsError) {
+      throw new ServiceUnavailableException(
+        `PAGASA recipient locations could not be loaded: ${locationsError.message}`,
+      );
+    }
+    const locationById = new Map(
+      ((locations ?? []) as (HazardAreaLocation & { loc_id: number })[]).map(
+        (location) => [location.loc_id, location],
+      ),
+    );
+    const body = (announcement.ai_summary ?? announcement.title)
+      .slice(0, 240)
+      .trim();
+    for (const profile of profiles ?? []) {
+      const locationId = Number(profile.home_location_id);
+      const location = locationById.get(locationId);
+      if (!location) continue;
+      if (!affectedAreas.some((area) => areasMatch(area, location))) continue;
+      await this.push.sendUserNotification({
+        userId: profile.id,
+        announcementId: String(announcement.id),
+        kind: 'weather',
+        title: announcement.title,
+        body,
+        sourceName: 'PAGASA Visayas',
+        sourceUrl: announcement.source_url,
+        data: {},
+      });
+    }
+  }
+
   private async notifyAudience(announcement: AnnouncementRow) {
+    if (announcement.source_type === 'pagasa') {
+      const { data: locations } = await this.supabase
+        .from('locations')
+        .select('loc_id,user_id,city,province,latitude,longitude');
+      const affectedAreas = extractAreaMentions(
+        `${announcement.affects_location ?? ''} ${announcement.content}`,
+        (locations ?? []) as HazardAreaLocation[],
+      );
+      await this.notifyPagasaArea(announcement, affectedAreas);
+      return;
+    }
     const { data: profiles, error: profileError } = await this.supabase
       .from('user_info')
       .select('id,home_location_id,institution_id,notification_prefs');
@@ -1319,7 +1477,9 @@ function isSourceRow(value: unknown): value is SourceRow {
   return (
     isRecord(value) &&
     (typeof value.id === 'number' || typeof value.id === 'string') &&
-    (value.source_type === 'lgu' || value.source_type === 'institution') &&
+    (value.source_type === 'lgu' ||
+      value.source_type === 'institution' ||
+      value.source_type === 'pagasa') &&
     typeof value.school_name === 'string' &&
     (typeof value.facebook_url === 'string' || value.facebook_url === null) &&
     (typeof value.website_url === 'string' || value.website_url === null) &&
@@ -1338,7 +1498,8 @@ function isAnnouncementRow(value: unknown): value is AnnouncementRow {
     (typeof value.source_id === 'number' || value.source_id === null) &&
     (value.source_type === 'lgu' ||
       value.source_type === 'institution' ||
-      value.source_type === 'manual') &&
+      value.source_type === 'manual' ||
+      value.source_type === 'pagasa') &&
     typeof value.source === 'string' &&
     (typeof value.source_url === 'string' || value.source_url === null) &&
     typeof value.title === 'string' &&
