@@ -15,7 +15,6 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useAppTheme } from '../../theme/theme-context';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -505,7 +504,7 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
   const avatarInitial = name.trim().charAt(0).toUpperCase() || 'W';
 
   return (
-    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
+    <View style={styles.background}>
       <StatusBar style="dark" />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
@@ -839,7 +838,7 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
         onSelectInstitution={(selected) => void saveInstitution(selected)}
         onClearInstitution={() => void saveInstitution(null)}
       />
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -890,25 +889,18 @@ function PickerButton({
 const styles = StyleSheet.create({
   background: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 38,
-    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
   },
   keyboardAvoidingView: {
     flex: 1,
   },
   panel: {
     flex: 1,
-    overflow: 'hidden',
-    borderRadius: 36,
-    backgroundColor: 'rgba(250, 251, 255, 0.94)',
-    shadowColor: '#4B32B5',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.14,
-    shadowRadius: 26,
-    elevation: 8,
+    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     flexGrow: 1,
