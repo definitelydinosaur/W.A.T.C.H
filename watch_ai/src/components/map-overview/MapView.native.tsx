@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import type RNMapViewType from 'react-native-maps';
 import type { MapType, Region } from 'react-native-maps';
+import { zoomFromLongitudeDelta } from '../hazard-map/cluster';
 import {
   MapStyleKey,
   MapViewProps,
@@ -10,7 +11,7 @@ import {
   SEVERITY_RADIUS_M,
 } from './types';
 
-const DEFAULT_SPAN = 0.02; // ~2 km across; pinch to zoom down to street/property level
+const DEFAULT_SPAN = 0.02;
 
 const MAP_TYPE: Record<MapStyleKey, MapType> = {
   streets: 'standard',
@@ -45,6 +46,12 @@ const DARK_MAP_STYLE = [
 const isExpoGo =
   Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
+interface NativeMapModules {
+  maps: typeof import('react-native-maps');
+  HazardAreas: typeof import('../hazard-map/HazardAreas').default;
+  HazardMarkers: typeof import('../hazard-map/HazardMarkers').default;
+}
+
 export default function MapView(props: MapViewProps) {
   if (isExpoGo) {
     return (
@@ -66,21 +73,37 @@ function NativeMapView({
   label,
   mapStyle = 'streets',
   focus,
+  boundsFocus = null,
   hazards = [],
   showHazards = true,
   onHazardPress,
+  historyHazards = [],
+  historyArchived = false,
+  selectedHistoryId = null,
+  onHistorySelect,
 }: MapViewProps) {
-  const [maps, setMaps] = useState<typeof import('react-native-maps') | null>(
+  const [nativeModules, setNativeModules] = useState<NativeMapModules | null>(
     null,
   );
   const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(zoomFromLongitudeDelta(DEFAULT_SPAN));
   const ref = useRef<React.ElementRef<typeof RNMapViewType>>(null);
 
   useEffect(() => {
     let active = true;
-    void import('react-native-maps')
-      .then((module) => {
-        if (active) setMaps(module);
+    void Promise.all([
+      import('react-native-maps'),
+      import('../hazard-map/HazardAreas'),
+      import('../hazard-map/HazardMarkers'),
+    ])
+      .then(([maps, areasMod, markersMod]) => {
+        if (active) {
+          setNativeModules({
+            maps,
+            HazardAreas: areasMod.default,
+            HazardMarkers: markersMod.default,
+          });
+        }
       })
       .catch((error: unknown) => {
         if (!active) return;
@@ -96,7 +119,7 @@ function NativeMapView({
   }, []);
 
   useEffect(() => {
-    if (!focus) return;
+    if (!focus || !nativeModules) return;
     const span = focus.span ?? DEFAULT_SPAN;
     const region: Region = {
       latitude: focus.latitude,
@@ -105,7 +128,21 @@ function NativeMapView({
       longitudeDelta: span,
     };
     ref.current?.animateToRegion(region, 650);
-  }, [focus, maps]);
+  }, [focus, nativeModules]);
+
+  useEffect(() => {
+    if (!boundsFocus || !nativeModules) return;
+    ref.current?.fitToCoordinates(
+      [
+        { latitude: boundsFocus.minLat, longitude: boundsFocus.minLon },
+        { latitude: boundsFocus.maxLat, longitude: boundsFocus.maxLon },
+      ],
+      {
+        edgePadding: { top: 130, right: 48, bottom: 260, left: 48 },
+        animated: true,
+      },
+    );
+  }, [boundsFocus, nativeModules]);
 
   if (mapLoadError) {
     return (
@@ -118,7 +155,7 @@ function NativeMapView({
     );
   }
 
-  if (!maps) {
+  if (!nativeModules) {
     return (
       <View style={[styles.container, styles.unavailable]}>
         <Text style={styles.unavailableText}>Loading map...</Text>
@@ -126,7 +163,11 @@ function NativeMapView({
     );
   }
 
-  const { default: RNMapView, Circle, Marker } = maps;
+  const {
+    maps: { default: RNMapView, Circle, Marker },
+    HazardAreas,
+    HazardMarkers,
+  } = nativeModules;
 
   return (
     <View style={styles.container}>
@@ -146,6 +187,10 @@ function NativeMapView({
         showsScale
         showsCompass={false}
         toolbarEnabled={false}
+        onRegionChangeComplete={(r: Region) =>
+          setZoom(zoomFromLongitudeDelta(r.longitudeDelta))
+        }
+        onPress={() => onHistorySelect?.(null)}
       >
         {/* Selected Location Pin */}
         <Marker
@@ -155,7 +200,7 @@ function NativeMapView({
           pinColor="#7C3AED"
         />
 
-        {/* Hazard Outer Warning Radius + Inner Heatmap Core + Pin Markers */}
+        {/* Non-spatial general weather alerts (radius circles + pins) */}
         {showHazards &&
           hazards.map((hazard) => {
             const color = SEVERITY_COLOR[hazard.severity];
@@ -195,6 +240,32 @@ function NativeMapView({
               </React.Fragment>
             );
           })}
+
+        <HazardAreas
+          hazards={historyHazards}
+          archived={historyArchived}
+          selectedId={selectedHistoryId}
+          onSelect={(id) => onHistorySelect?.(id)}
+        />
+        <HazardMarkers
+          hazards={historyHazards}
+          archived={historyArchived}
+          selectedId={selectedHistoryId}
+          zoom={zoom}
+          onSelect={(id) => onHistorySelect?.(id)}
+          onClusterPress={(lat, lon) => {
+            const delta = 360 / Math.pow(2, Math.min(zoom + 2, 16));
+            ref.current?.animateToRegion(
+              {
+                latitude: lat,
+                longitude: lon,
+                latitudeDelta: delta,
+                longitudeDelta: delta,
+              },
+              500,
+            );
+          }}
+        />
       </RNMapView>
     </View>
   );

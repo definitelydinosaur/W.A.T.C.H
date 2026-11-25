@@ -725,7 +725,7 @@ export default function HomeScreen() {
     const load = () =>
       fetchForecast(controller.signal, { latitude, longitude })
         .then((data) => setLive({ name, data }))
-        .catch(() => {});
+        .catch(() => { });
     void load();
     const interval = setInterval(load, 10 * 60 * 1000);
     return () => {
@@ -785,8 +785,8 @@ export default function HomeScreen() {
         i === 0
           ? "Today"
           : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-              new Date(`${d.date}T12:00:00Z`).getUTCDay()
-            ],
+          new Date(`${d.date}T12:00:00Z`).getUTCDay()
+          ],
       condition: toCondition(d.weatherCode, 12),
       minTemp: Math.round(d.minC),
       maxTemp: Math.round(d.maxC),
@@ -1139,12 +1139,12 @@ export default function HomeScreen() {
         setActiveHazard(
           data
             ? {
-                id: data.id,
-                title: data.hazard_type ?? data.category ?? "Weather alert",
-                level: data.risk_level ?? data.severity ?? "Advisory",
-                summary: data.ai_summary ?? "",
-                tips: toSafetyTipGroups(data.safety_tips),
-              }
+              id: data.id,
+              title: data.hazard_type ?? data.category ?? "Weather alert",
+              level: data.risk_level ?? data.severity ?? "Advisory",
+              summary: data.ai_summary ?? "",
+              tips: toSafetyTipGroups(data.safety_tips),
+            }
             : null,
         );
       };
@@ -1413,35 +1413,6 @@ export default function HomeScreen() {
             </Text>
           </View>
         </Animated.View>
-
-        {/* Live Atmospheric Status Pill */}
-        <LiquidGlassCard
-          style={styles.liveSkyStatusCard}
-          intensity={55}
-          tintColors={solarTheme.liquidCardTint}
-        >
-          <View style={styles.liveStatusRow}>
-            <Animated.View
-              style={[
-                styles.livePulseDot,
-                {
-                  opacity: pulseAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.5, 1],
-                  }),
-                },
-              ]}
-            />
-            <Text style={styles.liveStatusText}>
-              {solarTheme.badge} •{" "}
-              {selectedHourId === "2" ? "LIVE" : activeHour.time} •{" "}
-              {liveClock.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
-          </View>
-        </LiquidGlassCard>
       </ScrollView>
 
       {/* 3. iOS / Apple-Style Glassmorphism Weather Dashboard */}
@@ -1485,7 +1456,7 @@ export default function HomeScreen() {
                   >
                     <View style={styles.appleCardHeader}>
                       <Text style={styles.appleCardHeaderText}>
-                        ⚠️ ACTIVE SAFETY GUIDANCE
+                        ACTIVE SAFETY GUIDANCE
                       </Text>
                       <View style={styles.hazardLevelBadge}>
                         <Text style={styles.hazardLevelText}>
@@ -1545,7 +1516,7 @@ export default function HomeScreen() {
                 >
                   <View style={styles.appleCardHeader}>
                     <Text style={styles.appleCardHeaderText}>
-                      🕒 HOURLY TIMELINE
+                      HOURLY TIMELINE
                     </Text>
                     <Text
                       style={[
@@ -1583,12 +1554,12 @@ export default function HomeScreen() {
                             styles.hourlyGlassCard,
                             isSelected
                               ? [
-                                  styles.hourlyGlassCardSelected,
-                                  {
-                                    borderColor:
-                                      solarTheme.surface.borderSelected,
-                                  },
-                                ]
+                                styles.hourlyGlassCardSelected,
+                                {
+                                  borderColor:
+                                    solarTheme.surface.borderSelected,
+                                },
+                              ]
                               : styles.hourlyGlassCardDefault,
                           ]}
                         >
@@ -1651,7 +1622,7 @@ export default function HomeScreen() {
                 >
                   <View style={styles.appleCardHeader}>
                     <Text style={styles.appleCardHeaderText}>
-                      📅 7-DAY FORECAST
+                      7-DAY FORECAST
                     </Text>
                     <Text style={styles.appleCardHeaderMeta}>
                       Cebu Province
@@ -1668,7 +1639,7 @@ export default function HomeScreen() {
                       const barWidthPct = Math.max(
                         14,
                         ((item.maxTemp - item.minTemp) / weekTempBounds.span) *
-                          100,
+                        100,
                       );
                       const currentMarkerPct = Math.min(
                         96,
@@ -1676,7 +1647,7 @@ export default function HomeScreen() {
                           4,
                           ((selectedCity.temp - weekTempBounds.min) /
                             weekTempBounds.span) *
-                            100,
+                          100,
                         ),
                       );
 
@@ -1747,7 +1718,7 @@ export default function HomeScreen() {
                 >
                   <View style={styles.appleCardHeader}>
                     <Text style={styles.appleCardHeaderText}>
-                      💨 WIND RADAR VECTOR
+                      WIND RADAR VECTOR
                     </Text>
                     <Text
                       style={[
@@ -2500,33 +2471,6 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: 140,
-  },
-  liveSkyStatusCard: {
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  liveStatusRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  livePulseDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: "#00E676",
-    marginRight: 8,
-    shadowColor: "#00E676",
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-  },
-  liveStatusText: {
-    color: "#FFFFFF",
-    fontSize: 11.5,
-    fontWeight: "700",
-    letterSpacing: 0.4,
   },
   // Dashboard enclosure
   bottomDashboardEnclosure: {

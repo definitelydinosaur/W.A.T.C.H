@@ -1,3 +1,5 @@
+import type { Hazard as ReportedHazard } from '../hazard-map/types';
+
 export type HazardSeverity = 'Advisory' | 'Warning' | 'Severe' | 'Extreme';
 
 export type MapStyleKey = 'streets' | 'dark' | 'satellite' | 'hybrid';
@@ -21,15 +23,29 @@ export interface MapFocus {
   span?: number;
 }
 
+export interface MapBoundsFocus {
+  minLat: number;
+  maxLat: number;
+  minLon: number;
+  maxLon: number;
+  token: number;
+}
+
 export interface MapViewProps {
   latitude: number;
   longitude: number;
   label: string;
   mapStyle?: MapStyleKey;
   focus?: MapFocus;
+  boundsFocus?: MapBoundsFocus | null;
   hazards?: MapHazard[];
   showHazards?: boolean;
   onHazardPress?: (id: string) => void;
+  /** Reported spatial hazards (flood / closure / caution) for the active/historical view. */
+  historyHazards?: ReportedHazard[];
+  historyArchived?: boolean;
+  selectedHistoryId?: string | null;
+  onHistorySelect?: (id: string | null) => void;
 }
 
 export const SEVERITY_COLOR: Record<HazardSeverity, string> = {
@@ -53,4 +69,3 @@ export const SEVERITY_RADIUS_M: Record<HazardSeverity, number> = {
   Severe: 3500,
   Extreme: 5500,
 };
-

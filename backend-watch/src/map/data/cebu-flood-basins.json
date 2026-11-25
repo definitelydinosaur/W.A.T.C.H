@@ -1,0 +1,2161 @@
+[
+  {
+    "id": "mananga-river",
+    "name": "Mananga River Basin",
+    "city": "Talisay City",
+    "barangays": [
+      "Tabunok",
+      "Biasong",
+      "Lagtang",
+      "Dumlog",
+      "Lawaan I",
+      "Lawaan II",
+      "Lawaan III",
+      "Jaclupan",
+      "Camp 4",
+      "San Isidro",
+      "Bulacao Talisay"
+    ],
+    "aliases": [
+      "mananga",
+      "mananga river",
+      "mananga bridge",
+      "talisay",
+      "talisay city",
+      "tabunok",
+      "biasong",
+      "lagtang",
+      "jaclupan",
+      "dumlog"
+    ],
+    "center": {
+      "latitude": 10.2512,
+      "longitude": 123.8442
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.2662,
+            "longitude": 123.8355
+          },
+          {
+            "latitude": 10.2644,
+            "longitude": 123.8384
+          },
+          {
+            "latitude": 10.2591,
+            "longitude": 123.8419
+          },
+          {
+            "latitude": 10.2538,
+            "longitude": 123.8448
+          },
+          {
+            "latitude": 10.2481,
+            "longitude": 123.8479
+          },
+          {
+            "latitude": 10.2442,
+            "longitude": 123.8511
+          },
+          {
+            "latitude": 10.2415,
+            "longitude": 123.8534
+          },
+          {
+            "latitude": 10.2402,
+            "longitude": 123.8512
+          },
+          {
+            "latitude": 10.2431,
+            "longitude": 123.8482
+          },
+          {
+            "latitude": 10.2474,
+            "longitude": 123.8449
+          },
+          {
+            "latitude": 10.2528,
+            "longitude": 123.8417
+          },
+          {
+            "latitude": 10.2586,
+            "longitude": 123.8388
+          },
+          {
+            "latitude": 10.2636,
+            "longitude": 123.8358
+          },
+          {
+            "latitude": 10.2662,
+            "longitude": 123.8355
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.2704,
+            "longitude": 123.8321
+          },
+          {
+            "latitude": 10.2681,
+            "longitude": 123.8364
+          },
+          {
+            "latitude": 10.2628,
+            "longitude": 123.8411
+          },
+          {
+            "latitude": 10.2572,
+            "longitude": 123.8453
+          },
+          {
+            "latitude": 10.2512,
+            "longitude": 123.8492
+          },
+          {
+            "latitude": 10.2458,
+            "longitude": 123.8531
+          },
+          {
+            "latitude": 10.2412,
+            "longitude": 123.8559
+          },
+          {
+            "latitude": 10.2385,
+            "longitude": 123.8528
+          },
+          {
+            "latitude": 10.2408,
+            "longitude": 123.8481
+          },
+          {
+            "latitude": 10.2459,
+            "longitude": 123.8434
+          },
+          {
+            "latitude": 10.2519,
+            "longitude": 123.8396
+          },
+          {
+            "latitude": 10.2581,
+            "longitude": 123.8361
+          },
+          {
+            "latitude": 10.2651,
+            "longitude": 123.8326
+          },
+          {
+            "latitude": 10.2704,
+            "longitude": 123.8321
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.2785,
+            "longitude": 123.8278
+          },
+          {
+            "latitude": 10.2742,
+            "longitude": 123.8342
+          },
+          {
+            "latitude": 10.2681,
+            "longitude": 123.8399
+          },
+          {
+            "latitude": 10.2614,
+            "longitude": 123.8454
+          },
+          {
+            "latitude": 10.2546,
+            "longitude": 123.8504
+          },
+          {
+            "latitude": 10.2478,
+            "longitude": 123.8554
+          },
+          {
+            "latitude": 10.2408,
+            "longitude": 123.8588
+          },
+          {
+            "latitude": 10.2368,
+            "longitude": 123.8548
+          },
+          {
+            "latitude": 10.2389,
+            "longitude": 123.8479
+          },
+          {
+            "latitude": 10.2442,
+            "longitude": 123.8421
+          },
+          {
+            "latitude": 10.2504,
+            "longitude": 123.8376
+          },
+          {
+            "latitude": 10.2572,
+            "longitude": 123.8336
+          },
+          {
+            "latitude": 10.2658,
+            "longitude": 123.8294
+          },
+          {
+            "latitude": 10.2738,
+            "longitude": 123.8266
+          },
+          {
+            "latitude": 10.2785,
+            "longitude": 123.8278
+          }
+        ],
+        [
+          {
+            "latitude": 10.2564,
+            "longitude": 123.8312
+          },
+          {
+            "latitude": 10.2576,
+            "longitude": 123.8348
+          },
+          {
+            "latitude": 10.2534,
+            "longitude": 123.8364
+          },
+          {
+            "latitude": 10.2518,
+            "longitude": 123.8325
+          },
+          {
+            "latitude": 10.2564,
+            "longitude": 123.8312
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "butuanon-river",
+    "name": "Butuanon River Basin",
+    "city": "Mandaue City",
+    "barangays": [
+      "Tingub",
+      "Casuntingan",
+      "Canduman",
+      "Paknaan",
+      "Alang-Alang",
+      "Umapad",
+      "Cabancalan",
+      "Ibabao-Estancia",
+      "Talamban",
+      "Bacayan",
+      "Pit-os"
+    ],
+    "aliases": [
+      "butuanon",
+      "butuanon river",
+      "mandaue",
+      "mandaue city",
+      "paknaan",
+      "tingub",
+      "casuntingan",
+      "canduman",
+      "umapad",
+      "talamban",
+      "bacayan",
+      "cabancalan"
+    ],
+    "center": {
+      "latitude": 10.3435,
+      "longitude": 123.9345
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3624,
+            "longitude": 123.9165
+          },
+          {
+            "latitude": 10.3568,
+            "longitude": 123.9228
+          },
+          {
+            "latitude": 10.3502,
+            "longitude": 123.9286
+          },
+          {
+            "latitude": 10.3438,
+            "longitude": 123.9342
+          },
+          {
+            "latitude": 10.3388,
+            "longitude": 123.9412
+          },
+          {
+            "latitude": 10.3348,
+            "longitude": 123.9488
+          },
+          {
+            "latitude": 10.3318,
+            "longitude": 123.9546
+          },
+          {
+            "latitude": 10.3296,
+            "longitude": 123.9522
+          },
+          {
+            "latitude": 10.3324,
+            "longitude": 123.9461
+          },
+          {
+            "latitude": 10.3364,
+            "longitude": 123.9388
+          },
+          {
+            "latitude": 10.3414,
+            "longitude": 123.9315
+          },
+          {
+            "latitude": 10.3478,
+            "longitude": 123.9254
+          },
+          {
+            "latitude": 10.3544,
+            "longitude": 123.9198
+          },
+          {
+            "latitude": 10.3602,
+            "longitude": 123.9144
+          },
+          {
+            "latitude": 10.3624,
+            "longitude": 123.9165
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3672,
+            "longitude": 123.9138
+          },
+          {
+            "latitude": 10.3614,
+            "longitude": 123.9212
+          },
+          {
+            "latitude": 10.3541,
+            "longitude": 123.9281
+          },
+          {
+            "latitude": 10.3468,
+            "longitude": 123.9348
+          },
+          {
+            "latitude": 10.3412,
+            "longitude": 123.9428
+          },
+          {
+            "latitude": 10.3368,
+            "longitude": 123.9514
+          },
+          {
+            "latitude": 10.3328,
+            "longitude": 123.9574
+          },
+          {
+            "latitude": 10.3278,
+            "longitude": 123.9542
+          },
+          {
+            "latitude": 10.3308,
+            "longitude": 123.9454
+          },
+          {
+            "latitude": 10.3348,
+            "longitude": 123.9368
+          },
+          {
+            "latitude": 10.3398,
+            "longitude": 123.9291
+          },
+          {
+            "latitude": 10.3468,
+            "longitude": 123.9224
+          },
+          {
+            "latitude": 10.3544,
+            "longitude": 123.9162
+          },
+          {
+            "latitude": 10.3638,
+            "longitude": 123.9112
+          },
+          {
+            "latitude": 10.3672,
+            "longitude": 123.9138
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3718,
+            "longitude": 123.9114
+          },
+          {
+            "latitude": 10.3654,
+            "longitude": 123.9198
+          },
+          {
+            "latitude": 10.3578,
+            "longitude": 123.9278
+          },
+          {
+            "latitude": 10.3502,
+            "longitude": 123.9356
+          },
+          {
+            "latitude": 10.3442,
+            "longitude": 123.9446
+          },
+          {
+            "latitude": 10.3388,
+            "longitude": 123.9541
+          },
+          {
+            "latitude": 10.3338,
+            "longitude": 123.9602
+          },
+          {
+            "latitude": 10.3264,
+            "longitude": 123.9562
+          },
+          {
+            "latitude": 10.3292,
+            "longitude": 123.9442
+          },
+          {
+            "latitude": 10.3334,
+            "longitude": 123.9342
+          },
+          {
+            "latitude": 10.3386,
+            "longitude": 123.9261
+          },
+          {
+            "latitude": 10.3462,
+            "longitude": 123.9191
+          },
+          {
+            "latitude": 10.3548,
+            "longitude": 123.9128
+          },
+          {
+            "latitude": 10.3672,
+            "longitude": 123.9082
+          },
+          {
+            "latitude": 10.3718,
+            "longitude": 123.9114
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "guadalupe-river",
+    "name": "Guadalupe River Basin",
+    "city": "Cebu City",
+    "barangays": [
+      "Guadalupe",
+      "Kalunasan",
+      "Capitol Site",
+      "Sambag I",
+      "Sambag II",
+      "Pahina Central",
+      "Ermita",
+      "Carbon",
+      "Pasil",
+      "Suba",
+      "Sawang Calero"
+    ],
+    "aliases": [
+      "guadalupe",
+      "guadalupe river",
+      "kalunasan",
+      "v. rama",
+      "v rama",
+      "pahina central",
+      "ermita",
+      "carbon",
+      "pasil",
+      "sawang calero"
+    ],
+    "center": {
+      "latitude": 10.3132,
+      "longitude": 123.8865
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3294,
+            "longitude": 123.8768
+          },
+          {
+            "latitude": 10.3258,
+            "longitude": 123.8816
+          },
+          {
+            "latitude": 10.3214,
+            "longitude": 123.8856
+          },
+          {
+            "latitude": 10.3148,
+            "longitude": 123.8886
+          },
+          {
+            "latitude": 10.3072,
+            "longitude": 123.8914
+          },
+          {
+            "latitude": 10.2998,
+            "longitude": 123.8936
+          },
+          {
+            "latitude": 10.2934,
+            "longitude": 123.8952
+          },
+          {
+            "latitude": 10.2922,
+            "longitude": 123.8926
+          },
+          {
+            "latitude": 10.2984,
+            "longitude": 123.8906
+          },
+          {
+            "latitude": 10.3058,
+            "longitude": 123.8882
+          },
+          {
+            "latitude": 10.3134,
+            "longitude": 123.8854
+          },
+          {
+            "latitude": 10.3198,
+            "longitude": 123.8824
+          },
+          {
+            "latitude": 10.3244,
+            "longitude": 123.8784
+          },
+          {
+            "latitude": 10.3278,
+            "longitude": 123.8744
+          },
+          {
+            "latitude": 10.3294,
+            "longitude": 123.8768
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3324,
+            "longitude": 123.8748
+          },
+          {
+            "latitude": 10.3282,
+            "longitude": 123.8812
+          },
+          {
+            "latitude": 10.3228,
+            "longitude": 123.8866
+          },
+          {
+            "latitude": 10.3158,
+            "longitude": 123.8901
+          },
+          {
+            "latitude": 10.3078,
+            "longitude": 123.8932
+          },
+          {
+            "latitude": 10.2992,
+            "longitude": 123.8956
+          },
+          {
+            "latitude": 10.2914,
+            "longitude": 123.8974
+          },
+          {
+            "latitude": 10.2898,
+            "longitude": 123.8928
+          },
+          {
+            "latitude": 10.2968,
+            "longitude": 123.8892
+          },
+          {
+            "latitude": 10.3048,
+            "longitude": 123.8864
+          },
+          {
+            "latitude": 10.3128,
+            "longitude": 123.8834
+          },
+          {
+            "latitude": 10.3198,
+            "longitude": 123.8798
+          },
+          {
+            "latitude": 10.3254,
+            "longitude": 123.8752
+          },
+          {
+            "latitude": 10.3298,
+            "longitude": 123.8722
+          },
+          {
+            "latitude": 10.3324,
+            "longitude": 123.8748
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3352,
+            "longitude": 123.8724
+          },
+          {
+            "latitude": 10.3304,
+            "longitude": 123.8808
+          },
+          {
+            "latitude": 10.3244,
+            "longitude": 123.8874
+          },
+          {
+            "latitude": 10.3168,
+            "longitude": 123.8918
+          },
+          {
+            "latitude": 10.3084,
+            "longitude": 123.8954
+          },
+          {
+            "latitude": 10.2988,
+            "longitude": 123.8982
+          },
+          {
+            "latitude": 10.2894,
+            "longitude": 123.8998
+          },
+          {
+            "latitude": 10.2878,
+            "longitude": 123.8924
+          },
+          {
+            "latitude": 10.2954,
+            "longitude": 123.8872
+          },
+          {
+            "latitude": 10.3038,
+            "longitude": 123.8842
+          },
+          {
+            "latitude": 10.3124,
+            "longitude": 123.8812
+          },
+          {
+            "latitude": 10.3198,
+            "longitude": 123.8772
+          },
+          {
+            "latitude": 10.3264,
+            "longitude": 123.8724
+          },
+          {
+            "latitude": 10.3324,
+            "longitude": 123.8698
+          },
+          {
+            "latitude": 10.3352,
+            "longitude": 123.8724
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "mahiga-creek",
+    "name": "Mahiga Creek Basin",
+    "city": "Mandaue City",
+    "barangays": [
+      "Subangdaku",
+      "Mabolo",
+      "Kasambagan",
+      "Banilad",
+      "Tipolo",
+      "Guizo",
+      "Mantuyong",
+      "Carreta"
+    ],
+    "aliases": [
+      "mahiga",
+      "mahiga creek",
+      "subangdaku",
+      "mabolo",
+      "kasambagan",
+      "banilad",
+      "tipolo",
+      "north reclamation",
+      "nra",
+      "as fortuna"
+    ],
+    "center": {
+      "latitude": 10.3235,
+      "longitude": 123.9212
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3388,
+            "longitude": 123.9114
+          },
+          {
+            "latitude": 10.3334,
+            "longitude": 123.9154
+          },
+          {
+            "latitude": 10.3278,
+            "longitude": 123.9194
+          },
+          {
+            "latitude": 10.3238,
+            "longitude": 123.9242
+          },
+          {
+            "latitude": 10.3188,
+            "longitude": 123.9278
+          },
+          {
+            "latitude": 10.3144,
+            "longitude": 123.9294
+          },
+          {
+            "latitude": 10.3128,
+            "longitude": 123.9262
+          },
+          {
+            "latitude": 10.3168,
+            "longitude": 123.9238
+          },
+          {
+            "latitude": 10.3218,
+            "longitude": 123.9204
+          },
+          {
+            "latitude": 10.3264,
+            "longitude": 123.9158
+          },
+          {
+            "latitude": 10.3322,
+            "longitude": 123.9118
+          },
+          {
+            "latitude": 10.3374,
+            "longitude": 123.9092
+          },
+          {
+            "latitude": 10.3388,
+            "longitude": 123.9114
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3418,
+            "longitude": 123.9102
+          },
+          {
+            "latitude": 10.3358,
+            "longitude": 123.9156
+          },
+          {
+            "latitude": 10.3296,
+            "longitude": 123.9208
+          },
+          {
+            "latitude": 10.3254,
+            "longitude": 123.9268
+          },
+          {
+            "latitude": 10.3198,
+            "longitude": 123.9308
+          },
+          {
+            "latitude": 10.3138,
+            "longitude": 123.9318
+          },
+          {
+            "latitude": 10.3112,
+            "longitude": 123.9264
+          },
+          {
+            "latitude": 10.3154,
+            "longitude": 123.9218
+          },
+          {
+            "latitude": 10.3208,
+            "longitude": 123.9178
+          },
+          {
+            "latitude": 10.3264,
+            "longitude": 123.9134
+          },
+          {
+            "latitude": 10.3332,
+            "longitude": 123.9094
+          },
+          {
+            "latitude": 10.3396,
+            "longitude": 123.9074
+          },
+          {
+            "latitude": 10.3418,
+            "longitude": 123.9102
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3446,
+            "longitude": 123.9092
+          },
+          {
+            "latitude": 10.3382,
+            "longitude": 123.9158
+          },
+          {
+            "latitude": 10.3314,
+            "longitude": 123.9224
+          },
+          {
+            "latitude": 10.3268,
+            "longitude": 123.9292
+          },
+          {
+            "latitude": 10.3204,
+            "longitude": 123.9336
+          },
+          {
+            "latitude": 10.3128,
+            "longitude": 123.9342
+          },
+          {
+            "latitude": 10.3094,
+            "longitude": 123.9258
+          },
+          {
+            "latitude": 10.3144,
+            "longitude": 123.9194
+          },
+          {
+            "latitude": 10.3202,
+            "longitude": 123.9152
+          },
+          {
+            "latitude": 10.3268,
+            "longitude": 123.9108
+          },
+          {
+            "latitude": 10.3342,
+            "longitude": 123.9072
+          },
+          {
+            "latitude": 10.3418,
+            "longitude": 123.9058
+          },
+          {
+            "latitude": 10.3446,
+            "longitude": 123.9092
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "lahug-river",
+    "name": "Lahug River Basin",
+    "city": "Cebu City",
+    "barangays": [
+      "Lahug",
+      "Apas",
+      "Kamputhaw",
+      "Luz",
+      "Lorega San Miguel",
+      "Tejero",
+      "Tinago",
+      "Zapatera"
+    ],
+    "aliases": [
+      "lahug",
+      "lahug river",
+      "salinas",
+      "it park",
+      "apas",
+      "kamputhaw",
+      "lorega",
+      "tejero",
+      "tinago"
+    ],
+    "center": {
+      "latitude": 10.3186,
+      "longitude": 123.9012
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3338,
+            "longitude": 123.9018
+          },
+          {
+            "latitude": 10.3294,
+            "longitude": 123.9052
+          },
+          {
+            "latitude": 10.3228,
+            "longitude": 123.9032
+          },
+          {
+            "latitude": 10.3162,
+            "longitude": 123.9018
+          },
+          {
+            "latitude": 10.3094,
+            "longitude": 123.9044
+          },
+          {
+            "latitude": 10.3036,
+            "longitude": 123.9078
+          },
+          {
+            "latitude": 10.3022,
+            "longitude": 123.9046
+          },
+          {
+            "latitude": 10.3076,
+            "longitude": 123.9012
+          },
+          {
+            "latitude": 10.3148,
+            "longitude": 123.8988
+          },
+          {
+            "latitude": 10.3224,
+            "longitude": 123.8998
+          },
+          {
+            "latitude": 10.3292,
+            "longitude": 123.9016
+          },
+          {
+            "latitude": 10.3334,
+            "longitude": 123.8994
+          },
+          {
+            "latitude": 10.3338,
+            "longitude": 123.9018
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3362,
+            "longitude": 123.9022
+          },
+          {
+            "latitude": 10.3312,
+            "longitude": 123.9074
+          },
+          {
+            "latitude": 10.3238,
+            "longitude": 123.9056
+          },
+          {
+            "latitude": 10.3168,
+            "longitude": 123.9041
+          },
+          {
+            "latitude": 10.3092,
+            "longitude": 123.9068
+          },
+          {
+            "latitude": 10.3022,
+            "longitude": 123.9102
+          },
+          {
+            "latitude": 10.3002,
+            "longitude": 123.9042
+          },
+          {
+            "latitude": 10.3068,
+            "longitude": 123.8992
+          },
+          {
+            "latitude": 10.3144,
+            "longitude": 123.8968
+          },
+          {
+            "latitude": 10.3228,
+            "longitude": 123.8976
+          },
+          {
+            "latitude": 10.3304,
+            "longitude": 123.8996
+          },
+          {
+            "latitude": 10.3354,
+            "longitude": 123.8982
+          },
+          {
+            "latitude": 10.3362,
+            "longitude": 123.9022
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3384,
+            "longitude": 123.9032
+          },
+          {
+            "latitude": 10.3328,
+            "longitude": 123.9094
+          },
+          {
+            "latitude": 10.3248,
+            "longitude": 123.9082
+          },
+          {
+            "latitude": 10.3174,
+            "longitude": 123.9066
+          },
+          {
+            "latitude": 10.3092,
+            "longitude": 123.9094
+          },
+          {
+            "latitude": 10.3008,
+            "longitude": 123.9126
+          },
+          {
+            "latitude": 10.2984,
+            "longitude": 123.9038
+          },
+          {
+            "latitude": 10.3058,
+            "longitude": 123.8974
+          },
+          {
+            "latitude": 10.3142,
+            "longitude": 123.8946
+          },
+          {
+            "latitude": 10.3232,
+            "longitude": 123.8954
+          },
+          {
+            "latitude": 10.3314,
+            "longitude": 123.8976
+          },
+          {
+            "latitude": 10.3374,
+            "longitude": 123.8968
+          },
+          {
+            "latitude": 10.3384,
+            "longitude": 123.9032
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "kinalumsan-river",
+    "name": "Kinalumsan River Basin",
+    "city": "Cebu City",
+    "barangays": [
+      "Mambaling",
+      "Basak San Nicolas",
+      "Duljo Fatima",
+      "Labangon",
+      "Punta Princesa",
+      "Tisa",
+      "San Nicolas Proper"
+    ],
+    "aliases": [
+      "kinalumsan",
+      "kinalumsan river",
+      "mambaling",
+      "duljo",
+      "duljo fatima",
+      "basak san nicolas",
+      "labangon",
+      "punta princesa",
+      "tisa"
+    ],
+    "center": {
+      "latitude": 10.2908,
+      "longitude": 123.8726
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3002,
+            "longitude": 123.8662
+          },
+          {
+            "latitude": 10.2974,
+            "longitude": 123.8706
+          },
+          {
+            "latitude": 10.2932,
+            "longitude": 123.8736
+          },
+          {
+            "latitude": 10.2896,
+            "longitude": 123.8768
+          },
+          {
+            "latitude": 10.2862,
+            "longitude": 123.8794
+          },
+          {
+            "latitude": 10.2842,
+            "longitude": 123.8764
+          },
+          {
+            "latitude": 10.2874,
+            "longitude": 123.8728
+          },
+          {
+            "latitude": 10.2908,
+            "longitude": 123.8694
+          },
+          {
+            "latitude": 10.2954,
+            "longitude": 123.8664
+          },
+          {
+            "latitude": 10.2988,
+            "longitude": 123.8642
+          },
+          {
+            "latitude": 10.3002,
+            "longitude": 123.8662
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3026,
+            "longitude": 123.8652
+          },
+          {
+            "latitude": 10.2994,
+            "longitude": 123.8712
+          },
+          {
+            "latitude": 10.2948,
+            "longitude": 123.8752
+          },
+          {
+            "latitude": 10.2904,
+            "longitude": 123.8792
+          },
+          {
+            "latitude": 10.2854,
+            "longitude": 123.8822
+          },
+          {
+            "latitude": 10.2824,
+            "longitude": 123.8768
+          },
+          {
+            "latitude": 10.2858,
+            "longitude": 123.8714
+          },
+          {
+            "latitude": 10.2898,
+            "longitude": 123.8672
+          },
+          {
+            "latitude": 10.2948,
+            "longitude": 123.8642
+          },
+          {
+            "latitude": 10.3004,
+            "longitude": 123.8624
+          },
+          {
+            "latitude": 10.3026,
+            "longitude": 123.8652
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3052,
+            "longitude": 123.8642
+          },
+          {
+            "latitude": 10.3016,
+            "longitude": 123.8718
+          },
+          {
+            "latitude": 10.2966,
+            "longitude": 123.8772
+          },
+          {
+            "latitude": 10.2914,
+            "longitude": 123.8818
+          },
+          {
+            "latitude": 10.2848,
+            "longitude": 123.8848
+          },
+          {
+            "latitude": 10.2806,
+            "longitude": 123.8774
+          },
+          {
+            "latitude": 10.2844,
+            "longitude": 123.8698
+          },
+          {
+            "latitude": 10.2888,
+            "longitude": 123.8652
+          },
+          {
+            "latitude": 10.2944,
+            "longitude": 123.8618
+          },
+          {
+            "latitude": 10.3022,
+            "longitude": 123.8606
+          },
+          {
+            "latitude": 10.3052,
+            "longitude": 123.8642
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "bulacao-river",
+    "name": "Bulacao River Basin",
+    "city": "Cebu City",
+    "barangays": [
+      "Bulacao",
+      "Poblacion Pardo",
+      "Basak Pardo",
+      "Inayawan",
+      "Candulawan",
+      "Cogon Pardo"
+    ],
+    "aliases": [
+      "bulacao",
+      "bulacao river",
+      "pardo",
+      "poblacion pardo",
+      "basak pardo",
+      "inayawan",
+      "candulawan"
+    ],
+    "center": {
+      "latitude": 10.2764,
+      "longitude": 123.8548
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.2842,
+            "longitude": 123.8442
+          },
+          {
+            "latitude": 10.2814,
+            "longitude": 123.8504
+          },
+          {
+            "latitude": 10.2778,
+            "longitude": 123.8558
+          },
+          {
+            "latitude": 10.2736,
+            "longitude": 123.8614
+          },
+          {
+            "latitude": 10.2704,
+            "longitude": 123.8642
+          },
+          {
+            "latitude": 10.2684,
+            "longitude": 123.8612
+          },
+          {
+            "latitude": 10.2718,
+            "longitude": 123.8556
+          },
+          {
+            "latitude": 10.2756,
+            "longitude": 123.8498
+          },
+          {
+            "latitude": 10.2804,
+            "longitude": 123.8448
+          },
+          {
+            "latitude": 10.2828,
+            "longitude": 123.8422
+          },
+          {
+            "latitude": 10.2842,
+            "longitude": 123.8442
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.2866,
+            "longitude": 123.8432
+          },
+          {
+            "latitude": 10.2836,
+            "longitude": 123.8508
+          },
+          {
+            "latitude": 10.2794,
+            "longitude": 123.8572
+          },
+          {
+            "latitude": 10.2746,
+            "longitude": 123.8634
+          },
+          {
+            "latitude": 10.2698,
+            "longitude": 123.8668
+          },
+          {
+            "latitude": 10.2666,
+            "longitude": 123.8616
+          },
+          {
+            "latitude": 10.2704,
+            "longitude": 123.8548
+          },
+          {
+            "latitude": 10.2748,
+            "longitude": 123.8482
+          },
+          {
+            "latitude": 10.2798,
+            "longitude": 123.8428
+          },
+          {
+            "latitude": 10.2842,
+            "longitude": 123.8404
+          },
+          {
+            "latitude": 10.2866,
+            "longitude": 123.8432
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.2892,
+            "longitude": 123.8418
+          },
+          {
+            "latitude": 10.2858,
+            "longitude": 123.8514
+          },
+          {
+            "latitude": 10.2812,
+            "longitude": 123.8588
+          },
+          {
+            "latitude": 10.2758,
+            "longitude": 123.8658
+          },
+          {
+            "latitude": 10.2694,
+            "longitude": 123.8694
+          },
+          {
+            "latitude": 10.2648,
+            "longitude": 123.8624
+          },
+          {
+            "latitude": 10.2688,
+            "longitude": 123.8538
+          },
+          {
+            "latitude": 10.2738,
+            "longitude": 123.8464
+          },
+          {
+            "latitude": 10.2792,
+            "longitude": 123.8408
+          },
+          {
+            "latitude": 10.2858,
+            "longitude": 123.8388
+          },
+          {
+            "latitude": 10.2892,
+            "longitude": 123.8418
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "colon-downtown",
+    "name": "Colon & Downtown Cebu Lowlands",
+    "city": "Cebu City",
+    "barangays": [
+      "Santo Niño",
+      "Parian",
+      "Kalubihan",
+      "San Roque",
+      "Santa Cruz",
+      "Kamagayan"
+    ],
+    "aliases": [
+      "colon",
+      "colon street",
+      "downtown cebu",
+      "osmena boulevard",
+      "osmeña boulevard",
+      "jones avenue",
+      "santo nino",
+      "santo niño",
+      "parian",
+      "kalubihan",
+      "kamagayan",
+      "legazpi"
+    ],
+    "center": {
+      "latitude": 10.2969,
+      "longitude": 123.9002
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.2994,
+            "longitude": 123.8966
+          },
+          {
+            "latitude": 10.3002,
+            "longitude": 123.9004
+          },
+          {
+            "latitude": 10.2994,
+            "longitude": 123.9042
+          },
+          {
+            "latitude": 10.2968,
+            "longitude": 123.9052
+          },
+          {
+            "latitude": 10.2944,
+            "longitude": 123.9032
+          },
+          {
+            "latitude": 10.2942,
+            "longitude": 123.8986
+          },
+          {
+            "latitude": 10.2964,
+            "longitude": 123.8958
+          },
+          {
+            "latitude": 10.2994,
+            "longitude": 123.8966
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3018,
+            "longitude": 123.8952
+          },
+          {
+            "latitude": 10.3024,
+            "longitude": 123.9008
+          },
+          {
+            "latitude": 10.3012,
+            "longitude": 123.9062
+          },
+          {
+            "latitude": 10.2968,
+            "longitude": 123.9074
+          },
+          {
+            "latitude": 10.2928,
+            "longitude": 123.9044
+          },
+          {
+            "latitude": 10.2924,
+            "longitude": 123.8976
+          },
+          {
+            "latitude": 10.2956,
+            "longitude": 123.8941
+          },
+          {
+            "latitude": 10.3018,
+            "longitude": 123.8952
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3046,
+            "longitude": 123.8936
+          },
+          {
+            "latitude": 10.3048,
+            "longitude": 123.9012
+          },
+          {
+            "latitude": 10.3032,
+            "longitude": 123.9082
+          },
+          {
+            "latitude": 10.2968,
+            "longitude": 123.9096
+          },
+          {
+            "latitude": 10.2912,
+            "longitude": 123.9058
+          },
+          {
+            "latitude": 10.2908,
+            "longitude": 123.8964
+          },
+          {
+            "latitude": 10.2948,
+            "longitude": 123.8922
+          },
+          {
+            "latitude": 10.3046,
+            "longitude": 123.8936
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "cotcot-liloan-river",
+    "name": "Cotcot River & Liloan Floodplain",
+    "city": "Liloan",
+    "barangays": [
+      "Cotcot",
+      "Jubay",
+      "Yati",
+      "Poblacion Liloan",
+      "Catarman",
+      "Tamiao",
+      "Estaca"
+    ],
+    "aliases": [
+      "cotcot",
+      "liloan",
+      "compostela",
+      "jubay",
+      "yati",
+      "catarman",
+      "estaca",
+      "tamiao"
+    ],
+    "center": {
+      "latitude": 10.4158,
+      "longitude": 123.9972
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.4278,
+            "longitude": 123.9912
+          },
+          {
+            "latitude": 10.4242,
+            "longitude": 123.9974
+          },
+          {
+            "latitude": 10.4178,
+            "longitude": 124.0004
+          },
+          {
+            "latitude": 10.4094,
+            "longitude": 123.9998
+          },
+          {
+            "latitude": 10.4018,
+            "longitude": 123.9988
+          },
+          {
+            "latitude": 10.4012,
+            "longitude": 123.9942
+          },
+          {
+            "latitude": 10.4088,
+            "longitude": 123.9946
+          },
+          {
+            "latitude": 10.4172,
+            "longitude": 123.9948
+          },
+          {
+            "latitude": 10.4234,
+            "longitude": 123.9918
+          },
+          {
+            "latitude": 10.4278,
+            "longitude": 123.9912
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.4324,
+            "longitude": 123.9892
+          },
+          {
+            "latitude": 10.4278,
+            "longitude": 123.9984
+          },
+          {
+            "latitude": 10.4192,
+            "longitude": 124.0028
+          },
+          {
+            "latitude": 10.4092,
+            "longitude": 124.0022
+          },
+          {
+            "latitude": 10.3988,
+            "longitude": 124.0008
+          },
+          {
+            "latitude": 10.3984,
+            "longitude": 123.9922
+          },
+          {
+            "latitude": 10.4084,
+            "longitude": 123.9924
+          },
+          {
+            "latitude": 10.4178,
+            "longitude": 123.9926
+          },
+          {
+            "latitude": 10.4258,
+            "longitude": 123.9896
+          },
+          {
+            "latitude": 10.4324,
+            "longitude": 123.9892
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.4378,
+            "longitude": 123.9874
+          },
+          {
+            "latitude": 10.4314,
+            "longitude": 124.0004
+          },
+          {
+            "latitude": 10.4208,
+            "longitude": 124.0056
+          },
+          {
+            "latitude": 10.4088,
+            "longitude": 124.0048
+          },
+          {
+            "latitude": 10.3958,
+            "longitude": 124.0028
+          },
+          {
+            "latitude": 10.3954,
+            "longitude": 123.9902
+          },
+          {
+            "latitude": 10.4078,
+            "longitude": 123.9904
+          },
+          {
+            "latitude": 10.4184,
+            "longitude": 123.9902
+          },
+          {
+            "latitude": 10.4282,
+            "longitude": 123.9874
+          },
+          {
+            "latitude": 10.4378,
+            "longitude": 123.9874
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "danao-river",
+    "name": "Danao River Floodplain",
+    "city": "Danao City",
+    "barangays": [
+      "Poblacion Danao",
+      "Suba",
+      "Guinsay",
+      "Sabang",
+      "Looc",
+      "Taytay"
+    ],
+    "aliases": [
+      "danao",
+      "danao city",
+      "danao river",
+      "guinsay",
+      "sabang",
+      "looc",
+      "taytay"
+    ],
+    "center": {
+      "latitude": 10.5228,
+      "longitude": 124.0252
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.5284,
+            "longitude": 124.0182
+          },
+          {
+            "latitude": 10.5264,
+            "longitude": 124.0246
+          },
+          {
+            "latitude": 10.5228,
+            "longitude": 124.0298
+          },
+          {
+            "latitude": 10.5178,
+            "longitude": 124.0308
+          },
+          {
+            "latitude": 10.5158,
+            "longitude": 124.0258
+          },
+          {
+            "latitude": 10.5194,
+            "longitude": 124.0204
+          },
+          {
+            "latitude": 10.5244,
+            "longitude": 124.0168
+          },
+          {
+            "latitude": 10.5284,
+            "longitude": 124.0182
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.5318,
+            "longitude": 124.0164
+          },
+          {
+            "latitude": 10.5292,
+            "longitude": 124.0256
+          },
+          {
+            "latitude": 10.5242,
+            "longitude": 124.0324
+          },
+          {
+            "latitude": 10.5162,
+            "longitude": 124.0332
+          },
+          {
+            "latitude": 10.5134,
+            "longitude": 124.0254
+          },
+          {
+            "latitude": 10.5178,
+            "longitude": 124.0182
+          },
+          {
+            "latitude": 10.5246,
+            "longitude": 124.0142
+          },
+          {
+            "latitude": 10.5318,
+            "longitude": 124.0164
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.5356,
+            "longitude": 124.0142
+          },
+          {
+            "latitude": 10.5322,
+            "longitude": 124.0268
+          },
+          {
+            "latitude": 10.5256,
+            "longitude": 124.0352
+          },
+          {
+            "latitude": 10.5144,
+            "longitude": 124.0358
+          },
+          {
+            "latitude": 10.5108,
+            "longitude": 124.0252
+          },
+          {
+            "latitude": 10.5162,
+            "longitude": 124.0158
+          },
+          {
+            "latitude": 10.5254,
+            "longitude": 124.0114
+          },
+          {
+            "latitude": 10.5356,
+            "longitude": 124.0142
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "srp-coastal",
+    "name": "SRP & Talisay Coastal Inundation Zone",
+    "city": "Cebu City",
+    "barangays": [
+      "South Road Properties",
+      "Mambaling",
+      "Inayawan",
+      "Tangke",
+      "Poblacion Talisay",
+      "San Roque Talisay"
+    ],
+    "aliases": [
+      "srp",
+      "south road properties",
+      "cebu south coastal road",
+      "coastal road",
+      "tangke",
+      "storm surge"
+    ],
+    "center": {
+      "latitude": 10.2708,
+      "longitude": 123.8772
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.2812,
+            "longitude": 123.8784
+          },
+          {
+            "latitude": 10.2798,
+            "longitude": 123.8842
+          },
+          {
+            "latitude": 10.2712,
+            "longitude": 123.8814
+          },
+          {
+            "latitude": 10.2624,
+            "longitude": 123.8748
+          },
+          {
+            "latitude": 10.2642,
+            "longitude": 123.8704
+          },
+          {
+            "latitude": 10.2738,
+            "longitude": 123.8752
+          },
+          {
+            "latitude": 10.2812,
+            "longitude": 123.8784
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.2838,
+            "longitude": 123.8772
+          },
+          {
+            "latitude": 10.2818,
+            "longitude": 123.8862
+          },
+          {
+            "latitude": 10.2708,
+            "longitude": 123.8832
+          },
+          {
+            "latitude": 10.2564,
+            "longitude": 123.8722
+          },
+          {
+            "latitude": 10.2588,
+            "longitude": 123.8668
+          },
+          {
+            "latitude": 10.2742,
+            "longitude": 123.8732
+          },
+          {
+            "latitude": 10.2838,
+            "longitude": 123.8772
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.2864,
+            "longitude": 123.8758
+          },
+          {
+            "latitude": 10.2838,
+            "longitude": 123.8884
+          },
+          {
+            "latitude": 10.2704,
+            "longitude": 123.8854
+          },
+          {
+            "latitude": 10.2498,
+            "longitude": 123.8684
+          },
+          {
+            "latitude": 10.2534,
+            "longitude": 123.8618
+          },
+          {
+            "latitude": 10.2746,
+            "longitude": 123.8708
+          },
+          {
+            "latitude": 10.2864,
+            "longitude": 123.8758
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "id": "mactan-lapulapu-lowlands",
+    "name": "Lapu-Lapu City & Mactan Lowlands",
+    "city": "Lapu-Lapu City",
+    "barangays": [
+      "Pajo",
+      "Pusok",
+      "Gun-ob",
+      "Poblacion Lapu-Lapu",
+      "Basak",
+      "Babag"
+    ],
+    "aliases": [
+      "lapu-lapu",
+      "lapu lapu",
+      "mactan",
+      "pajo",
+      "pusok",
+      "gun-ob",
+      "babag",
+      "opon"
+    ],
+    "center": {
+      "latitude": 10.3075,
+      "longitude": 123.9602
+    },
+    "sourceName": "UP NOAH Flood Hazard Map",
+    "sourceUrl": "https://noah.up.edu.ph/",
+    "returnPeriods": {
+      "5yr": [
+        [
+          {
+            "latitude": 10.3144,
+            "longitude": 123.9588
+          },
+          {
+            "latitude": 10.3138,
+            "longitude": 123.9668
+          },
+          {
+            "latitude": 10.3072,
+            "longitude": 123.9674
+          },
+          {
+            "latitude": 10.3018,
+            "longitude": 123.9612
+          },
+          {
+            "latitude": 10.3036,
+            "longitude": 123.9534
+          },
+          {
+            "latitude": 10.3102,
+            "longitude": 123.9542
+          },
+          {
+            "latitude": 10.3144,
+            "longitude": 123.9588
+          }
+        ]
+      ],
+      "25yr": [
+        [
+          {
+            "latitude": 10.3168,
+            "longitude": 123.9574
+          },
+          {
+            "latitude": 10.3158,
+            "longitude": 123.9694
+          },
+          {
+            "latitude": 10.3068,
+            "longitude": 123.9702
+          },
+          {
+            "latitude": 10.2994,
+            "longitude": 123.9618
+          },
+          {
+            "latitude": 10.3018,
+            "longitude": 123.9512
+          },
+          {
+            "latitude": 10.3108,
+            "longitude": 123.9518
+          },
+          {
+            "latitude": 10.3168,
+            "longitude": 123.9574
+          }
+        ]
+      ],
+      "100yr": [
+        [
+          {
+            "latitude": 10.3194,
+            "longitude": 123.9558
+          },
+          {
+            "latitude": 10.3178,
+            "longitude": 123.9722
+          },
+          {
+            "latitude": 10.3064,
+            "longitude": 123.9732
+          },
+          {
+            "latitude": 10.2968,
+            "longitude": 123.9624
+          },
+          {
+            "latitude": 10.2996,
+            "longitude": 123.9488
+          },
+          {
+            "latitude": 10.3114,
+            "longitude": 123.9494
+          },
+          {
+            "latitude": 10.3194,
+            "longitude": 123.9558
+          }
+        ]
+      ]
+    }
+  }
+]

@@ -78,7 +78,7 @@
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
     "transformIgnorePatterns": [
-      "node_modules/(?!(@nestjs/axios|@nestjs/config|axios)/)"
+      "node_modules/(?!(@nestjs/axios|@nestjs/config|@nestjs/schedule|axios)/)"
     ]
   }
 }

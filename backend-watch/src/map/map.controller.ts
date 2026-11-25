@@ -1,9 +1,20 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { MapHazardsQueryDto } from './dto/map-hazards-query.dto';
 import { MapService } from './map.service';
 
 @Controller('map')
 export class MapController {
-  constructor(private readonly mapService: MapService) {}
+  constructor(private readonly mapService: MapService) { }
+
+  @Get('hazards')
+  getHazards(@Query() query: MapHazardsQueryDto) {
+    return this.mapService.getMapHazards(query);
+  }
+
+  @Get('hazards/history-index')
+  getHistoryIndex() {
+    return this.mapService.getHistoryIndex();
+  }
 
   @Get('geocode')
   search(@Query('query') query?: string) {

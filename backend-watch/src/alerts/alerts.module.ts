@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AiModule } from '../ai/ai.module';
+import { MapModule } from '../map/map.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { AdminAlertsController, AlertsController } from './alerts.controller';
@@ -10,7 +11,7 @@ import { AdminAuthGuard } from '../auth/admin-auth.guard';
 import { HazardFeedService } from './hazard-feed.service';
 
 @Module({
-  imports: [AiModule, NotificationsModule, SupabaseModule],
+  imports: [AiModule, MapModule, NotificationsModule, SupabaseModule],
   controllers: [
     AdminAlertsController,
     AdminFeaturesController,
