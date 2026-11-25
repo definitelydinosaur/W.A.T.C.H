@@ -13,6 +13,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import supabase from '../../lib/supabase';
+import { useAppTheme } from '../../theme/theme-context';
 
 interface SafetyTips {
   do?: string[];
@@ -302,6 +303,7 @@ function getErrorMessage(error: unknown): string {
 
 export default function AnnouncementScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const { notificationId, announcementId, hazardId, pagasaId, id } =
     useLocalSearchParams<{
       notificationId?: string | string[];
@@ -661,23 +663,26 @@ export default function AnnouncementScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: displayed.gradient[2] }]}>
       <LinearGradient
-        colors={['#211344', '#171022', '#100D1D']}
+        colors={displayed.gradient}
         style={StyleSheet.absoluteFill}
       />
       <Pressable onPress={() => router.back()} accessibilityRole="button">
-        <Text style={styles.back}>‹ Alerts</Text>
+        <Text style={[styles.back, { color: displayed.onPrimary }]}>‹ Alerts</Text>
       </Pressable>
       {loading ? (
-        <ActivityIndicator color="#C9A7FF" style={styles.loading} />
+        <ActivityIndicator color={displayed.onPrimary} style={styles.loading} />
       ) : error ? (
         <View style={styles.errorState}>
           <Text accessibilityRole="alert" style={styles.error}>
             {error}
           </Text>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backButtonText}>Close</Text>
+          <Pressable
+            onPress={() => router.back()}
+            style={[styles.backButton, { backgroundColor: displayed.primary }]}
+          >
+            <Text style={[styles.backButtonText, { color: displayed.onPrimary }]}>Close</Text>
           </Pressable>
         </View>
       ) : detail ? (
@@ -689,10 +694,12 @@ export default function AnnouncementScreen() {
               style={StyleSheet.absoluteFill}
             />
             <LinearGradient
-              colors={['rgba(41, 28, 72, 0.88)', 'rgba(20, 17, 40, 0.94)']}
+              colors={[`${displayed.primary}E0`, `${displayed.gradient[2]}F0`]}
               style={StyleSheet.absoluteFill}
             />
-            <Text style={styles.category}>{categoryLabel.toUpperCase()}</Text>
+            <Text style={[styles.category, { color: displayed.onPrimary }]}>
+              {categoryLabel.toUpperCase()}
+            </Text>
             {classSuspension ? (
               <View style={styles.suspensionBanner}>
                 <Text style={styles.suspensionBannerText}>NO CLASSES</Text>
@@ -825,7 +832,7 @@ export default function AnnouncementScreen() {
             ) : null}
             {sourceUrl && sourceLinkLabel ? (
               <Pressable onPress={() => void openSource()}>
-                <Text style={styles.link}>{sourceLinkLabel}</Text>
+                <Text style={[styles.link, { color: displayed.onPrimary }]}>{sourceLinkLabel}</Text>
               </Pressable>
             ) : null}
             <Text style={styles.disclaimer}>
@@ -861,9 +868,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 26,
     borderWidth: 1,
-    borderColor: 'rgba(215, 193, 255, 0.20)',
+    borderColor: 'rgba(255, 255, 255, 0.16)',
     padding: 20,
-    backgroundColor: '#201733',
+    backgroundColor: 'transparent',
   },
   category: {
     color: '#C9A7FF',
