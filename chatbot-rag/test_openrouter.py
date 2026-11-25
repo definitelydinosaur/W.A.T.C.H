@@ -1,11 +1,18 @@
+
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
 load_dotenv()
 
+print("API key loaded:", bool(os.getenv("OPENROUTER_API_KEY")))
+print("API key prefix:", os.getenv("OPENROUTER_API_KEY", "")[:7])
+
 API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = os.getenv("LLM_MODEL", "openrouter/free")
+MODEL = os.getenv(
+    "LLM_MODEL",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+)
 
 if not API_KEY:
     raise ValueError("OPENROUTER_API_KEY is missing from .env")
@@ -16,6 +23,7 @@ client = OpenAI(
 )
 
 print("Connecting to OpenRouter...", flush=True)
+print("Model:", MODEL)
 
 try:
     response = client.chat.completions.create(
@@ -31,13 +39,16 @@ try:
 
     print("\nModel:", response.model)
     print("Response:", response.choices[0].message.content)
-
     print("\nOpenRouter connection successful!")
 
 except Exception as error:
     print("\nOpenRouter request failed!")
-    print(type(error).__name__)
-    print(error)
+    print("Error type:", type(error).__name__)
+    print("Error:", error)
+
+    if hasattr(error, "response") and error.response is not None:
+        print("HTTP status:", error.response.status_code)
+        print("Response body:", error.response.text)
 
 finally:
     client.close()

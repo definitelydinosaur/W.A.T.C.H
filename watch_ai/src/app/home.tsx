@@ -914,20 +914,34 @@ export default function HomeScreen() {
       const userId = sessionData.session?.user.id;
       if (!userId || !active) return;
       const refreshCount = async () => {
-        const { count, error: countError } = await supabase
-          .from("notifications")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", userId)
-          .is("deleted_at", null)
-          .neq("status", "Read");
-        if (countError) {
+        const [
+          { count: notificationCount, error: notificationCountError },
+          { count: userReportCount, error: userReportCountError },
+        ] = await Promise.all([
+          supabase
+            .from("notifications")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId)
+            .is("deleted_at", null)
+            .neq("status", "Read"),
+          supabase
+            .from("user_reports")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId),
+        ]);
+        if (notificationCountError || userReportCountError) {
           console.warn(
             "Unable to refresh alert badge count:",
-            countError.message,
+            notificationCountError?.message ??
+              userReportCountError?.message,
           );
           return;
         }
-        if (active) setUnreadAlertCount(count ?? 0);
+        if (active) {
+          setUnreadAlertCount(
+            (notificationCount ?? 0) + (userReportCount ?? 0),
+          );
+        }
       };
       await refreshCount();
       const topic = `home-alert-count-${userId}`;
@@ -944,6 +958,16 @@ export default function HomeScreen() {
             event: "*",
             schema: "public",
             table: "notifications",
+            filter: `user_id=eq.${userId}`,
+          },
+          () => void refreshCount(),
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "user_reports",
             filter: `user_id=eq.${userId}`,
           },
           () => void refreshCount(),
