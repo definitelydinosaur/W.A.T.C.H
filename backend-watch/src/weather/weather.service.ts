@@ -1299,22 +1299,48 @@ export class WeatherService {
       configuredMinutes <= 180
         ? configuredMinutes
         : 60;
-    const { data: locations, error: locationsError } = await this.supabase
+    const { data: profiles, error: profilesError } = await this.supabase
+      .from('user_info')
+      .select('id,home_location_id')
+      .not('home_location_id', 'is', null);
+    if (profilesError) {
+      this.logger.error(`Weather-alert home locations could not be loaded: ${profilesError.message}`);
+      return;
+    }
+    const homeLocationIds = [
+      ...new Set(
+        (profiles ?? [])
+          .map((profile) => Number(profile.home_location_id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
+      ),
+    ];
+    if (!homeLocationIds.length) return;
+    const { data: locationRows, error: locationsError } = await this.supabase
       .from('locations')
       .select('loc_id,user_id,label,full_address,city,province,latitude,longitude')
+      .in('loc_id', homeLocationIds)
       .not('city', 'is', null);
     if (locationsError) {
       this.logger.error(`Weather-alert locations could not be loaded: ${locationsError.message}`);
       return;
     }
+    const locationById = new Map(
+      ((locationRows ?? []) as SavedHomeLocation[]).map((location) => [
+        location.loc_id,
+        location,
+      ]),
+    );
     const grouped = new Map<string, SavedHomeLocation[]>();
-    for (const location of (locations ?? []) as SavedHomeLocation[]) {
+    for (const profile of profiles ?? []) {
+      const locationId = Number(profile.home_location_id);
+      const location = locationById.get(locationId);
+      if (!location) continue;
       const city = location.city?.trim();
       if (!city) continue;
       const province = location.province?.trim() ?? '';
       const key = `${city.toLocaleLowerCase()}|${province.toLocaleLowerCase()}`;
       const group = grouped.get(key) ?? [];
-      group.push(location);
+      group.push({ ...location, user_id: profile.id });
       grouped.set(key, group);
     }
     for (const group of grouped.values()) {

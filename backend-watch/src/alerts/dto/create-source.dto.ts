@@ -10,8 +10,8 @@ import {
 } from 'class-validator';
 
 export class CreateSourceDto {
-  @IsIn(['lgu', 'institution'])
-  source_type!: 'lgu' | 'institution';
+  @IsIn(['lgu', 'institution', 'pagasa'])
+  source_type!: 'lgu' | 'institution' | 'pagasa';
 
   @IsString()
   @MinLength(2)

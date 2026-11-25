@@ -55,6 +55,23 @@ describe('hazard area matching', () => {
     ).toBe(true);
   });
 
+  it('separates Talisay Cebu from Cebu City users', () => {
+    const talisayCebu = {
+      city: 'Talisay',
+      province: 'Cebu',
+      latitude: 10.2456,
+      longitude: 123.8489,
+    };
+    const cebuCity = {
+      city: 'Cebu City',
+      province: 'Cebu',
+      latitude: 10.3157,
+      longitude: 123.8854,
+    };
+    expect(areasMatch(talisayCebu, talisayCebu)).toBe(true);
+    expect(areasMatch(talisayCebu, cebuCity)).toBe(false);
+  });
+
   it('does not guess between duplicate city names when the source omits the province', () => {
     const locations = [
       {
