@@ -12,6 +12,8 @@ import { AlertsModule } from './alerts/alerts.module';
 import { HealthController } from './health/health.controller';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { validateEnvironment } from './config/environment';
+import { EmailModule } from './email/email.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -29,6 +31,8 @@ import { validateEnvironment } from './config/environment';
     InstitutionsModule,
     AlertsModule,
     ChatbotModule,
+    EmailModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

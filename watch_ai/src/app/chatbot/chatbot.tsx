@@ -1,5 +1,7 @@
 
 import { useEffect, useRef, useState } from 'react';
+import { profileApi } from '@/lib/profile-api';
+
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -14,13 +16,32 @@ import {
   View,
   type ScrollViewInstance,
 } from 'react-native';
+
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+
+// ==========================================
+// TYPES
+// ==========================================
 
 interface ChatMessage {
   id: string;
   text: string;
   role: 'user' | 'assistant';
+}
+
+type ReportCategory = 'bug' | 'feedback' | 'suggestion';
+
+type ReportStep =
+  | 'idle'
+  | 'conversation'
+  | 'review';
+
+interface ReportDraft {
+  category: ReportCategory | null;
+  details: string;
+  title: string;
+  body: string;
 }
 
 interface ChatbotProps {
@@ -41,6 +62,20 @@ interface ChatbotResponse {
   }[];
 }
 
+interface ReportAnalysisResponse {
+  status: 'valid' | 'needs_more_info' | 'out_of_scope';
+  category: ReportCategory | null;
+  title: string | null;
+  description: string | null;
+  affected_feature: string | null;
+  follow_up_question: string | null;
+  reason: string | null;
+}
+
+// ==========================================
+// COMPONENT
+// ==========================================
+
 export default function Chatbot({
   visible,
   onClose,
@@ -48,6 +83,17 @@ export default function Chatbot({
   userAvatarUri,
 }: ChatbotProps) {
   const { width, height } = useWindowDimensions();
+
+  const [reportStep, setReportStep] = useState<ReportStep>('idle');
+
+  const [reportDraft, setReportDraft] = useState<ReportDraft>({
+    category: null,
+    details: '',
+    title: '',
+    body: '',
+  });
+
+  const [reportHistory, setReportHistory] = useState<ChatMessage[]>([]);
 
   const [draft, setDraft] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -75,96 +121,628 @@ export default function Chatbot({
     Math.min(preferredTop, Math.max(16, height - panelHeight - 16)),
   );
 
+  // ==========================================
+  // HELPERS
+  // ==========================================
+
+  const addUserMessage = (message: string) => {
+    setMessages((current) => [
+      ...current,
+      {
+        id: `${Date.now()}-user`,
+        text: message,
+        role: 'user',
+      },
+    ]);
+  };
+
+  const addAssistantMessage = (message: string) => {
+    setMessages((current) => [
+      ...current,
+      {
+        id: `${Date.now()}-assistant`,
+        text: message,
+        role: 'assistant',
+      },
+    ]);
+  };
+
+  const resetReport = () => {
+    setReportStep('idle');
+
+    setReportDraft({
+      category: null,
+      details: '',
+      title: '',
+      body: '',
+    });
+
+    setReportHistory([]);
+  };
+
+  const categoryLabels: Record<ReportCategory, string> = {
+    bug: 'Bug Report',
+    feedback: 'User Feedback',
+    suggestion: 'Feature Suggestion',
+  };
+
   // Scroll to the latest message whenever the conversation changes.
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages, isLoading]);
 
-  const sendMessage = async () => {
-    const text = draft.trim();
+  // ==========================================
+  // SEND MESSAGE
+  // ==========================================
 
-    if (!text || isLoading) return;
+  
 
-    if (!API_URL) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: `${Date.now()}-error`,
-          text: 'The chatbot is currently unavailable. Try again later.',
-          role: 'assistant',
-        },
-      ]);
+const sendMessage = async () => {
+  const text = draft.trim();
+
+  if (!text || isLoading) return;
+
+  const normalized = text.toLowerCase().trim();
+
+  // ========================================
+  // REPORT REVIEW
+  // ========================================
+
+  if (reportStep === 'review') {
+    addUserMessage(text);
+    setDraft('');
+
+    // CANCEL REPORT
+    if (/\b(cancel|discard|stop|never mind)\b/.test(normalized)) {
+      resetReport();
+
+      addAssistantMessage(
+        'Your report has been cancelled. You can still ask me questions about W.A.T.C.H. or start a new report anytime.',
+      );
 
       return;
     }
 
-    // Store the conversation history before adding the current message.
-    const conversationHistory = messages.map((message) => ({
-      role: message.role,
-      content: message.text,
-    }));
+    // EDIT REPORT
+    if (/\b(edit|change|revise|modify)\b/.test(normalized)) {
+      setReportStep('conversation');
 
-    const userMessage: ChatMessage = {
-      id: `${Date.now()}-user`,
-      text,
-      role: 'user',
-    };
+      const assistantPrompt =
+        'Sure! Please describe the changes you would like to make to your report. I will review the updated information.';
 
-    setMessages((current) => [...current, userMessage]);
+      setReportHistory((current) => [
+        ...current,
+        {
+          id: `${Date.now()}-assistant`,
+          text: assistantPrompt,
+          role: 'assistant',
+        },
+      ]);
+
+      addAssistantMessage(assistantPrompt);
+      return;
+    }
+
+    // CONFIRM REPORT
+    if (/^(confirm|submit|yes|send|confirm report|submit report)[.! ]*$/i.test(normalized)) {
+      setIsLoading(true);
+
+      try {
+        await profileApi('/reports', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: reportDraft.title,
+            body: reportDraft.body,
+          }),
+        });
+
+        // Success is shown ONLY after the backend accepts submission.
+        addAssistantMessage(
+          'Your report has been successfully submitted! Thank you for helping us improve W.A.T.C.H. The development team has been notified.',
+        );
+
+        resetReport();
+      } catch (error) {
+        console.error('Report submission failed:', error);
+
+        addAssistantMessage(
+          error instanceof Error
+            ? `I couldn't submit your report: ${error.message}\n\nYour report draft is still saved. Reply CONFIRM to try again or CANCEL to discard it.`
+            : 'I could not submit your report. Your draft is still saved. Please reply CONFIRM to retry.',
+        );
+      } finally {
+        setIsLoading(false);
+      }
+
+      return;
+    }
+
+    addAssistantMessage(
+      'Please reply CONFIRM to submit your report, EDIT to revise it, or CANCEL to discard it.',
+    );
+
+    return;
+  }
+
+  // ========================================
+  // DETECT REPORT INTENT / APP PROBLEMS
+  // ========================================
+
+  if (reportStep === 'idle') {
+    const explicitReportIntent =
+      /\b(report|reporting|submit a report|send a report|file a report|make a report|give feedback|send feedback|suggestion)\b/i.test(
+        text,
+      );
+
+    const appFeatureMention =
+      /\b(app|application|profile|profile page|alert|alert page|dashboard|announcement|announcements|login|log in|sign in|registration|register|map|weather|notification|notifications|settings|chatbot|account|home page)\b/i.test(
+        text,
+      );
+
+   const problemMention =
+  /\b(can't|cant|cannot|couldn't|couldnt|unable to|not working|doesn't work|does not work|isn't working|is not working|won't load|will not load|not loading|doesn't load|does not load|blank|empty|broken|crashing|crashes|error|problem|issue|stuck|failed|failing|keeps loading|just loading|loading screen|can't access|cant access|cannot access|unable to access|can't seem to access|cant seem to access|unable to open|can't open|cant open)\b/i.test(
+    text,
+  );
+
+    const isAppProblem = appFeatureMention && problemMention;
+    const wantsToReport = explicitReportIntent || isAppProblem;
+
+    if (wantsToReport) {
+      addUserMessage(text);
+      setDraft('');
+
+      const assistantPrompt =
+        'Of course! I can help you submit a report to the W.A.T.C.H. development team.\n\nPlease describe your concern. You can report bugs, share feedback, or suggest improvements. I will analyze your concern and ask for additional details if needed.';
+
+      setReportDraft({
+        category: null,
+        details: '',
+        title: '',
+        body: '',
+      });
+
+      setReportHistory([
+        {
+          id: `${Date.now()}-assistant`,
+          text: assistantPrompt,
+          role: 'assistant',
+        },
+      ]);
+
+      setReportStep('conversation');
+
+   
+      if (explicitReportIntent) {
+        addAssistantMessage(assistantPrompt);
+        return;
+      }
+
+    
+      addAssistantMessage(
+        'I can help you report this issue. Let me analyze the details you provided.',
+      );
+
+      if (!API_URL) {
+        addAssistantMessage(
+          'The reporting assistant is currently unavailable. Please try again later.',
+        );
+        return;
+      }
+
+      setIsLoading(true);
+
+      try {
+        const response = await fetch(
+          `${API_URL.replace(/\/+$/, '')}/chatbot/analyze-report`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              message: text,
+              history: [
+                {
+                  role: 'assistant',
+                  content: assistantPrompt,
+                },
+              ],
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            `Report analysis failed with status ${response.status}`,
+          );
+        }
+
+        const data: ReportAnalysisResponse = await response.json();
+
+        if (
+          !data.status ||
+          !['valid', 'needs_more_info', 'out_of_scope'].includes(
+            data.status,
+          )
+        ) {
+          throw new Error('Invalid report analysis response.');
+        }
+
+        // NEEDS MORE INFORMATION
+        if (data.status === 'needs_more_info') {
+          const followUp =
+            data.follow_up_question ||
+            'Could you provide more details about your concern?';
+
+          setReportHistory((current) => [
+            ...current,
+            {
+              id: `${Date.now()}-user`,
+              text,
+              role: 'user',
+            },
+            {
+              id: `${Date.now()}-assistant`,
+              text: followUp,
+              role: 'assistant',
+            },
+          ]);
+
+          addAssistantMessage(followUp);
+          return;
+        }
+
+        // OUT OF SCOPE
+        if (data.status === 'out_of_scope') {
+          const reason =
+            data.reason ||
+            'This concern does not appear to be related to the W.A.T.C.H. application.';
+
+          addAssistantMessage(
+            `${reason}\n\nI can only help submit reports related to W.A.T.C.H. features and services. You can still ask me questions about the application.`,
+          );
+
+          resetReport();
+          return;
+        }
+
+        // VALID REPORT
+        const validCategories = ['bug', 'feedback', 'suggestion'];
+
+        if (
+          !data.title?.trim() ||
+          !data.description?.trim() ||
+          !data.category ||
+          !validCategories.includes(data.category)
+        ) {
+          throw new Error(
+            'The AI could not generate a complete report. Please try again.',
+          );
+        }
+
+        const categoryLabel = categoryLabels[data.category];
+
+        const reportBody = [
+          `Category: ${categoryLabel}`,
+          data.affected_feature
+            ? `Affected feature: ${data.affected_feature}`
+            : null,
+          '',
+          'Description:',
+          data.description.trim(),
+        ]
+          .filter((line) => line !== null)
+          .join('\n');
+
+        const reportPreview = [
+          'Your report is ready for review!',
+          '',
+          `Title: ${data.title.trim()}`,
+          `Category: ${categoryLabel}`,
+          data.affected_feature
+            ? `Affected feature: ${data.affected_feature}`
+            : null,
+          '',
+          'Description:',
+          data.description.trim(),
+          '',
+          'Would you like to submit this report?',
+          '',
+          'Reply CONFIRM to submit, EDIT to revise it, or CANCEL to discard it.',
+        ]
+          .filter((line) => line !== null)
+          .join('\n');
+
+        setReportDraft({
+          category: data.category,
+          details: text,
+          title: data.title.trim(),
+          body: reportBody,
+        });
+
+        setReportHistory((current) => [
+          ...current,
+          {
+            id: `${Date.now()}-user`,
+            text,
+            role: 'user',
+          },
+          {
+            id: `${Date.now()}-assistant`,
+            text: reportPreview,
+            role: 'assistant',
+          },
+        ]);
+
+        setReportStep('review');
+        addAssistantMessage(reportPreview);
+      } catch (error) {
+        console.error('Report analysis failed:', error);
+
+        addAssistantMessage(
+          error instanceof Error
+            ? `Sorry, I could not analyze your concern: ${error.message}. Please try again.`
+            : 'Sorry, I could not analyze your concern. Please try again.',
+        );
+      } finally {
+        setIsLoading(false);
+      }
+
+      return;
+    }
+  }
+
+  // ========================================
+  // AI REPORT ANALYST CONVERSATION
+  // ========================================
+
+  if (reportStep === 'conversation') {
+    if (!API_URL) {
+      addUserMessage(text);
+      setDraft('');
+
+      addAssistantMessage(
+        'The reporting assistant is currently unavailable. Please try again later.',
+      );
+
+      return;
+    }
+
+    addUserMessage(text);
     setDraft('');
     setIsLoading(true);
 
     try {
+      const conversationHistory = reportHistory.map((message) => ({
+        role: message.role,
+        content: message.text,
+      }));
+
       const response = await fetch(
-        `${API_URL.replace(/\/$/, '')}/chatbot`,
+        `${API_URL.replace(/\/+$/, '')}/chatbot/analyze-report`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            question: text,
+            message: text,
             history: conversationHistory,
           }),
         },
       );
 
       if (!response.ok) {
-        throw new Error(`Chatbot request failed with status ${response.status}`);
+        throw new Error(
+          `Report analysis failed with status ${response.status}`,
+        );
       }
 
-      const data: ChatbotResponse = await response.json();
+      const data: ReportAnalysisResponse = await response.json();
 
-      if (!data.success || !data.answer?.trim()) {
-        throw new Error('The chatbot returned an empty response.');
+      if (
+        !data.status ||
+        !['valid', 'needs_more_info', 'out_of_scope'].includes(
+          data.status,
+        )
+      ) {
+        throw new Error('Invalid report analysis response.');
       }
 
-      const assistantMessage: ChatMessage = {
-        id: `${Date.now()}-assistant`,
-        text: data.answer.trim(),
-        role: 'assistant',
-      };
+      // NEEDS MORE INFORMATION
+      if (data.status === 'needs_more_info') {
+        const followUp =
+          data.follow_up_question ||
+          'Could you provide more details about your concern?';
 
-      setMessages((current) => [...current, assistantMessage]);
+        setReportHistory((current) => [
+          ...current,
+          {
+            id: `${Date.now()}-user`,
+            text,
+            role: 'user',
+          },
+          {
+            id: `${Date.now()}-assistant`,
+            text: followUp,
+            role: 'assistant',
+          },
+        ]);
 
-    } catch (error) {
-      const message =
-        error instanceof Error && error.message.includes('status 503')
-          ? 'The chatbot is currently unavailable. Try again later.'
-          : 'Sorry, I could not connect to the chatbot service. Please try again.';
-      setMessages((current) => [
+        addAssistantMessage(followUp);
+        return;
+      }
+
+      // OUT OF SCOPE
+      if (data.status === 'out_of_scope') {
+        const reason =
+          data.reason ||
+          'This concern does not appear to be related to the W.A.T.C.H. application.';
+
+        addAssistantMessage(
+          `${reason}\n\nI can only help submit reports related to W.A.T.C.H. features and services. You can still ask me questions about the application.`,
+        );
+
+        resetReport();
+        return;
+      }
+
+      // VALID REPORT
+      const validCategories = ['bug', 'feedback', 'suggestion'];
+
+      if (
+        !data.title?.trim() ||
+        !data.description?.trim() ||
+        !data.category ||
+        !validCategories.includes(data.category)
+      ) {
+        throw new Error(
+          'The AI could not generate a complete report. Please try again.',
+        );
+      }
+
+      const categoryLabel = categoryLabels[data.category];
+
+      const reportBody = [
+        `Category: ${categoryLabel}`,
+        data.affected_feature
+          ? `Affected feature: ${data.affected_feature}`
+          : null,
+        '',
+        'Description:',
+        data.description.trim(),
+      ]
+        .filter((line) => line !== null)
+        .join('\n');
+
+      const reportPreview = [
+        'Your report is ready for review!',
+        '',
+        `Title: ${data.title.trim()}`,
+        `Category: ${categoryLabel}`,
+        data.affected_feature
+          ? `Affected feature: ${data.affected_feature}`
+          : null,
+        '',
+        'Description:',
+        data.description.trim(),
+        '',
+        'Would you like to submit this report?',
+        '',
+        'Reply CONFIRM to submit, EDIT to revise it, or CANCEL to discard it.',
+      ]
+        .filter((line) => line !== null)
+        .join('\n');
+
+      setReportDraft({
+        category: data.category,
+        details: text,
+        title: data.title.trim(),
+        body: reportBody,
+      });
+
+      setReportHistory((current) => [
         ...current,
         {
-          id: `${Date.now()}-error`,
-          text: message,
+          id: `${Date.now()}-user`,
+          text,
+          role: 'user',
+        },
+        {
+          id: `${Date.now()}-assistant`,
+          text: reportPreview,
           role: 'assistant',
         },
       ]);
 
+      setReportStep('review');
+      addAssistantMessage(reportPreview);
+      return;
+    } catch (error) {
+      console.error('Report analysis failed:', error);
+
+      addAssistantMessage(
+        error instanceof Error
+          ? `Sorry, I could not analyze your report: ${error.message}. Please try again.`
+          : 'Sorry, I could not analyze your report. Please try again.',
+      );
     } finally {
       setIsLoading(false);
     }
-  };
+
+    return;
+  }
+
+  // ========================================
+  // NORMAL RAG CHATBOT
+  // ========================================
+
+  if (!API_URL) {
+    addUserMessage(text);
+    setDraft('');
+
+    addAssistantMessage(
+      'The chatbot is currently unavailable. Try again later.',
+    );
+
+    return;
+  }
+
+  const conversationHistory = messages.map((message) => ({
+    role: message.role,
+    content: message.text,
+  }));
+
+  addUserMessage(text);
+  setDraft('');
+  setIsLoading(true);
+
+  try {
+    const response = await fetch(
+      `${API_URL.replace(/\/+$/, '')}/chatbot`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          question: text,
+          history: conversationHistory,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `Chatbot request failed with status ${response.status}`,
+      );
+    }
+
+    const data: ChatbotResponse = await response.json();
+
+    if (!data.success || !data.answer?.trim()) {
+      throw new Error('The chatbot returned an empty response.');
+    }
+
+    addAssistantMessage(data.answer.trim());
+  } catch (error) {
+    console.error('Chatbot request failed:', error);
+
+    const errorMessage =
+      error instanceof Error &&
+      error.message.includes('status 503')
+        ? 'The chatbot is currently unavailable. Try again later.'
+        : 'Sorry, I could not connect to the chatbot service. Please try again.';
+
+    addAssistantMessage(errorMessage);
+  } finally {
+    setIsLoading(false);
+  }
+};
+
+  // ==========================================
+  // UI
+  // ==========================================
 
   return (
     <Modal
@@ -198,7 +776,8 @@ export default function Chatbot({
               },
             ]}
           >
-            {/* Header */}
+            {/* HEADER */}
+
             <LinearGradient
               colors={['#5733A5', '#352276']}
               start={{ x: 0, y: 0 }}
@@ -216,6 +795,7 @@ export default function Chatbot({
                 <Text style={styles.headerTitle}>
                   Weather assistant
                 </Text>
+
                 <Text style={styles.headerSubtitle}>
                   Chat with us
                 </Text>
@@ -232,7 +812,8 @@ export default function Chatbot({
               </Pressable>
             </LinearGradient>
 
-            {/* Conversation */}
+            {/* CONVERSATION */}
+
             <ScrollView
               ref={scrollViewRef}
               style={styles.conversation}
@@ -242,26 +823,35 @@ export default function Chatbot({
                 scrollViewRef.current?.scrollToEnd({ animated: true })
               }
             >
-              {/* Welcome message */}
-              <View style={[styles.messageRow, styles.assistantMessageRow]}>
+              {/* WELCOME MESSAGE */}
+
+              <View
+                style={[
+                  styles.messageRow,
+                  styles.assistantMessageRow,
+                ]}
+              >
                 <Image
                   source={require('../../../assets/images/chatbot/chatbot.png')}
                   style={styles.messageAvatar}
                   contentFit="cover"
                   accessibilityLabel="Chatbot profile"
                 />
+
                 <View style={styles.welcomeBubble}>
                   <Text style={styles.welcomeTitle}>
                     Welcome!
                   </Text>
+
                   <Text style={styles.welcomeText}>
-                    Hello! I&apos;m your W.A.T.C.H. weather assistant.
+                    Hello! I'm your W.A.T.C.H. weather assistant.
                     Ask me anything about the application!
                   </Text>
                 </View>
               </View>
 
-              {/* Chat messages */}
+              {/* CHAT MESSAGES */}
+
               {messages.map((message) => (
                 <View
                   key={message.id}
@@ -280,6 +870,7 @@ export default function Chatbot({
                       accessibilityLabel="Chatbot profile"
                     />
                   )}
+
                   <View
                     style={
                       message.role === 'user'
@@ -297,6 +888,7 @@ export default function Chatbot({
                       {message.text}
                     </Text>
                   </View>
+
                   {message.role === 'user' &&
                     (userAvatarUri ? (
                       <Image
@@ -307,16 +899,22 @@ export default function Chatbot({
                       />
                     ) : (
                       <View
-                        style={[styles.messageAvatar, styles.userAvatarFallback]}
+                        style={[
+                          styles.messageAvatar,
+                          styles.userAvatarFallback,
+                        ]}
                         accessibilityLabel="Your profile"
                       >
-                        <Text style={styles.userAvatarInitial}>U</Text>
+                        <Text style={styles.userAvatarInitial}>
+                          U
+                        </Text>
                       </View>
                     ))}
                 </View>
               ))}
 
-              {/* AI loading indicator */}
+              {/* AI LOADING INDICATOR */}
+
               {isLoading && (
                 <View style={styles.assistantMessageRow}>
                   <Image
@@ -325,12 +923,14 @@ export default function Chatbot({
                     contentFit="cover"
                     accessibilityLabel="Chatbot profile"
                   />
+
                   <View style={styles.assistantBubble}>
                     <View style={styles.loadingContainer}>
                       <ActivityIndicator
                         size="small"
                         color="#5733A5"
                       />
+
                       <Text style={styles.assistantMessage}>
                         Thinking...
                       </Text>
@@ -340,7 +940,8 @@ export default function Chatbot({
               )}
             </ScrollView>
 
-            {/* Message composer */}
+            {/* MESSAGE COMPOSER */}
+
             <View style={styles.composer}>
               <TextInput
                 style={styles.input}
@@ -377,6 +978,10 @@ export default function Chatbot({
     </Modal>
   );
 }
+
+// ==========================================
+// STYLES
+// ==========================================
 
 const styles = StyleSheet.create({
   overlay: {

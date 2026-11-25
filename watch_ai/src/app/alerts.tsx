@@ -43,6 +43,7 @@ interface AlertRow {
   created_at: string;
   read_at: string | null;
   deleted_at: string | null;
+  isUserReport?: boolean;
   announcement?: {
     ai_summary: string | null;
     category: string | null;
@@ -194,6 +195,7 @@ export default function AlertsScreen() {
   const activeRequestController = useRef<AbortController | null>(null);
   const activeFilter = useRef(filter);
   const notificationOffset = useRef(0);
+  const userReportOffset = useRef(0);
   const weatherPage = useRef(0);
 
   const loadAlerts = useCallback(
@@ -220,6 +222,7 @@ export default function AlertsScreen() {
         setError('');
         alertsLength.current = 0;
         notificationOffset.current = 0;
+        userReportOffset.current = 0;
         weatherPage.current = 0;
       }
       try {
@@ -272,6 +275,46 @@ export default function AlertsScreen() {
           notificationRows = (data ?? [])
             .map(normalizeAlertRow)
             .filter((row): row is AlertRow => row !== null);
+        }
+
+        let userReportRows: AlertRow[] = [];
+        if (filter === 'System' || filter === 'All') {
+          const reportStart = reset ? 0 : userReportOffset.current;
+          const { data, error: reportsError } = await supabase
+            .from('user_reports')
+            .select('id,user_id,title,body,created_at')
+            .eq('user_id', currentUserId)
+            .order('created_at', { ascending: false })
+            .abortSignal(abortController.signal)
+            .range(reportStart, reportStart + PAGE_SIZE - 1);
+          if (!isCurrentRequest()) return;
+          if (reportsError) {
+            setError(
+              timedOut
+                ? 'Loading alerts timed out. Please try again.'
+                : reportsError.message,
+            );
+            return;
+          }
+          userReportRows = (data ?? []).map((report) => ({
+            id: `user-report-${report.id}`,
+            user_id: report.user_id ?? currentUserId,
+            announcement_id: null,
+            hazard_id: null,
+            title: 'Report submitted successfully',
+            body: report.body
+              ? `Your report has been sent successfully.\n\n${report.body}`
+              : 'Your report has been sent successfully.',
+            status: 'Unread',
+            kind: 'system',
+            source_name: 'W.A.T.C.H.',
+            source_url: null,
+            created_at: report.created_at,
+            read_at: null,
+            deleted_at: null,
+            isUserReport: true,
+          }));
+          userReportOffset.current += userReportRows.length;
         }
 
         let weatherRows: AlertRow[] = [];
@@ -329,7 +372,11 @@ export default function AlertsScreen() {
             if (weatherHasMore) weatherPage.current += 1;
           }
         }
-        const rows = [...notificationRows, ...weatherRows].sort(
+        const rows = [
+          ...notificationRows,
+          ...userReportRows,
+          ...weatherRows,
+        ].sort(
           (left, right) =>
             Date.parse(right.created_at) - Date.parse(left.created_at),
         );
@@ -341,7 +388,9 @@ export default function AlertsScreen() {
         });
         notificationOffset.current += notificationRows.length;
         setHasMore(
-          notificationRows.length === PAGE_SIZE || weatherHasMore,
+          notificationRows.length === PAGE_SIZE ||
+            userReportRows.length === PAGE_SIZE ||
+            weatherHasMore,
         );
       } catch (requestError) {
         if (!isCurrentRequest()) return;
@@ -390,6 +439,18 @@ export default function AlertsScreen() {
           event: '*',
           schema: 'public',
           table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          void loadAlerts();
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_reports',
           filter: `user_id=eq.${userId}`,
         },
         () => {
@@ -518,12 +579,16 @@ export default function AlertsScreen() {
 
     return (
       <Pressable
-        onPress={() =>
+        onPress={() => {
+          if (item.isUserReport) {
+            Alert.alert(item.title, item.body);
+            return;
+          }
           router.push({
             pathname: '/alert_page/announcement',
             params: { notificationId: item.id },
-          })
-        }
+          });
+        }}
         style={styles.card}
         accessibilityRole="button"
       >
@@ -548,18 +613,20 @@ export default function AlertsScreen() {
           </View>
           <View style={styles.cardActions}>
             {unread ? <View style={styles.unreadDot} /> : null}
-            <Pressable
-              onPress={(event) => {
-                event.stopPropagation();
-                confirmDelete([item.id]);
-              }}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Delete alert"
-              style={styles.trashButton}
-            >
-              <Text style={styles.trashIcon}>×</Text>
-            </Pressable>
+            {!item.isUserReport ? (
+              <Pressable
+                onPress={(event) => {
+                  event.stopPropagation();
+                  confirmDelete([item.id]);
+                }}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Delete alert"
+                style={styles.trashButton}
+              >
+                <Text style={styles.trashIcon}>×</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
         <Text style={styles.cardTitle}>{item.title}</Text>
