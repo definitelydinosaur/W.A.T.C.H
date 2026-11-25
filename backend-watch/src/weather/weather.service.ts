@@ -4,8 +4,10 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createHash } from 'crypto';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import {
   classifyWeatherRisk,
@@ -13,8 +15,21 @@ import {
   detectWeatherHazards,
   WeatherApiAlert,
 } from './weather-risk';
-import { AiService } from '../ai/ai.service';
 import { PushService } from '../notifications/push.service';
+import {
+  areasMatch,
+  HazardAreaLocation,
+  normalizeAreaKey,
+  placeName,
+} from './hazard-area';
+import { hazardTemplateKey, renderHazardTemplate } from './hazard-templates';
+import {
+  hasConsecutiveHazard,
+  StoredWeatherRecord,
+} from './weather-observations';
+
+export { hasConsecutiveHazard } from './weather-observations';
+export type { StoredWeatherRecord } from './weather-observations';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const HAZARD_DEDUPE_WINDOW_MS = 60 * 60 * 1000; // 1-hour deduplication window
@@ -103,31 +118,15 @@ interface WeatherCacheEntry {
   fetched_at: string;
 }
 
-interface WeatherState {
-  risk_level: string;
-  observed_at?: string;
-}
-
 interface SavedHomeLocation {
   loc_id: number;
   user_id: string;
   label: string | null;
   full_address: string | null;
   city: string | null;
+  province: string | null;
   latitude: number;
   longitude: number;
-}
-
-interface StoredWeatherRecord {
-  recorded_at: string;
-  temperature: number;
-  rainfall: number;
-  wind_speed: number;
-  weather_condition: string | null;
-  humidity: number | null;
-  heat_index: number | null;
-  uv_index: number | null;
-  aqi: number | null;
 }
 
 interface WeatherMeasurements {
@@ -241,15 +240,6 @@ function isWeatherCacheEntry(value: unknown): value is WeatherCacheEntry {
   );
 }
 
-function isWeatherState(value: unknown): value is WeatherState {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'risk_level' in value &&
-    typeof value.risk_level === 'string'
-  );
-}
-
 @Injectable()
 export class WeatherService {
   private readonly logger = new Logger(WeatherService.name);
@@ -258,9 +248,9 @@ export class WeatherService {
   constructor(
     @Inject(SUPABASE_CLIENT)
     private readonly supabase: SupabaseClient,
-    private readonly ai: AiService,
     private readonly push: PushService,
-  ) { }
+    private readonly config: ConfigService,
+  ) {}
 
   async getForecast(
     latitude: number,
@@ -346,7 +336,7 @@ export class WeatherService {
     const current = sourceData.current;
     const windGustsKph =
       typeof current.wind_gusts_10m === 'number' &&
-        Number.isFinite(current.wind_gusts_10m)
+      Number.isFinite(current.wind_gusts_10m)
         ? current.wind_gusts_10m
         : undefined;
     const fetchedAqi = await this.fetchUsAqi(latitude, longitude);
@@ -360,7 +350,7 @@ export class WeatherService {
       location: {
         name:
           Math.abs(latitude - 10.3157) < 0.05 &&
-            Math.abs(longitude - 123.8854) < 0.05
+          Math.abs(longitude - 123.8854) < 0.05
             ? 'Cebu City'
             : `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`,
         latitude,
@@ -491,10 +481,10 @@ export class WeatherService {
 
     const { error: resolveError } = activeEventTypes.length
       ? await resolveQuery.not(
-        'event_type',
-        'in',
-        `(${activeEventTypes.join(',')})`,
-      )
+          'event_type',
+          'in',
+          `(${activeEventTypes.join(',')})`,
+        )
       : await resolveQuery;
 
     if (resolveError) {
@@ -518,9 +508,12 @@ export class WeatherService {
     }[] = [];
 
     for (const hazard of hazards) {
+      const place = context?.placeName ?? forecast.location.name;
       const existingResult = await this.supabase
         .from('hazards')
-        .select('id, severity, risk_level, detected_at, created_at, resolved_at')
+        .select(
+          'id, severity, risk_level, detected_at, created_at, resolved_at',
+        )
         .eq('area_key', areaKey)
         .eq('event_type', hazard.eventType)
         .order('detected_at', { ascending: false })
@@ -561,14 +554,32 @@ export class WeatherService {
           nextSeverity === 'Extreme'
             ? 'Severe'
             : (nextSeverity as 'Advisory' | 'Warning' | 'Severe');
+        const guidance = renderHazardTemplate({
+          key: hazardTemplateKey(hazard.eventType, hazard.type),
+          hazardType: hazard.type,
+          severity: nextSeverity,
+          place,
+          observedAt: detectedAt,
+          sourceName: 'Open-Meteo weather data',
+          measurements: {
+            rainMm: measurements.rainMm,
+            heatIndexC: measurements.heatIndexC,
+            aqi: measurements.aqi,
+          },
+        });
 
         const { error: updateError } = await this.supabase
           .from('hazards')
           .update({
             severity: nextSeverity,
             risk_level: nextRiskLevel,
-            description: hazard.description,
-            explanation: hazard.description,
+            title: guidance.title,
+            description: guidance.summary,
+            explanation: guidance.summary,
+            ai_summary: guidance.summary,
+            safety_tips: guidance.safetyTips,
+            source_type: 'weather_auto',
+            source_name: 'Open-Meteo weather data',
             raw_metrics: rawMetrics,
             measurements,
             observed_at: detectedAt,
@@ -588,18 +599,17 @@ export class WeatherService {
         continue;
       }
 
-      const place = context?.placeName ?? forecast.location.name;
-      const guidance = await this.ai.generateWeatherSafetyTips({
+      const guidance = renderHazardTemplate({
+        key: hazardTemplateKey(hazard.eventType, hazard.type),
         hazardType: hazard.type,
-        riskLevel: hazard.riskLevel,
-        location: place,
+        severity: hazard.severity,
+        place,
+        observedAt: detectedAt,
+        sourceName: 'Open-Meteo weather data',
         measurements: {
           rainMm: measurements.rainMm,
-          windKph: measurements.windKph,
           heatIndexC: measurements.heatIndexC,
-          temperatureC: forecast.current.temperatureC,
-          humidityPercent: forecast.current.humidityPercent,
-          aqi: measurements.aqi ?? 0,
+          aqi: measurements.aqi,
         },
       });
 
@@ -619,13 +629,12 @@ export class WeatherService {
           user_id: context?.userId ?? null,
           hazard_type: hazard.type,
           risk_level: hazard.riskLevel,
+          title: guidance.title,
           ai_summary: guidance.summary,
-          safety_tips: {
-            do: guidance.do,
-            prepare: guidance.prepare,
-            avoid: guidance.avoid,
-          },
-          explanation: hazard.description,
+          safety_tips: guidance.safetyTips,
+          explanation: guidance.summary,
+          source_type: 'weather_auto',
+          source_name: 'Open-Meteo weather data',
           measurements,
           observed_at: detectedAt,
         })
@@ -633,9 +642,7 @@ export class WeatherService {
         .single();
 
       const savedHazardId =
-        typeof hazardInsert.data?.id === 'string'
-          ? hazardInsert.data.id
-          : null;
+        typeof hazardInsert.data?.id === 'string' ? hazardInsert.data.id : null;
       if (hazardInsert.error || !savedHazardId) {
         throw new Error(
           `Hazard could not be saved: ${hazardInsert.error?.message ?? 'No row returned'}`,
@@ -646,10 +653,10 @@ export class WeatherService {
         await this.push.sendUserNotification({
           userId: context.userId,
           hazardId: savedHazardId,
-          kind: 'weather_hazard',
-          sourceName: 'Open-Meteo',
-          title: `${hazard.type} - ${hazard.severity} for ${place}`,
-          body: `${guidance.do[0] ?? guidance.summary}\nFollow official PAGASA/LGU advisories.`,
+          kind: 'weather',
+          sourceName: 'Detected by W.A.T.C.H. from weather data',
+          title: guidance.title,
+          body: `${guidance.summary}\n${guidance.safetyTips.do_list[0]}`,
           data: { type: 'hazard', hazardId: savedHazardId },
         });
       }
@@ -705,6 +712,348 @@ export class WeatherService {
 
   @Cron('*/10 * * * *', { waitForCompletion: true })
   async monitorSavedLocations() {
+    const { data, error } = await this.supabase
+      .from('locations')
+      .select(
+        'loc_id,user_id,label,full_address,city,province,latitude,longitude',
+      )
+      .not('user_id', 'is', null);
+    if (error) {
+      this.logger.error(
+        `Saved locations could not be loaded for weather monitoring: ${error.message}`,
+      );
+      return;
+    }
+
+    const locations = (data ?? []) as SavedHomeLocation[];
+    const grouped = new Map<string, SavedHomeLocation[]>();
+    for (const location of locations) {
+      const key = normalizeAreaKey(location);
+      if (!key) continue;
+      const group = grouped.get(key) ?? [];
+      group.push(location);
+      grouped.set(key, group);
+    }
+    const configuredReadings = Number(
+      this.config.get<string>('HAZARD_CONSECUTIVE_READINGS') ?? 2,
+    );
+    const requiredReadings =
+      Number.isSafeInteger(configuredReadings) &&
+      configuredReadings >= 2 &&
+      configuredReadings <= 5
+        ? configuredReadings
+        : 2;
+
+    for (const [areaKey, group] of grouped) {
+      const representative = [...group].sort((a, b) => a.loc_id - b.loc_id)[0];
+      const area: HazardAreaLocation = {
+        city: representative.city,
+        province: representative.province,
+        latitude: representative.latitude,
+        longitude: representative.longitude,
+      };
+      const place = placeName(area);
+      let forecast: WeatherForecast;
+      try {
+        forecast = await this.getForecast(
+          Number(representative.latitude.toFixed(2)),
+          Number(representative.longitude.toFixed(2)),
+        );
+      } catch (fetchError) {
+        this.logger.error(
+          `Weather fetch failed for ${place}: ${errorMessage(fetchError)}`,
+        );
+        continue;
+      }
+
+      const measurements: WeatherMeasurements = {
+        rainMm: forecast.riskMeasurements.rainMm,
+        windKph: forecast.riskMeasurements.windKph,
+        windGustsKph: forecast.riskMeasurements.windGustsKph,
+        heatIndexC: forecast.riskMeasurements.heatIndexC,
+        temperatureC: forecast.current.temperatureC,
+        humidityPercent: forecast.current.humidityPercent,
+        uvIndex: forecast.current.uvIndex,
+        aqi: forecast.riskMeasurements.aqi,
+        weatherCode: forecast.current.weatherCode,
+        pressureMslHpa: forecast.riskMeasurements.pressureMslHpa,
+        stale: forecast.stale,
+      };
+      const observedAt = forecast.updatedAt;
+      const condition =
+        measurements.weatherCode === 95 ||
+        measurements.weatherCode === 96 ||
+        measurements.weatherCode === 99
+          ? 'Thunderstorm'
+          : `WMO ${measurements.weatherCode}`;
+
+      for (const location of group) {
+        const { error: recordError } = await this.supabase
+          .from('weather_records')
+          .insert({
+            location_id: location.loc_id,
+            temperature: measurements.temperatureC,
+            rainfall: measurements.rainMm,
+            wind_speed: measurements.windKph,
+            weather_condition: condition,
+            recorded_at: observedAt,
+            humidity: measurements.humidityPercent,
+            heat_index: measurements.heatIndexC,
+            uv_index: measurements.uvIndex,
+            aqi: measurements.aqi,
+            is_stale: measurements.stale,
+          });
+        if (recordError) {
+          this.logger.error(
+            `Weather record for ${location.loc_id} could not be saved: ${recordError.message}`,
+          );
+        }
+      }
+      if (measurements.stale) {
+        this.logger.warn(
+          `Stale weather data for ${place} was stored for display but not used to create or resolve alerts.`,
+        );
+        continue;
+      }
+
+      const { data: observations, error: observationsError } =
+        await this.supabase
+          .from('weather_records')
+          .select(
+            'recorded_at,temperature,rainfall,wind_speed,weather_condition,humidity,heat_index,uv_index,aqi,is_stale',
+          )
+          .eq('location_id', representative.loc_id)
+          .eq('is_stale', false)
+          .order('recorded_at', { ascending: false })
+          .limit(requiredReadings);
+      if (observationsError) {
+        this.logger.error(
+          `Recent observations for ${place} could not be loaded: ${observationsError.message}`,
+        );
+        continue;
+      }
+      const recent = (observations ?? []).filter(isStoredWeatherRecord);
+      const hazards = detectWeatherHazards(
+        measurements.rainMm,
+        measurements.windKph,
+        measurements.heatIndexC,
+        measurements.weatherCode,
+        measurements.pressureMslHpa,
+        measurements.windGustsKph ?? 0,
+        forecast.alerts ?? [],
+        measurements.aqi,
+      );
+      const confirmed = hazards.filter((candidate) =>
+        hasConsecutiveHazard(candidate.type, recent, requiredReadings),
+      );
+
+      const { data: activeRows, error: activeError } = await this.supabase
+        .from('hazards')
+        .select('id,event_type,hazard_type')
+        .eq('area_key', areaKey)
+        .is('resolved_at', null);
+      if (activeError) {
+        this.logger.error(
+          `Active hazards for ${place} could not be loaded: ${activeError.message}`,
+        );
+        continue;
+      }
+      if (recent.length === requiredReadings) {
+        const activeTypes = new Set(
+          recent.flatMap((record) =>
+            detectWeatherHazards(
+              record.rainfall,
+              record.wind_speed,
+              record.heat_index ?? record.temperature,
+              /thunder|storm/i.test(record.weather_condition ?? '') ? 95 : -1,
+              undefined,
+              0,
+              [],
+              record.aqi,
+            ).map((candidate) => candidate.type),
+          ),
+        );
+        for (const active of activeRows ?? []) {
+          const type =
+            typeof active.hazard_type === 'string'
+              ? active.hazard_type
+              : typeof active.event_type === 'string'
+                ? active.event_type
+                : '';
+          if (type && !activeTypes.has(type)) {
+            const { error: resolveError } = await this.supabase
+              .from('hazards')
+              .update({ resolved_at: observedAt })
+              .eq('id', active.id);
+            if (resolveError) {
+              this.logger.error(
+                `Cleared hazard ${active.id} could not be resolved: ${resolveError.message}`,
+              );
+            }
+          }
+        }
+      }
+
+      for (const candidate of confirmed) {
+        const { data: existing, error: existingError } = await this.supabase
+          .from('hazards')
+          .select('id,severity,risk_level')
+          .eq('area_key', areaKey)
+          .eq('event_type', candidate.eventType)
+          .is('resolved_at', null)
+          .maybeSingle();
+        if (existingError) {
+          this.logger.error(
+            `Active hazard for ${place} could not be checked: ${existingError.message}`,
+          );
+          continue;
+        }
+        const severityRank: Record<string, number> = {
+          Advisory: 1,
+          Warning: 2,
+          Severe: 3,
+          Extreme: 4,
+        };
+        const previousSeverity =
+          typeof existing?.severity === 'string'
+            ? existing.severity
+            : typeof existing?.risk_level === 'string'
+              ? existing.risk_level
+              : 'Advisory';
+        const severity =
+          (severityRank[candidate.severity] ?? 0) >
+          (severityRank[previousSeverity] ?? 0)
+            ? candidate.severity
+            : previousSeverity;
+        const rendered = renderHazardTemplate({
+          key: hazardTemplateKey(candidate.eventType, candidate.type),
+          hazardType: candidate.type,
+          severity,
+          place,
+          observedAt,
+          sourceName: 'Open-Meteo weather data',
+          measurements: {
+            rainMm: measurements.rainMm,
+            heatIndexC: measurements.heatIndexC,
+            aqi: measurements.aqi,
+          },
+        });
+        const row = {
+          event_type: candidate.eventType,
+          severity,
+          risk_level: candidate.riskLevel,
+          category: candidate.type,
+          hazard_type: candidate.type,
+          title: rendered.title,
+          description: rendered.summary,
+          explanation: rendered.summary,
+          ai_summary: rendered.summary,
+          safety_tips: rendered.safetyTips,
+          source_type: 'weather_auto',
+          source_name: 'Open-Meteo weather data',
+          source_url: null,
+          city: area.city,
+          province: area.province,
+          location_lat: representative.latitude,
+          location_lon: representative.longitude,
+          area_key: areaKey,
+          location_id: representative.loc_id,
+          user_id: null,
+          measurements,
+          raw_metrics: measurements,
+          observed_at: observedAt,
+          detected_at: observedAt,
+          expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
+          resolved_at: null,
+        };
+        let hazardId = typeof existing?.id === 'string' ? existing.id : null;
+        if (hazardId) {
+          const { error: updateError } = await this.supabase
+            .from('hazards')
+            .update(row)
+            .eq('id', hazardId);
+          if (updateError) {
+            this.logger.error(
+              `Active hazard for ${place} could not be updated: ${updateError.message}`,
+            );
+            continue;
+          }
+        } else {
+          const { data: inserted, error: insertError } = await this.supabase
+            .from('hazards')
+            .insert({
+              ...row,
+              dedupe_key: `${areaKey}:${candidate.eventType}:${Date.now()}`,
+            })
+            .select('id')
+            .maybeSingle();
+          if (insertError?.code === '23505') {
+            const { data: concurrent, error: concurrentError } =
+              await this.supabase
+                .from('hazards')
+                .select('id')
+                .eq('area_key', areaKey)
+                .eq('event_type', candidate.eventType)
+                .is('resolved_at', null)
+                .maybeSingle();
+            if (concurrentError || !concurrent?.id) {
+              this.logger.error(
+                `Concurrent hazard could not be recovered: ${concurrentError?.message ?? insertError.message}`,
+              );
+              continue;
+            }
+            hazardId = String(concurrent.id);
+          } else if (insertError || !inserted?.id) {
+            this.logger.error(
+              `Hazard for ${place} could not be saved: ${insertError?.message ?? 'No row returned'}`,
+            );
+            continue;
+          } else {
+            hazardId = String(inserted.id);
+          }
+        }
+        if (!hazardId) continue;
+        const userIds = [
+          ...new Set(
+            group
+              .map((location) => location.user_id)
+              .filter((userId): userId is string => Boolean(userId)),
+          ),
+        ];
+        const { data: existingNotifications, error: notificationError } =
+          await this.supabase
+            .from('notifications')
+            .select('user_id')
+            .eq('hazard_id', hazardId)
+            .in('user_id', userIds);
+        if (notificationError) {
+          this.logger.error(
+            `Hazard notification recipients could not be checked: ${notificationError.message}`,
+          );
+          continue;
+        }
+        const alreadyNotified = new Set(
+          (existingNotifications ?? []).map(
+            (notification) => notification.user_id,
+          ),
+        );
+        for (const userId of userIds) {
+          if (alreadyNotified.has(userId)) continue;
+          await this.push.sendUserNotification({
+            userId,
+            hazardId,
+            kind: 'weather_hazard',
+            sourceName: 'Detected by W.A.T.C.H. from weather data',
+            title: rendered.title,
+            body: `${rendered.summary}\n${rendered.safetyTips.do_list[0]}`,
+            data: { type: 'hazard', hazardId },
+          });
+        }
+      }
+    }
+  }
+
+  async monitorLegacySavedLocations() {
     const locationResult = await this.supabase
       .from('locations')
       .select('loc_id, user_id, label, full_address, city, latitude, longitude')
@@ -791,8 +1140,8 @@ export class WeatherService {
           const recordedAt = new Date().toISOString();
           const condition =
             forecast?.current.weatherCode === 95 ||
-              forecast?.current.weatherCode === 96 ||
-              forecast?.current.weatherCode === 99
+            forecast?.current.weatherCode === 96 ||
+            forecast?.current.weatherCode === 99
               ? 'Thunderstorm'
               : forecast
                 ? `WMO ${forecast.current.weatherCode}`
@@ -868,17 +1217,18 @@ export class WeatherService {
               location.label && location.label !== 'Home'
                 ? location.label
                 : location.city || location.full_address || 'Home';
-            const guidance = await this.ai.generateWeatherSafetyTips({
+            const observedAt = new Date().toISOString();
+            const guidance = renderHazardTemplate({
+              key: hazardTemplateKey(hazard.eventType, hazard.type),
               hazardType: hazard.type,
-              riskLevel: hazard.riskLevel,
-              location: place,
+              severity: hazard.severity,
+              place,
+              observedAt,
+              sourceName: 'Open-Meteo weather data',
               measurements: {
                 rainMm: measurements.rainMm,
-                windKph: measurements.windKph,
                 heatIndexC: measurements.heatIndexC,
-                temperatureC: measurements.temperatureC,
-                humidityPercent: measurements.humidityPercent,
-                aqi: measurements.aqi ?? 0,
+                aqi: measurements.aqi,
               },
             });
             const dedupeKey = [
@@ -896,12 +1246,14 @@ export class WeatherService {
                   severity: hazard.riskLevel,
                   hazard_type: hazard.type,
                   risk_level: hazard.riskLevel,
+                  title: guidance.title,
                   ai_summary: guidance.summary,
-                  safety_tips: {
-                    do: guidance.do,
-                    prepare: guidance.prepare,
-                    avoid: guidance.avoid,
-                  },
+                  safety_tips: guidance.safetyTips,
+                  source_type: 'weather_auto',
+                  source_name: 'Open-Meteo weather data',
+                  city: location.city,
+                  province: location.province,
+                  observed_at: observedAt,
                   dedupe_key: dedupeKey,
                   expires_at: new Date(
                     Date.now() + 6 * 60 * 60 * 1000,
@@ -921,9 +1273,9 @@ export class WeatherService {
               userId: location.user_id,
               hazardId,
               kind: 'weather_hazard',
-              sourceName: 'Open-Meteo',
-              title: `${hazard.type} - ${hazard.riskLevel} near ${place}`,
-              body: `${guidance.do[0]}\n${guidance.do[1]}`,
+              sourceName: 'Detected by W.A.T.C.H. from weather data',
+              title: guidance.title,
+              body: `${guidance.summary}\n${guidance.safetyTips.do_list[0]}`,
               data: { type: 'hazard', hazardId },
             });
           }
@@ -932,6 +1284,474 @@ export class WeatherService {
             `Weather monitor failed for ${location.city ?? location.loc_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
           );
         }
+      }
+    }
+  }
+
+  @Cron('*/10 * * * *', { waitForCompletion: true })
+  async processDedicatedWeatherAlertEvents() {
+    const configuredMinutes = Number(
+      this.config.get<string>('WEATHER_ALERT_SUSTAINED_MINUTES') ?? 60,
+    );
+    const sustainedMinutes =
+      Number.isFinite(configuredMinutes) &&
+      configuredMinutes >= 10 &&
+      configuredMinutes <= 180
+        ? configuredMinutes
+        : 60;
+    const { data: profiles, error: profilesError } = await this.supabase
+      .from('user_info')
+      .select('id,home_location_id')
+      .not('home_location_id', 'is', null);
+    if (profilesError) {
+      this.logger.error(`Weather-alert home locations could not be loaded: ${profilesError.message}`);
+      return;
+    }
+    const homeLocationIds = [
+      ...new Set(
+        (profiles ?? [])
+          .map((profile) => Number(profile.home_location_id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
+      ),
+    ];
+    if (!homeLocationIds.length) return;
+    const { data: locationRows, error: locationsError } = await this.supabase
+      .from('locations')
+      .select('loc_id,user_id,label,full_address,city,province,latitude,longitude')
+      .in('loc_id', homeLocationIds)
+      .not('city', 'is', null);
+    if (locationsError) {
+      this.logger.error(`Weather-alert locations could not be loaded: ${locationsError.message}`);
+      return;
+    }
+    const locationById = new Map(
+      ((locationRows ?? []) as SavedHomeLocation[]).map((location) => [
+        location.loc_id,
+        location,
+      ]),
+    );
+    const grouped = new Map<string, SavedHomeLocation[]>();
+    for (const profile of profiles ?? []) {
+      const locationId = Number(profile.home_location_id);
+      const location = locationById.get(locationId);
+      if (!location) continue;
+      const city = location.city?.trim();
+      if (!city) continue;
+      const province = location.province?.trim() ?? '';
+      const key = `${city.toLocaleLowerCase()}|${province.toLocaleLowerCase()}`;
+      const group = grouped.get(key) ?? [];
+      group.push({ ...location, user_id: profile.id });
+      grouped.set(key, group);
+    }
+    for (const group of grouped.values()) {
+      const representative = group[0];
+      const city = representative.city?.trim();
+      if (!city) continue;
+      const province = representative.province?.trim() || null;
+      const areaKey = normalizeAreaKey(representative);
+      if (!areaKey) continue;
+      const cutoff = new Date(Date.now() - sustainedMinutes * 60 * 1000).toISOString();
+      const { data: records, error: recordsError } = await this.supabase
+        .from('weather_records')
+        .select('recorded_at,temperature,rainfall,wind_speed,weather_condition,humidity,heat_index,uv_index,aqi,is_stale')
+        .eq('location_id', representative.loc_id)
+        .eq('is_stale', false)
+        .gte('recorded_at', cutoff)
+        .order('recorded_at', { ascending: false })
+        .limit(30);
+      if (recordsError) {
+        this.logger.error(`Weather observations for ${city} could not be loaded: ${recordsError.message}`);
+        continue;
+      }
+      const observations = (records ?? []).filter(isStoredWeatherRecord);
+      const oldest = observations[observations.length - 1];
+      const defs = [
+        { type: 'extreme_heat' as const, meets: (r: StoredWeatherRecord) => (r.heat_index ?? r.temperature) >= 42, measurement: (r: StoredWeatherRecord) => ({ heat_index: r.heat_index ?? r.temperature, unit: 'C' }), severity: 'Warning' },
+        { type: 'unhealthy_air' as const, meets: (r: StoredWeatherRecord) => (r.aqi ?? 0) >= 101, measurement: (r: StoredWeatherRecord) => ({ aqi: r.aqi, unit: 'US AQI' }), severity: 'Advisory' },
+        { type: 'heavy_rain' as const, meets: (r: StoredWeatherRecord) => r.rainfall >= 15, measurement: (r: StoredWeatherRecord) => ({ rainfall: r.rainfall, unit: 'mm/hr' }), severity: 'Warning' },
+      ];
+      for (const def of defs) {
+        const oldestTime = oldest ? Date.parse(oldest.recorded_at) : NaN;
+        const sustainedForWindow =
+          observations.length > 0 &&
+          Number.isFinite(oldestTime) &&
+          Date.now() - oldestTime >= sustainedMinutes * 60 * 1000 &&
+          observations.every(def.meets);
+        const { data: active } = await this.supabase
+          .from('weather_alert_events')
+          .select('id,notified_count')
+          .eq('alert_type', def.type)
+          .eq('area_key', areaKey)
+          .eq('status', 'active')
+          .maybeSingle();
+        if (!sustainedForWindow) {
+          if (active) {
+            await this.supabase
+              .from('weather_alert_events')
+              .update({ status: 'resolved', resolved_at: new Date().toISOString() })
+              .eq('id', active.id);
+          }
+          continue;
+        }
+        const latest = observations[0];
+        const measuredAt = latest.recorded_at;
+        const sustainedSince = oldest.recorded_at;
+        const measurement = def.measurement(latest);
+        const templateKey =
+          def.type === 'extreme_heat'
+            ? 'extreme_heat'
+            : def.type === 'unhealthy_air'
+              ? 'unhealthy_air'
+              : 'heavy_rain_flood';
+        const place = province ? `${city}, ${province}` : city;
+        const rendered = renderHazardTemplate({
+          key: templateKey,
+          hazardType:
+            def.type === 'extreme_heat'
+              ? 'Extreme heat'
+              : def.type === 'unhealthy_air'
+                ? 'Unhealthy air quality'
+                : 'Heavy rainfall',
+          severity: def.severity,
+          place,
+          observedAt: measuredAt,
+          sourceName: 'Detected by Watch from weather data',
+          measurements: {
+            heatIndexC:
+              def.type === 'extreme_heat'
+                ? (latest.heat_index ?? latest.temperature)
+                : null,
+            rainMm: def.type === 'heavy_rain' ? latest.rainfall : null,
+            aqi: def.type === 'unhealthy_air' ? latest.aqi : null,
+          },
+        });
+        if (active) {
+          await this.supabase
+            .from('weather_alert_events')
+            .update({
+              severity: def.severity,
+              measurement,
+              measured_at: measuredAt,
+              title: rendered.title,
+              ai_summary: rendered.summary,
+              safety: rendered.safetyTips,
+            })
+            .eq('id', active.id);
+          continue;
+        }
+        const { data: created, error: createError } = await this.supabase
+          .from('weather_alert_events')
+          .insert({
+            alert_type: def.type,
+            city,
+            province,
+            area_key: areaKey,
+            severity: def.severity,
+            measurement,
+            measured_at: measuredAt,
+            sustained_since: sustainedSince,
+            title: rendered.title,
+            ai_summary: rendered.summary,
+            safety: rendered.safetyTips,
+            source: 'weather_auto',
+            source_name: 'Detected by Watch from weather data',
+            status: 'active',
+            notified_count: 0,
+          })
+          .select('id')
+          .single();
+        if (createError || !created) {
+          this.logger.error(`Weather alert event could not be created for ${place}: ${createError?.message ?? 'No row returned'}`);
+          continue;
+        }
+        const userIds = [
+          ...new Set(
+            group
+              .filter((location) => typeof location.user_id === 'string')
+              .map((location) => location.user_id),
+          ),
+        ];
+        const { data: announcement } = await this.supabase
+          .from('announcements')
+          .insert({
+            title: rendered.title,
+            content: rendered.summary,
+            ai_summary: rendered.summary,
+            source: 'admin_test_replay',
+            source_name: 'Detected by Watch from weather data',
+            category: def.type,
+            ai_scope: 'weather',
+            status: 'published',
+            published_at: measuredAt,
+          })
+          .select('id')
+          .single();
+        let notifiedCount = 0;
+        if (announcement) {
+          for (const userId of userIds) {
+            const result = await this.push.sendUserNotification({
+              userId,
+              announcementId: String(announcement.id),
+              kind: 'weather',
+              sourceName: 'Detected by Watch from weather data',
+              title: rendered.title,
+              body: rendered.summary,
+              data: { weather_event_id: String(created.id) },
+            });
+            if (result.sent) notifiedCount += 1;
+          }
+        }
+        await this.supabase
+          .from('weather_alert_events')
+          .update({ notified_count: notifiedCount })
+          .eq('id', created.id);
+      }
+    }
+  }
+
+  @Cron('*/30 * * * *', { waitForCompletion: true })
+  async sendOngoingHazardSafetyTips() {
+    const configuredInterval = Number(
+      this.config.get<string>('SAFETY_TIP_INTERVAL_HOURS') ?? 3,
+    );
+    const intervalHours =
+      Number.isFinite(configuredInterval) &&
+      configuredInterval >= 2 &&
+      configuredInterval <= 3
+        ? configuredInterval
+        : 3;
+    const configuredMaximum = Number(
+      this.config.get<string>('SAFETY_TIP_MAX_PER_HAZARD_USER') ?? 3,
+    );
+    const maximumTips =
+      Number.isSafeInteger(configuredMaximum) &&
+      configuredMaximum >= 1 &&
+      configuredMaximum <= 5
+        ? configuredMaximum
+        : 3;
+    const now = new Date();
+    const expectedExpiry = new Date(
+      now.getTime() + 2 * 60 * 60 * 1000,
+    ).toISOString();
+    const { data: hazards, error: hazardError } = await this.supabase
+      .from('hazards')
+      .select(
+        'id,location_id,area_key,city,province,location_lat,location_lon,event_type,hazard_type,risk_level,severity,safety_tips,observed_at,source_type',
+      )
+      .is('resolved_at', null)
+      .gt('expires_at', expectedExpiry)
+      .lt(
+        'created_at',
+        new Date(now.getTime() - intervalHours * 60 * 60 * 1000).toISOString(),
+      )
+      .limit(200);
+    if (hazardError) {
+      this.logger.error(
+        `Active hazards could not be loaded for safety tips: ${hazardError.message}`,
+      );
+      return;
+    }
+
+    for (const hazard of hazards ?? []) {
+      const locationId = Number(hazard.location_id);
+      if (!Number.isSafeInteger(locationId) || locationId < 1) continue;
+
+      const { data: weatherRecord, error: weatherError } = await this.supabase
+        .from('weather_records')
+        .select(
+          'recorded_at,temperature,rainfall,wind_speed,weather_condition,humidity,heat_index,uv_index,aqi,is_stale',
+        )
+        .eq('location_id', locationId)
+        .gte(
+          'recorded_at',
+          new Date(now.getTime() - 90 * 60 * 1000).toISOString(),
+        )
+        .order('recorded_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (weatherError) {
+        this.logger.error(
+          `Current hazard measurements could not be checked: ${weatherError.message}`,
+        );
+        continue;
+      }
+      if (
+        !isStoredWeatherRecord(weatherRecord) ||
+        weatherRecord.is_stale === true ||
+        !detectWeatherHazards(
+          weatherRecord.rainfall,
+          weatherRecord.wind_speed,
+          weatherRecord.heat_index ?? weatherRecord.temperature,
+          /thunder|storm/i.test(weatherRecord.weather_condition ?? '')
+            ? 95
+            : -1,
+          undefined,
+          0,
+          [],
+          weatherRecord.aqi,
+        ).some((active) => active.type === hazard.hazard_type)
+      ) {
+        continue;
+      }
+
+      const { data: locations, error: locationsError } = await this.supabase
+        .from('locations')
+        .select('user_id,city,province,latitude,longitude');
+      if (locationsError) {
+        this.logger.error(
+          `Saved locations for safety tips could not be loaded: ${locationsError.message}`,
+        );
+        continue;
+      }
+      const hazardArea: HazardAreaLocation = {
+        city: hazard.city ?? null,
+        province: hazard.province ?? null,
+        latitude:
+          typeof hazard.location_lat === 'number' ? hazard.location_lat : null,
+        longitude:
+          typeof hazard.location_lon === 'number' ? hazard.location_lon : null,
+      };
+      const userIds = [
+        ...new Set(
+          (locations ?? [])
+            .filter(
+              (location) =>
+                location.user_id &&
+                areasMatch(hazardArea, location as HazardAreaLocation),
+            )
+            .map((location) => location.user_id as string),
+        ),
+      ];
+      if (!userIds.length) continue;
+      const { data: profiles, error: profileError } = await this.supabase
+        .from('user_info')
+        .select('id,notification_prefs')
+        .in('id', userIds);
+      if (profileError) {
+        this.logger.error(
+          `Safety-tip audience could not be loaded: ${profileError.message}`,
+        );
+        continue;
+      }
+      const audience = (profiles ?? []).filter((profile) => {
+        const prefs = isRecord(profile.notification_prefs)
+          ? profile.notification_prefs
+          : {};
+        return prefs.weather !== false && prefs.safety !== false;
+      });
+      if (!audience.length) continue;
+
+      const measurements: Record<string, number> = {
+        temperatureC: weatherRecord.temperature,
+        rainMm: weatherRecord.rainfall,
+        windKph: weatherRecord.wind_speed,
+        heatIndexC: weatherRecord.heat_index ?? weatherRecord.temperature,
+        humidityPercent: weatherRecord.humidity ?? 0,
+        aqi: weatherRecord.aqi ?? 0,
+      };
+      const place = placeName(hazardArea);
+      const template = renderHazardTemplate({
+        key: hazardTemplateKey(hazard.event_type, hazard.hazard_type),
+        hazardType: hazard.hazard_type ?? 'Weather hazard',
+        severity: hazard.severity ?? hazard.risk_level ?? 'Advisory',
+        place,
+        observedAt: hazard.observed_at ?? weatherRecord.recorded_at,
+        sourceName:
+          hazard.source_type === 'weather_auto'
+            ? 'Open-Meteo weather data'
+            : 'W.A.T.C.H. weather data',
+        measurements: {
+          heatIndexC: measurements.heatIndexC,
+          rainMm: measurements.rainMm,
+          aqi: measurements.aqi,
+        },
+      });
+      const tip = {
+        title: template.title,
+        short_summary: template.summary,
+        do_list: template.safetyTips.do_list,
+        dont_list: template.safetyTips.dont_list,
+        prepare_list: template.safetyTips.prepare_list,
+        emergency_note: template.safetyTips.emergency_note,
+        version: template.safetyTips.version,
+      };
+      const tipKey = createHash('sha256')
+        .update(
+          JSON.stringify([
+            tip.title,
+            tip.short_summary,
+            tip.do_list,
+            tip.dont_list,
+            tip.emergency_note,
+          ]),
+        )
+        .digest('hex')
+        .slice(0, 24);
+      const { error: tipsUpdateError } = await this.supabase
+        .from('hazards')
+        .update({
+          safety_tips: {
+            ...(isRecord(hazard.safety_tips) ? hazard.safety_tips : {}),
+            ongoing_tip: { ...tip, tip_key: tipKey },
+          },
+        })
+        .eq('id', hazard.id);
+      if (tipsUpdateError) {
+        this.logger.error(
+          `Ongoing safety tips could not be saved: ${tipsUpdateError.message}`,
+        );
+        continue;
+      }
+
+      for (const profile of audience) {
+        const { data: recentTips, error: recentError } = await this.supabase
+          .from('notifications')
+          .select('id,created_at')
+          .eq('user_id', profile.id)
+          .eq('hazard_id', hazard.id)
+          .eq('kind', 'safety_tip')
+          .order('created_at', { ascending: false })
+          .limit(maximumTips);
+        if (recentError) {
+          this.logger.error(
+            `Prior safety tips could not be checked: ${recentError.message}`,
+          );
+          continue;
+        }
+        if ((recentTips ?? []).length >= maximumTips) continue;
+        const latestTip = recentTips?.[0];
+        if (
+          latestTip &&
+          Date.now() - Date.parse(latestTip.created_at) <
+            intervalHours * 60 * 60 * 1000
+        ) {
+          continue;
+        }
+        const { data: duplicateTip, error: duplicateError } =
+          await this.supabase
+            .from('notifications')
+            .select('id')
+            .eq('user_id', profile.id)
+            .eq('hazard_id', hazard.id)
+            .eq('kind', 'safety_tip')
+            .eq('data->>tip_key', tipKey)
+            .maybeSingle();
+        if (duplicateError) {
+          this.logger.error(
+            `Safety-tip deduplication check failed: ${duplicateError.message}`,
+          );
+          continue;
+        }
+        if (duplicateTip) continue;
+        await this.push.sendUserNotification({
+          userId: profile.id,
+          hazardId: String(hazard.id),
+          kind: 'safety_tip',
+          sourceName: hazard.hazard_type ?? 'Weather hazard',
+          title: tip.title,
+          body: tip.short_summary,
+          data: { tip_key: tipKey },
+        });
       }
     }
   }
@@ -969,4 +1789,12 @@ function calculateHeatIndexC(temperatureC: number, humidityPercent: number) {
     0.00085282 * temperatureF * humidityPercent ** 2 -
     0.00000199 * temperatureF ** 2 * humidityPercent ** 2;
   return ((heatIndexF - 32) * 5) / 9;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Unknown error';
 }

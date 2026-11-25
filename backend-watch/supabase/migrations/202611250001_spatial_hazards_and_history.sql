@@ -76,7 +76,14 @@ alter table public.hazards
   add constraint hazards_source_type_check
     check (
       source_type is null or
-      source_type in ('pagasa', 'project_noah', 'ndrrmc_ocd', 'lgu_official', 'weather_auto')
+      source_type in (
+        'pagasa',
+        'project_noah',
+        'ndrrmc_ocd',
+        'lgu_official',
+        'weather_auto',
+        'admin_test_replay'
+      )
     );
 
 -- Backfill coordinates, start timestamps, and default source_type on legacy rows

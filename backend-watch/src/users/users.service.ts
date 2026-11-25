@@ -221,11 +221,11 @@ export class ProfileService {
   }
 
   async getProfile(userId: string) {
-    const { data, error } = await this.supabase
+    const profileFields =
+      'id, name, email, birthdate, country, institution_id, home_location_id, location_prompt_dismissed_at';
+    const { data: existingProfile, error } = await this.supabase
       .from('user_info')
-      .select(
-        'id, name, email, birthdate, country, institution_id, home_location_id, location_prompt_dismissed_at',
-      )
+      .select(profileFields)
       .eq('id', userId)
       .maybeSingle();
 
@@ -235,9 +235,52 @@ export class ProfileService {
       );
     }
 
+    let data = existingProfile;
     if (!data) {
-      throw new BadRequestException(
-        'No profile was found for the authenticated user.',
+      const { data: authResult, error: authError } =
+        await this.supabase.auth.admin.getUserById(userId);
+      if (authError || !authResult.user) {
+        throw new InternalServerErrorException(
+          'The authenticated account could not be loaded to create its profile.',
+        );
+      }
+
+      const email = authResult.user.email?.trim().toLowerCase() ?? null;
+      const metadataName = authResult.user.user_metadata?.full_name;
+      const name =
+        typeof metadataName === 'string' && metadataName.trim()
+          ? metadataName.trim()
+          : (email?.split('@')[0] ?? null);
+      const { data: createdProfile, error: createError } = await this.supabase
+        .from('user_info')
+        .insert({ id: userId, name, email, role: 'user' })
+        .select(profileFields)
+        .single();
+
+      if (createError?.code === '23505') {
+        const { data: racedProfile, error: reloadError } = await this.supabase
+          .from('user_info')
+          .select(profileFields)
+          .eq('id', userId)
+          .maybeSingle();
+        if (reloadError) {
+          throw new InternalServerErrorException(
+            `Profile created by another request could not be loaded: ${reloadError.message}`,
+          );
+        }
+        data = racedProfile;
+      } else if (createError || !createdProfile) {
+        throw new InternalServerErrorException(
+          `Profile could not be created: ${createError?.message ?? 'No row returned'}`,
+        );
+      } else {
+        data = createdProfile;
+      }
+    }
+
+    if (!data) {
+      throw new InternalServerErrorException(
+        'Profile creation completed without returning a profile.',
       );
     }
 

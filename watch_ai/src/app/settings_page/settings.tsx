@@ -12,7 +12,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import supabase from '../../lib/supabase';
 import { useAppTheme } from '../../theme/theme-context';
@@ -22,7 +22,6 @@ type IconName =
   | 'security'
   | 'notifications'
   | 'privacy'
-  | 'subscription'
   | 'help'
   | 'terms'
   | 'space'
@@ -31,7 +30,6 @@ type IconName =
   | 'account'
   | 'logout'
   | 'theme';
-
 interface SettingItem {
   label: string;
   icon: IconName;
@@ -51,23 +49,13 @@ const SECTIONS: { title: string; items: SettingItem[] }[] = [
   {
     title: 'Support & About',
     items: [
-      { label: 'My Subscription', icon: 'subscription' },
       { label: 'Help & Support', icon: 'help' },
       { label: 'Terms and Policies', icon: 'terms' },
     ],
   },
   {
-    title: 'Cache & cellular',
-    items: [
-      { label: 'Free up space', icon: 'space' },
-      { label: 'Data Saver', icon: 'saver' },
-    ],
-  },
-  {
     title: 'Actions',
     items: [
-      { label: 'Report a problem', icon: 'report' },
-      { label: 'Add account', icon: 'account' },
       { label: 'Log out', icon: 'logout' },
     ],
   },
@@ -112,12 +100,6 @@ function SettingIcon({ name, color = '#4B32B5' }: { name: IconName; color?: stri
           <Rect x={4} y={10} width={16} height={11} rx={2} {...shared} />
           <Path d="M8 10V7a4 4 0 0 1 8 0v3" {...shared} />
           <Circle cx={12} cy={15} r={1} {...shared} />
-        </>
-      )}
-      {name === 'subscription' && (
-        <>
-          <Rect x={2.5} y={5} width={19} height={14} rx={1.5} {...shared} />
-          <Line x1={3} y1={9} x2={21} y2={9} {...shared} />
         </>
       )}
       {name === 'help' && (
@@ -261,7 +243,10 @@ export default function SettingsScreen() {
             showsVerticalScrollIndicator={false}
           >
             {SECTIONS.map((section) => (
-              <View key={section.title} style={styles.section}>
+              <View
+                key={section.title}
+                style={[styles.section, section.title === 'Actions' && styles.bottomSection]}
+              >
                 <Text style={styles.sectionTitle}>{section.title}</Text>
                 <View style={styles.sectionCard}>
                   {section.items.map((item) => (
@@ -301,6 +286,24 @@ export default function SettingsScreen() {
                         </View>
                         <Text style={styles.settingLabel}>{item.label}</Text>
                       </Pressable>
+                    ) : item.icon === 'notifications' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() =>
+                          router.push('/settings_page/notifications')
+                        }
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
                     ) : item.icon === 'profile' ? (
                       <Pressable
                         key={item.label}
@@ -312,6 +315,70 @@ export default function SettingsScreen() {
                             params: { profilePictureUrl },
                           })
                         }
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
+                    ) : item.icon === 'privacy' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() => router.push('/settings_page/privacy')}
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
+                    ) : item.icon === 'security' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() => router.push('/settings_page/security')}
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
+                    ) : item.icon === 'help' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() => router.push('/settings_page/help_support')}
+                        style={({ pressed }) => [
+                          styles.settingRow,
+                          pressed && styles.settingRowPressed,
+                        ]}
+                      >
+                        <View style={styles.iconContainer}>
+                          <SettingIcon name={item.icon} color={displayed.primary} />
+                        </View>
+                        <Text style={styles.settingLabel}>{item.label}</Text>
+                      </Pressable>
+                    ) : item.icon === 'terms' ? (
+                      <Pressable
+                        key={item.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.label}
+                        onPress={() => router.push('/settings_page/Terms_policy')}
                         style={({ pressed }) => [
                           styles.settingRow,
                           pressed && styles.settingRowPressed,
@@ -439,9 +506,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 3,
     paddingBottom: 22,
+  },
+  bottomSection: {
+    marginTop: 'auto',
   },
   section: {
     marginBottom: 12,

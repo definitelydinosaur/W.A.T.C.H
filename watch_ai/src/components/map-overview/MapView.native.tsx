@@ -1,13 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
-import RNMapView, {
-  Circle,
-  Marker,
-  type MapType,
-  type Region,
-} from 'react-native-maps';
-import HazardAreas from '../hazard-map/HazardAreas';
-import HazardMarkers from '../hazard-map/HazardMarkers';
+import { StyleSheet, Text, View } from 'react-native';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
+import type RNMapViewType from 'react-native-maps';
+import type { MapType, Region } from 'react-native-maps';
 import { zoomFromLongitudeDelta } from '../hazard-map/cluster';
 import {
   MapStyleKey,
@@ -48,7 +43,31 @@ const DARK_MAP_STYLE = [
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
 ];
 
-export default function MapView({
+const isExpoGo =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+interface NativeMapModules {
+  maps: typeof import('react-native-maps');
+  HazardAreas: typeof import('../hazard-map/HazardAreas').default;
+  HazardMarkers: typeof import('../hazard-map/HazardMarkers').default;
+}
+
+export default function MapView(props: MapViewProps) {
+  if (isExpoGo) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>
+          Map Overview requires the W.A.T.C.H. development build. Install it
+          and reopen this screen to view the map.
+        </Text>
+      </View>
+    );
+  }
+
+  return <NativeMapView {...props} />;
+}
+
+function NativeMapView({
   latitude,
   longitude,
   label,
@@ -63,11 +82,44 @@ export default function MapView({
   selectedHistoryId = null,
   onHistorySelect,
 }: MapViewProps) {
-  const ref = useRef<RNMapView>(null);
+  const [nativeModules, setNativeModules] = useState<NativeMapModules | null>(
+    null,
+  );
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
   const [zoom, setZoom] = useState(zoomFromLongitudeDelta(DEFAULT_SPAN));
+  const ref = useRef<React.ElementRef<typeof RNMapViewType>>(null);
 
   useEffect(() => {
-    if (!focus) return;
+    let active = true;
+    void Promise.all([
+      import('react-native-maps'),
+      import('../hazard-map/HazardAreas'),
+      import('../hazard-map/HazardMarkers'),
+    ])
+      .then(([maps, areasMod, markersMod]) => {
+        if (active) {
+          setNativeModules({
+            maps,
+            HazardAreas: areasMod.default,
+            HazardMarkers: markersMod.default,
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        console.error('[map] unable to load native map module:', error);
+        setMapLoadError(
+          error instanceof Error ? error.message : 'Unknown native map error.',
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!focus || !nativeModules) return;
     const span = focus.span ?? DEFAULT_SPAN;
     const region: Region = {
       latitude: focus.latitude,
@@ -76,10 +128,10 @@ export default function MapView({
       longitudeDelta: span,
     };
     ref.current?.animateToRegion(region, 650);
-  }, [focus]);
+  }, [focus, nativeModules]);
 
   useEffect(() => {
-    if (!boundsFocus) return;
+    if (!boundsFocus || !nativeModules) return;
     ref.current?.fitToCoordinates(
       [
         { latitude: boundsFocus.minLat, longitude: boundsFocus.minLon },
@@ -90,7 +142,32 @@ export default function MapView({
         animated: true,
       },
     );
-  }, [boundsFocus]);
+  }, [boundsFocus, nativeModules]);
+
+  if (mapLoadError) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>
+          The native map module is unavailable. Install a fresh W.A.T.C.H.
+          development build, then restart the app.
+        </Text>
+      </View>
+    );
+  }
+
+  if (!nativeModules) {
+    return (
+      <View style={[styles.container, styles.unavailable]}>
+        <Text style={styles.unavailableText}>Loading map...</Text>
+      </View>
+    );
+  }
+
+  const {
+    maps: { default: RNMapView, Circle, Marker },
+    HazardAreas,
+    HazardMarkers,
+  } = nativeModules;
 
   return (
     <View style={styles.container}>
@@ -196,4 +273,6 @@ export default function MapView({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827' },
+  unavailable: { alignItems: 'center', justifyContent: 'center', padding: 24 },
+  unavailableText: { color: '#fff', textAlign: 'center' },
 });

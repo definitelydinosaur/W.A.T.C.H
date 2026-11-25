@@ -1,8 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   announcementContentHash,
+  hasUnsupportedAnnouncementClaims,
   isDuplicateAnnouncement,
   matchesAnnouncementAudience,
+  parseAnnouncementAiDetails,
   parseAnnouncementClassification,
   shouldSkipOldAnnouncement,
 } from './announcement-classifier';
@@ -40,6 +42,65 @@ describe('announcement processing rules', () => {
         JSON.stringify({ ...JSON.parse(valid), summary: 'One. Two. Three.' }),
       ),
     ).toThrow('does not match');
+  });
+
+  it('validates structured announcement scope and suspension details', () => {
+    const details = {
+      scope: 'institution',
+      is_class_suspension: true,
+      suspension_reason: 'flood',
+      affected_levels: 'All levels',
+      effective_date: '2026-11-20',
+      short_summary: 'Classes are suspended because of flooding.',
+      key_points: ['All levels are affected.'],
+    };
+    expect(parseAnnouncementAiDetails(JSON.stringify(details))).toEqual(
+      details,
+    );
+    expect(() =>
+      parseAnnouncementAiDetails(
+        JSON.stringify({ ...details, suspension_reason: 'unknown' }),
+      ),
+    ).toThrow('required schema');
+    expect(() =>
+      parseAnnouncementAiDetails(
+        JSON.stringify({ ...details, key_points: [''] }),
+      ),
+    ).toThrow('required schema');
+  });
+
+  it('rejects AI dates, grade levels, and suspension reasons absent from the source', () => {
+    const classification = parseAnnouncementClassification(valid);
+    const supportedDetails = parseAnnouncementAiDetails(
+      JSON.stringify({
+        scope: 'local',
+        is_class_suspension: true,
+        suspension_reason: 'flood',
+        affected_levels: 'Grade 1-6',
+        effective_date: '2026-10-30',
+        short_summary: 'Classes are suspended for the stated grades.',
+        key_points: [],
+      }),
+    );
+    expect(
+      hasUnsupportedAnnouncementClaims(
+        'Classes are suspended for Grade 1-6 on October 30, 2026 due to flooding.',
+        classification,
+        supportedDetails,
+      ),
+    ).toBe(false);
+    expect(
+      hasUnsupportedAnnouncementClaims(
+        'Classes are suspended for Grade 1-6 on October 30, 2026 due to flooding.',
+        classification,
+        {
+          ...supportedDetails,
+          effective_date: '2026-11-20',
+          affected_levels: 'Grade 7-12',
+          suspension_reason: 'extreme_heat',
+        },
+      ),
+    ).toBe(true);
   });
 
   it('deduplicates source posts by external id or normalized content hash', () => {
@@ -122,5 +183,30 @@ describe('announcement processing rules', () => {
         { ...user, notificationPrefs: { announcements: false } },
       ),
     ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'institution', institutionId: 'school-1' },
+        { ...user, notificationPrefs: { school: false } },
+      ),
+    ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'lgu', city: 'Cebu City' },
+        { ...user, notificationPrefs: { safety: false } },
+      ),
+    ).toBe(false);
+    expect(
+      matchesAnnouncementAudience(
+        { type: 'lgu', city: 'Cebu City' },
+        {
+          ...user,
+          notificationPrefs: {
+            announcements: false,
+            safety: true,
+            school: true,
+          },
+        },
+      ),
+    ).toBe(true);
   });
 });

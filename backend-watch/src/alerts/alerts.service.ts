@@ -14,13 +14,27 @@ import { randomUUID } from 'crypto';
 import { AiService } from '../ai/ai.service';
 import {
   AnnouncementClassification,
+  AnnouncementAiDetails,
   announcementsConflict,
   matchesAnnouncementAudience,
+  hasUnsupportedAnnouncementClaims,
   shouldSkipOldAnnouncement,
 } from '../ai/announcement-classifier';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { PushService } from '../notifications/push.service';
 import { HazardIngestionService } from '../map/hazard-ingestion.service';
+import { HazardFeedService } from './hazard-feed.service';
+import {
+  areasMatch,
+  extractAreaMentions,
+  HazardAreaLocation,
+  normalizeAreaKey,
+  placeName,
+} from '../weather/hazard-area';
+import {
+  hazardTemplateKey,
+  renderHazardTemplate,
+} from '../weather/hazard-templates';
 import { CreateSourceDto } from './dto/create-source.dto';
 import { ManualAnnouncementDto } from './dto/manual-announcement.dto';
 import {
@@ -36,7 +50,7 @@ type AnnouncementStatus = 'published' | 'pending_review' | 'rejected';
 interface AnnouncementRow {
   id: number;
   source_id: number | null;
-  source_type: 'lgu' | 'institution' | 'manual';
+  source_type: 'lgu' | 'institution' | 'manual' | 'pagasa';
   source: string;
   source_url: string | null;
   title: string;
@@ -52,6 +66,11 @@ interface AnnouncementRow {
   city: string | null;
   institution_id: string | null;
   conflict_flag: boolean;
+  ai_scope: AnnouncementAiDetails['scope'] | null;
+  is_class_suspension: boolean;
+  suspension_reason: AnnouncementAiDetails['suspension_reason'];
+  affected_levels: string | null;
+  ai_key_points: string[];
 }
 
 interface UserAudienceRow {
@@ -76,8 +95,322 @@ export class AlertsService {
     private readonly ai: AiService,
     private readonly push: PushService,
     private readonly config: ConfigService,
+    private readonly hazardFeed: HazardFeedService,
     @Optional() private readonly hazardIngestion?: HazardIngestionService,
-  ) { }
+  ) {}
+
+  getUserWeatherEvents(userId: string, page?: string, limit?: string) {
+    return this.hazardFeed.getUserEvents(userId, page, limit);
+  }
+
+  @Cron('*/5 * * * *', { waitForCompletion: true })
+  async processPagasaAlerts() {
+    const now = new Date().toISOString();
+    const { data: locations, error: locationsError } = await this.supabase
+      .from('locations')
+      .select('loc_id,user_id,city,province,latitude,longitude')
+      .overrideTypes<
+        (HazardAreaLocation & { user_id: string | null })[],
+        { merge: false }
+      >();
+    if (locationsError) {
+      this.logger.error(
+        `Locations for PAGASA area matching could not be loaded: ${locationsError.message}`,
+      );
+      return;
+    }
+
+    const { data, error } = await this.supabase
+      .from('pagasa_alerts')
+      .select(
+        'id,event,content,severity,alert_status,published_at,expires,affected_areas,area_review_status,notification_announcement_id',
+      )
+      .or(`expires.is.null,expires.gt.${now}`)
+      .neq('area_review_status', 'sent')
+      .order('published_at', { ascending: false })
+      .limit(100);
+    if (error) {
+      this.logger.error(`PAGASA alerts could not be loaded: ${error.message}`);
+      return;
+    }
+
+    const rawCandidates: unknown = data;
+    if (!Array.isArray(rawCandidates)) {
+      this.logger.error('PAGASA alert query returned an invalid response.');
+      return;
+    }
+    for (const candidate of rawCandidates as unknown[]) {
+      if (!isPagasaAlert(candidate)) {
+        this.logger.warn('Ignoring a PAGASA row with invalid fields.');
+        continue;
+      }
+      try {
+        let areas = candidate.affected_areas ?? [];
+        if (!areas.length) {
+          areas = extractAreaMentions(
+            `${candidate.event ?? ''} ${candidate.content ?? ''}`,
+            locations ?? [],
+          ).map((area) => `${area.city}|${area.province ?? ''}`);
+        }
+        if (!areas.length) {
+          const { error: reviewError } = await this.supabase
+            .from('pagasa_alerts')
+            .update({
+              area_review_status: 'needs_review',
+              affected_areas: [],
+            })
+            .eq('id', candidate.id);
+          if (reviewError) {
+            throw new Error(
+              `PAGASA area review state could not be saved: ${reviewError.message}`,
+            );
+          }
+          continue;
+        }
+        const status =
+          candidate.area_review_status === 'admin_assigned'
+            ? 'admin_assigned'
+            : 'matched';
+        const { error: areaError } = await this.supabase
+          .from('pagasa_alerts')
+          .update({ affected_areas: areas, area_review_status: status })
+          .eq('id', candidate.id);
+        if (areaError) {
+          throw new Error(
+            `PAGASA affected areas could not be saved: ${areaError.message}`,
+          );
+        }
+        await this.processPagasaAlert(candidate.id, areas, locations ?? []);
+      } catch (error) {
+        this.logger.error(
+          `PAGASA alert ${candidate.id} could not be processed: ${errorMessage(error)}`,
+        );
+      }
+    }
+  }
+
+  async assignPagasaAreas(id: string, areasInput: string[]) {
+    const alertId = Number(id);
+    if (!Number.isSafeInteger(alertId) || alertId < 1) {
+      throw new BadRequestException('A valid PAGASA alert id is required.');
+    }
+    const { data: locations, error: locationsError } = await this.supabase
+      .from('locations')
+      .select('loc_id,user_id,city,province,latitude,longitude')
+      .overrideTypes<
+        (HazardAreaLocation & { user_id: string | null })[],
+        { merge: false }
+      >();
+    if (locationsError) {
+      throw new ServiceUnavailableException(
+        `Locations for PAGASA area selection could not be loaded: ${locationsError.message}`,
+      );
+    }
+    const requested = areasInput.map((area) => area.trim()).filter(Boolean);
+    if (!requested.length) {
+      throw new BadRequestException('Select at least one affected city.');
+    }
+    const resolved = new Map<string, HazardAreaLocation>();
+    for (const requestedArea of requested) {
+      const { city, province } = splitAreaInput(requestedArea);
+      const matches = (locations ?? []).filter((location) =>
+        areasMatch(
+          { city, province, latitude: null, longitude: null },
+          location,
+        ),
+      );
+      if (!matches.length) {
+        throw new BadRequestException(
+          `No saved location matches "${requestedArea}".`,
+        );
+      }
+      const distinctAreas = new Set(
+        matches.map((area) => normalizeAreaKey(area)),
+      );
+      if (!province && distinctAreas.size > 1) {
+        throw new BadRequestException(
+          `"${city}" is used in multiple provinces. Include the province to choose the correct area.`,
+        );
+      }
+      for (const area of matches) {
+        const key = normalizeAreaKey(area);
+        if (key) resolved.set(key, area);
+      }
+    }
+    const areas = [...resolved.values()].map(
+      (area) => `${area.city}|${area.province ?? ''}`,
+    );
+    const { error } = await this.supabase
+      .from('pagasa_alerts')
+      .update({ affected_areas: areas, area_review_status: 'admin_assigned' })
+      .eq('id', alertId);
+    if (error) {
+      throw new ServiceUnavailableException(
+        `PAGASA alert area selection could not be saved: ${error.message}`,
+      );
+    }
+    const delivery = await this.processPagasaAlert(
+      alertId,
+      areas,
+      locations ?? [],
+    );
+    return {
+      id: alertId,
+      affected_areas: areas,
+      status: 'sent',
+      audience_count: delivery.audience_count,
+    };
+  }
+
+  private async processPagasaAlert(
+    alertId: number,
+    areas: string[],
+    locations: Array<HazardAreaLocation & { user_id: string | null }>,
+  ) {
+    const { data: alert, error: alertError } = await this.supabase
+      .from('pagasa_alerts')
+      .select(
+        'id,event,content,severity,published_at,expires,notification_announcement_id',
+      )
+      .eq('id', alertId)
+      .maybeSingle()
+      .overrideTypes<
+        {
+          id: number;
+          event: string | null;
+          content: string | null;
+          severity: string | null;
+          published_at: string | null;
+          expires: string | null;
+          notification_announcement_id: number | null;
+        },
+        { merge: false }
+      >();
+    if (alertError) {
+      throw new ServiceUnavailableException(
+        `PAGASA alert could not be loaded: ${alertError.message}`,
+      );
+    }
+    if (!alert) throw new NotFoundException('PAGASA alert was not found.');
+    if (alert.expires && Date.parse(alert.expires) <= Date.now()) {
+      throw new BadRequestException('This PAGASA alert has expired.');
+    }
+    const targetAreas = areas.map(parseStoredArea);
+    const userIds = [
+      ...new Set(
+        locations.flatMap((location) =>
+          location.user_id &&
+          targetAreas.some((area) => areasMatch(area, location))
+            ? [location.user_id]
+            : [],
+        ),
+      ),
+    ];
+    if (!userIds.length) {
+      throw new ServiceUnavailableException(
+        'No users have saved locations in the selected area; the alert remains queued.',
+      );
+    }
+
+    let announcementId = alert.notification_announcement_id as number | null;
+    if (announcementId === null) {
+      const { data: existingAnnouncement, error: existingError } =
+        await this.supabase
+          .from('announcements')
+          .select('id')
+          .eq('pagasa_alert_id', alertId)
+          .maybeSingle()
+          .overrideTypes<{ id: number }, { merge: false }>();
+      if (existingError) {
+        throw new ServiceUnavailableException(
+          `PAGASA announcement could not be checked: ${existingError.message}`,
+        );
+      }
+      if (existingAnnouncement) {
+        announcementId = existingAnnouncement.id;
+      } else {
+        const content =
+          typeof alert.content === 'string' && alert.content.trim()
+            ? alert.content.trim()
+            : (alert.event ?? 'PAGASA weather alert');
+        const { data: announcement, error: insertError } = await this.supabase
+          .from('announcements')
+          .insert({
+            title: alert.event?.trim() || 'PAGASA Weather Alert',
+            content,
+            ai_summary: content,
+            source: 'pagasa',
+            source_name: 'PAGASA',
+            category: 'weather',
+            ai_scope: 'weather',
+            status: 'published',
+            published_at: alert.published_at ?? new Date().toISOString(),
+            pagasa_alert_id: alertId,
+          })
+          .select('id')
+          .single()
+          .overrideTypes<{ id: number }, { merge: false }>();
+        if (insertError || !announcement) {
+          throw new ServiceUnavailableException(
+            `PAGASA announcement could not be saved: ${insertError?.message ?? 'No row returned'}`,
+          );
+        }
+        announcementId = announcement.id;
+      }
+      const { error: linkError } = await this.supabase
+        .from('pagasa_alerts')
+        .update({ notification_announcement_id: announcementId })
+        .eq('id', alertId);
+      if (linkError) {
+        throw new ServiceUnavailableException(
+          `PAGASA announcement link could not be saved: ${linkError.message}`,
+        );
+      }
+    }
+
+    const { data: existingNotifications, error: notificationError } =
+      await this.supabase
+        .from('notifications')
+        .select('user_id')
+        .eq('announcement_id', announcementId)
+        .in('user_id', userIds)
+        .overrideTypes<{ user_id: string }[], { merge: false }>();
+    if (notificationError) {
+      throw new ServiceUnavailableException(
+        `Existing PAGASA deliveries could not be checked: ${notificationError.message}`,
+      );
+    }
+    const sentTo = new Set(
+      (existingNotifications ?? []).map((row) => row.user_id),
+    );
+    const content =
+      typeof alert.content === 'string' && alert.content.trim()
+        ? alert.content.trim()
+        : (alert.event ?? 'PAGASA weather alert');
+    for (const userId of userIds) {
+      if (sentTo.has(userId)) continue;
+      await this.push.sendUserNotification({
+        userId,
+        announcementId: String(announcementId),
+        kind: 'weather',
+        title: alert.event?.trim() || 'PAGASA Weather Alert',
+        body: content,
+        sourceName: 'PAGASA',
+        sourceUrl: null,
+        data: { type: 'pagasa', pagasaId: String(alertId) },
+      });
+    }
+    const { error: statusError } = await this.supabase
+      .from('pagasa_alerts')
+      .update({ area_review_status: 'sent' })
+      .eq('id', alertId);
+    if (statusError) {
+      throw new ServiceUnavailableException(
+        `PAGASA alert delivery status could not be saved: ${statusError.message}`,
+      );
+    }
+    return { audience_count: userIds.length };
+  }
 
   @Cron('*/5 * * * *', { waitForCompletion: true })
   async pollTrustedSources() {
@@ -261,7 +594,7 @@ export class AlertsService {
       .eq('id', announcementId)
       .eq('status', 'pending_review')
       .select(
-        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag',
+        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
       )
       .maybeSingle();
     if (error) {
@@ -331,11 +664,19 @@ export class AlertsService {
       hazardType === 'heat'
         ? { temperatureC: 42, humidityPercent: 70, heatIndexC: 52 }
         : { rainMm: 30, windKph: 0 };
-    const guidance = await this.ai.generateWeatherSafetyTips({
+    const observedAt = new Date().toISOString();
+    const template = renderHazardTemplate({
+      key: hazardTemplateKey(null, typeName),
       hazardType: typeName,
-      riskLevel,
-      location: locationName,
-      measurements,
+      severity: riskLevel,
+      place: locationName,
+      observedAt,
+      sourceName: 'W.A.T.C.H. test simulation',
+      measurements: {
+        heatIndexC: measurements.heatIndexC,
+        rainMm: measurements.rainMm,
+        aqi: null,
+      },
     });
     const hazardResult = await this.supabase
       .from('hazards')
@@ -345,13 +686,14 @@ export class AlertsService {
         severity: riskLevel,
         hazard_type: typeName,
         risk_level: riskLevel,
-        ai_summary: guidance.summary,
-        safety_tips: {
-          do: guidance.do,
-          prepare: guidance.prepare,
-          avoid: guidance.avoid,
-        },
+        title: `[TEST] ${template.title}`,
+        ai_summary: template.summary,
+        safety_tips: template.safetyTips,
+        source_type: 'admin_test_replay',
+        source_name: 'W.A.T.C.H. test simulation',
+        city: typeof location.city === 'string' ? location.city : null,
         dedupe_key: `test:${randomUUID()}`,
+        observed_at: observedAt,
         expires_at: new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString(),
       })
       .select('id')
@@ -369,8 +711,8 @@ export class AlertsService {
       hazardId,
       kind: 'weather_hazard',
       sourceName: 'W.A.T.C.H. test simulation',
-      title: `${typeName} - ${riskLevel} near ${locationName}`,
-      body: `${guidance.do[0]}\n${guidance.do[1]}`,
+      title: `[TEST] ${template.title}`,
+      body: `${template.summary}\n${template.safetyTips.do_list[0]}`,
       data: { type: 'hazard', hazardId },
     });
     return { hazardId, riskLevel, hazardType: typeName };
@@ -397,7 +739,7 @@ export class AlertsService {
     const result = await this.supabase
       .from('notifications')
       .select(
-        'id,announcement_id,hazard_id,title,body,data,status,kind,source_name,source_url,sent_at,created_at,read_at,deleted_at,announcement:announcements(id,title,content,ai_summary,published_at,source,source_url,category,city,institution_id),hazard:hazards(id,category,severity,ai_summary,hazard_type,risk_level,safety_tips,created_at,expires_at,location_id)',
+        'id,announcement_id,hazard_id,title,body,data,status,kind,source_name,source_url,sent_at,created_at,read_at,deleted_at,announcement:announcements(id,title,content,ai_summary,published_at,source,source_url,category,institution_id),hazard:hazards(id,category,severity,ai_summary,hazard_type,risk_level,safety_tips,created_at,expires_at,location_id)',
       )
       .eq('user_id', userId)
       .is('deleted_at', null)
@@ -688,6 +1030,97 @@ export class AlertsService {
     post: RawPost,
     facebookPostId: number,
   ) {
+    if (source.source_type === 'pagasa') {
+      const classification = await this.ai.classifyLocalAnnouncement({
+        text: redactContactDetails(post.text),
+        sourceName: 'PAGASA Visayas',
+        city: null,
+        postedAt: post.postedAt,
+      });
+      if (
+        !classification.is_relevant ||
+        !/weather|thunder|rain|storm|typhoon|cyclone|heat|aqi|advisory|forecast|monsoon|flood/i.test(
+          `${classification.category} ${classification.summary} ${post.text}`,
+        )
+      ) {
+        return { ignored: true, reason: 'PAGASA post is not weather-related' };
+      }
+      const aiDetails = await this.ai.classifyAnnouncementDetails({
+        text: redactContactDetails(post.text),
+        sourceName: 'PAGASA Visayas',
+        sourceType: 'lgu',
+        summary: classification.summary,
+        effectiveDate: classification.effective_date,
+      });
+
+      const { data: locations, error: locationsError } = await this.supabase
+        .from('locations')
+        .select('loc_id,user_id,city,province,latitude,longitude');
+      if (locationsError) {
+        throw new ServiceUnavailableException(
+          `PAGASA affected locations could not be loaded: ${locationsError.message}`,
+        );
+      }
+      const affectedAreas = extractAreaMentions(
+        post.text,
+        (locations ?? []) as HazardAreaLocation[],
+      );
+      const status: AnnouncementStatus = affectedAreas.length
+        ? classification.confidence >= 0.7
+          ? 'published'
+          : 'pending_review'
+        : 'pending_review';
+      const title =
+        aiDetails.short_summary
+          .split(/[.!?\n]/)[0]
+          ?.trim()
+          .slice(0, 80) || 'PAGASA Visayas Weather Advisory';
+      const announcementResult = await this.supabase
+        .from('announcements')
+        .insert({
+          source_name: 'PAGASA Visayas',
+          source: 'PAGASA Visayas',
+          title,
+          content: post.text,
+          published_at: post.postedAt,
+          ai_summary: aiDetails.short_summary,
+          source_type: 'pagasa',
+          source_id: source.id,
+          facebook_post_id: facebookPostId,
+          source_url: post.url,
+          category: 'weather',
+          affects_location: affectedAreas.map(placeName).join(', ') || null,
+          ai_scope: 'weather',
+          ai_key_points: aiDetails.key_points,
+          scope: affectedAreas.length ? 'citywide' : 'unknown',
+          confidence: classification.confidence,
+          status,
+          city: affectedAreas[0]?.city ?? null,
+          institution_id: null,
+          conflict_flag: false,
+        })
+        .select(
+          'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
+        )
+        .single();
+      const { error } = announcementResult;
+      const announcement: unknown = announcementResult.data;
+      if (error || !isAnnouncementRow(announcement)) {
+        if (error?.code === '23505') return { duplicate: true };
+        throw new ServiceUnavailableException(
+          `PAGASA announcement could not be saved: ${error?.message ?? 'Invalid announcement row'}`,
+        );
+      }
+      if (status === 'published') {
+        await this.notifyPagasaArea(announcement as AnnouncementRow, affectedAreas);
+      }
+      return {
+        published: status === 'published',
+        pending_review: status === 'pending_review',
+        announcement_id: (announcement as AnnouncementRow).id,
+      };
+    }
+
     const classification = await this.ai.classifyLocalAnnouncement({
       text: redactContactDetails(post.text),
       sourceName: source.school_name,
@@ -707,14 +1140,64 @@ export class AlertsService {
       return { ignored: true, reason: 'irrelevant, out of area, or expired' };
     }
 
-    const conflict = await this.findConflicts(source, post, classification);
+    const aiDetails = await this.ai.classifyAnnouncementDetails({
+      text: redactContactDetails(post.text),
+      sourceName: source.school_name,
+      sourceType: source.source_type === 'institution' ? 'institution' : 'lgu',
+      summary: classification.summary,
+      effectiveDate: classification.effective_date,
+    });
+    const unsupportedClaims = hasUnsupportedAnnouncementClaims(
+      post.text,
+      classification,
+      aiDetails,
+    );
+    const safeClassification = unsupportedClaims
+      ? {
+          ...classification,
+          category:
+            classification.category === 'class_suspension' &&
+            !/\b(no classes|class(?:es)? (?:are )?suspended|suspension of classes|suspend(?:ing)? classes)\b/i.test(
+              post.text,
+            )
+              ? ('other' as const)
+              : classification.category,
+          effective_date: null,
+          summary: plainSourceSummary(post.text),
+        }
+      : classification;
+    const safeDetails = unsupportedClaims
+      ? {
+          ...aiDetails,
+          is_class_suspension: false,
+          suspension_reason: null,
+          affected_levels: null,
+          effective_date: null,
+          short_summary: plainSourceSummary(post.text),
+          key_points: [],
+        }
+      : aiDetails;
+    if (unsupportedClaims) {
+      this.logger.warn(
+        `Unsupported date, grade-level, or suspension-reason claims were removed from ${source.school_name}'s post.`,
+      );
+    }
+    if (
+      shouldSkipOldAnnouncement(
+        post.postedAt,
+        safeClassification.effective_date,
+      )
+    ) {
+      return { ignored: true, reason: 'announcement is expired' };
+    }
+    const conflict = await this.findConflicts(source, post, safeClassification);
     const status: AnnouncementStatus =
       classification.confidence < 0.7 || conflict.length
         ? 'pending_review'
         : 'published';
     const summary = attributeSummary(
       source.school_name,
-      classification.summary,
+      safeDetails.short_summary,
     );
     const title =
       post.text
@@ -725,6 +1208,7 @@ export class AlertsService {
     const announcementResult = await this.supabase
       .from('announcements')
       .insert({
+        source_name: source.school_name,
         source: source.school_name,
         title,
         content: post.text,
@@ -734,10 +1218,18 @@ export class AlertsService {
         source_id: source.id,
         facebook_post_id: facebookPostId,
         source_url: post.url,
-        category: classification.category,
-        affects_location: classification.affects_location,
-        effective_date: classification.effective_date?.slice(0, 10) ?? null,
-        scope: classification.scope,
+        category: safeClassification.category,
+        affects_location: safeClassification.affects_location,
+        effective_date:
+          safeDetails.effective_date?.slice(0, 10) ??
+          safeClassification.effective_date?.slice(0, 10) ??
+          null,
+        ai_scope: safeDetails.scope,
+        is_class_suspension: safeDetails.is_class_suspension,
+        suspension_reason: safeDetails.suspension_reason,
+        affected_levels: safeDetails.affected_levels,
+        ai_key_points: safeDetails.key_points,
+        scope: safeClassification.scope,
         confidence: classification.confidence,
         status,
         city: source.city,
@@ -745,7 +1237,7 @@ export class AlertsService {
         conflict_flag: conflict.length > 0,
       })
       .select(
-        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag',
+        'id,source_id,source_type,source,source_url,title,content,published_at,category,ai_summary,affects_location,effective_date,scope,confidence,status,city,institution_id,conflict_flag,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points',
       )
       .single();
     const { error } = announcementResult;
@@ -822,7 +1314,73 @@ export class AlertsService {
     );
   }
 
+  private async notifyPagasaArea(
+    announcement: AnnouncementRow,
+    affectedAreas: HazardAreaLocation[],
+  ) {
+    const { data: profiles, error: profilesError } = await this.supabase
+      .from('user_info')
+      .select('id,home_location_id,notification_prefs');
+    if (profilesError) {
+      throw new ServiceUnavailableException(
+        `PAGASA recipients could not be loaded: ${profilesError.message}`,
+      );
+    }
+    const locationIds = [
+      ...new Set(
+        (profiles ?? [])
+          .map((profile) => Number(profile.home_location_id))
+          .filter((id) => Number.isSafeInteger(id) && id > 0),
+      ),
+    ];
+    if (!locationIds.length) return;
+    const { data: locations, error: locationsError } = await this.supabase
+      .from('locations')
+      .select('loc_id,user_id,city,province,latitude,longitude')
+      .in('loc_id', locationIds);
+    if (locationsError) {
+      throw new ServiceUnavailableException(
+        `PAGASA recipient locations could not be loaded: ${locationsError.message}`,
+      );
+    }
+    const locationById = new Map(
+      ((locations ?? []) as (HazardAreaLocation & { loc_id: number })[]).map(
+        (location) => [location.loc_id, location],
+      ),
+    );
+    const body = (announcement.ai_summary ?? announcement.title)
+      .slice(0, 240)
+      .trim();
+    for (const profile of profiles ?? []) {
+      const locationId = Number(profile.home_location_id);
+      const location = locationById.get(locationId);
+      if (!location) continue;
+      if (!affectedAreas.some((area) => areasMatch(area, location))) continue;
+      await this.push.sendUserNotification({
+        userId: profile.id,
+        announcementId: String(announcement.id),
+        kind: 'weather',
+        title: announcement.title,
+        body,
+        sourceName: 'PAGASA Visayas',
+        sourceUrl: announcement.source_url,
+        data: {},
+      });
+    }
+  }
+
   private async notifyAudience(announcement: AnnouncementRow) {
+    if (announcement.source_type === 'pagasa') {
+      const { data: locations } = await this.supabase
+        .from('locations')
+        .select('loc_id,user_id,city,province,latitude,longitude');
+      const affectedAreas = extractAreaMentions(
+        `${announcement.affects_location ?? ''} ${announcement.content}`,
+        (locations ?? []) as HazardAreaLocation[],
+      );
+      await this.notifyPagasaArea(announcement, affectedAreas);
+      return;
+    }
     const { data: profiles, error: profileError } = await this.supabase
       .from('user_info')
       .select('id,home_location_id,institution_id,notification_prefs');
@@ -851,9 +1409,8 @@ export class AlertsService {
       }
     }
     const kind =
-      announcement.source_type === 'institution'
-        ? 'announcement_institution'
-        : 'announcement_local';
+      announcement.ai_scope ??
+      (announcement.source_type === 'institution' ? 'institution' : 'local');
     const categoryLabels: Record<string, string> = {
       class_suspension: 'Class Suspension',
       holiday_no_class: 'No Classes',
@@ -863,8 +1420,13 @@ export class AlertsService {
       evacuation: 'Evacuation',
       other: 'Local Alert',
     };
-    const title = `${categoryLabels[announcement.category ?? 'other'] ?? 'Local Alert'} - ${announcement.source} (${kind === 'announcement_local' ? 'Local' : 'Institution'})`;
-    const body = `${announcement.ai_summary ?? announcement.title}\nFor further details, please visit ${announcement.source_url ?? 'the official source'}`;
+    const sourceTitle = announcement.source.slice(0, 52);
+    const title = announcement.is_class_suspension
+      ? `No Classes · ${sourceTitle}`
+      : `${categoryLabels[announcement.category ?? 'other'] ?? 'Local Alert'} · ${sourceTitle}`;
+    const body = (announcement.ai_summary ?? announcement.title)
+      .slice(0, 240)
+      .trim();
     for (const profile of users) {
       const homeCity = profile.home_location_id
         ? cityByLocation.get(profile.home_location_id)
@@ -897,11 +1459,7 @@ export class AlertsService {
         sourceUrl: announcement.source_url,
         title,
         body,
-        data: {
-          type: 'announcement',
-          announcementId: String(announcement.id),
-          url: announcement.source_url ?? '',
-        },
+        data: {},
       });
     }
   }
@@ -949,7 +1507,9 @@ function isSourceRow(value: unknown): value is SourceRow {
   return (
     isRecord(value) &&
     (typeof value.id === 'number' || typeof value.id === 'string') &&
-    (value.source_type === 'lgu' || value.source_type === 'institution') &&
+    (value.source_type === 'lgu' ||
+      value.source_type === 'institution' ||
+      value.source_type === 'pagasa') &&
     typeof value.school_name === 'string' &&
     (typeof value.facebook_url === 'string' || value.facebook_url === null) &&
     (typeof value.website_url === 'string' || value.website_url === null) &&
@@ -968,7 +1528,8 @@ function isAnnouncementRow(value: unknown): value is AnnouncementRow {
     (typeof value.source_id === 'number' || value.source_id === null) &&
     (value.source_type === 'lgu' ||
       value.source_type === 'institution' ||
-      value.source_type === 'manual') &&
+      value.source_type === 'manual' ||
+      value.source_type === 'pagasa') &&
     typeof value.source === 'string' &&
     (typeof value.source_url === 'string' || value.source_url === null) &&
     typeof value.title === 'string' &&
@@ -988,7 +1549,21 @@ function isAnnouncementRow(value: unknown): value is AnnouncementRow {
     (typeof value.city === 'string' || value.city === null) &&
     (typeof value.institution_id === 'string' ||
       value.institution_id === null) &&
-    typeof value.conflict_flag === 'boolean'
+    typeof value.conflict_flag === 'boolean' &&
+    (value.ai_scope === null ||
+      value.ai_scope === 'institution' ||
+      value.ai_scope === 'local' ||
+      value.ai_scope === 'weather') &&
+    typeof value.is_class_suspension === 'boolean' &&
+    (value.suspension_reason === null ||
+      (typeof value.suspension_reason === 'string' &&
+        ['weather', 'unhealthy_air', 'extreme_heat', 'flood', 'other'].includes(
+          value.suspension_reason,
+        ))) &&
+    (typeof value.affected_levels === 'string' ||
+      value.affected_levels === null) &&
+    Array.isArray(value.ai_key_points) &&
+    value.ai_key_points.every((point) => typeof point === 'string')
   );
 }
 
@@ -1025,6 +1600,15 @@ function attributeSummary(sourceName: string, summary: string) {
     : `According to ${sourceName}, ${summary.trim()}`;
 }
 
+function plainSourceSummary(text: string) {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  const excerpt =
+    normalized.length > 240
+      ? `${normalized.slice(0, 237).trimEnd()}...`
+      : normalized;
+  return `Original source notice: ${excerpt}`;
+}
+
 function redactContactDetails(text: string) {
   return text
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[redacted email]')
@@ -1033,4 +1617,46 @@ function redactContactDetails(text: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Unknown error';
+}
+
+function isPagasaAlert(value: unknown): value is {
+  id: number;
+  event: string | null;
+  content: string | null;
+  severity: string | null;
+  published_at: string | null;
+  expires: string | null;
+  affected_areas: string[] | null;
+  area_review_status: string | null;
+  notification_announcement_id: number | null;
+} {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'number' &&
+    (typeof value.event === 'string' || value.event === null) &&
+    (typeof value.content === 'string' || value.content === null) &&
+    (typeof value.severity === 'string' || value.severity === null) &&
+    (typeof value.published_at === 'string' || value.published_at === null) &&
+    (typeof value.expires === 'string' || value.expires === null) &&
+    (value.affected_areas === null ||
+      (Array.isArray(value.affected_areas) &&
+        value.affected_areas.every((area) => typeof area === 'string'))) &&
+    (typeof value.area_review_status === 'string' ||
+      value.area_review_status === null) &&
+    (typeof value.notification_announcement_id === 'number' ||
+      value.notification_announcement_id === null)
+  );
+}
+
+function splitAreaInput(value: string) {
+  const parts = value.includes('|') ? value.split('|', 2) : value.split(',', 2);
+  return {
+    city: parts[0]?.trim() ?? '',
+    province: parts[1]?.trim() || null,
+  };
+}
+
+function parseStoredArea(value: string): HazardAreaLocation {
+  const { city, province } = splitAreaInput(value);
+  return { city, province, latitude: null, longitude: null };
 }

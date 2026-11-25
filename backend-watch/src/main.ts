@@ -20,6 +20,16 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
 
   console.log(`Server running on port ${port}`);
+  const routes = app
+    .getHttpAdapter()
+    .getInstance()
+    ._router?.stack
+    ?.filter((layer: any) => layer.route)
+    .map((layer: any) => {
+      const route = layer.route;
+      return `${Object.keys(route.methods).filter((method) => route.methods[method]).join(',').toUpperCase()} ${route.path}`;
+    });
+  console.log('Registered HTTP routes:', routes?.join(' | ') ?? 'none');
 }
 
 bootstrap();

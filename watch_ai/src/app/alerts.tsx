@@ -6,6 +6,7 @@ import {
   Linking,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -14,14 +15,23 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import supabase from '../lib/supabase';
+import { useAppTheme } from '../theme/theme-context';
 
-type AlertFilter = 'All' | 'Local' | 'Institution' | 'Weather';
-type AlertKind = 'announcement_local' | 'announcement_institution' | 'weather_hazard';
+type AlertFilter = 'All' | 'Local' | 'Institution' | 'Weather' | 'System';
+type AlertKind =
+  | 'announcement_local'
+  | 'announcement_institution'
+  | 'weather_hazard'
+  | 'institution'
+  | 'local'
+  | 'weather'
+  | 'safety_tip'
+  | 'system';
 
 interface AlertRow {
   id: string;
   user_id: string;
-  announcement_id: number | null;
+  announcement_id: number | string | null;
   hazard_id: string | null;
   title: string;
   body: string;
@@ -29,27 +39,49 @@ interface AlertRow {
   kind: AlertKind | string;
   source_name: string | null;
   source_url: string | null;
+  city?: string | null;
+  province?: string | null;
   created_at: string;
   read_at: string | null;
   deleted_at: string | null;
   announcement?: {
     ai_summary: string | null;
-    city: string | null;
     category: string | null;
     source_url: string | null;
+    title?: string | null;
+    content?: string | null;
+    published_at?: string | null;
+    ai_scope?: string | null;
+    is_class_suspension?: boolean;
+    suspension_reason?: string | null;
+    affected_levels?: string | null;
+    ai_key_points?: string[];
     institution?: { short_name: string | null } | null;
   } | null;
   hazard?: {
     hazard_type: string | null;
     risk_level: string | null;
     ai_summary: string | null;
+    source_type?: string | null;
+    source_name?: string | null;
+    city?: string | null;
+    province?: string | null;
+    observed_at?: string | null;
+    measurements?: unknown;
   } | null;
 }
 
 const PAGE_SIZE = 20;
-const FILTERS: AlertFilter[] = ['All', 'Local', 'Institution', 'Weather'];
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const FILTERS: AlertFilter[] = [
+  'All',
+  'Local',
+  'Institution',
+  'Weather',
+  'System',
+];
 const SELECT_FIELDS =
-  'id,user_id,announcement_id,hazard_id,title,body,status,kind,source_name,source_url,created_at,read_at,deleted_at,announcement:announcements(ai_summary,city,category,source_url,institution:institutions(short_name)),hazard:hazards(hazard_type,risk_level,ai_summary)';
+  'id,user_id,announcement_id,hazard_id,title,body,status,kind,source_name,source_url,created_at,read_at,deleted_at,announcement:announcements(ai_summary,category,source_url,ai_scope,is_class_suspension,suspension_reason,affected_levels,ai_key_points,title,content,published_at,institution:institutions!announcements_institution_id_fkey(name,short_name)),hazard:hazards(hazard_type,risk_level,ai_summary)';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,11 +95,12 @@ function firstRelation<T>(
   return isValue(candidate) ? candidate : null;
 }
 
-function isAnnouncement(value: unknown): value is NonNullable<AlertRow['announcement']> {
+function isAnnouncement(
+  value: unknown,
+): value is NonNullable<AlertRow['announcement']> {
   return (
     isRecord(value) &&
     (typeof value.ai_summary === 'string' || value.ai_summary === null) &&
-    (typeof value.city === 'string' || value.city === null) &&
     (typeof value.category === 'string' || value.category === null) &&
     (typeof value.source_url === 'string' || value.source_url === null)
   );
@@ -119,9 +152,12 @@ function normalizeAlertRow(value: unknown): AlertRow | null {
 
 function filterKind(kind: string, filter: AlertFilter) {
   if (filter === 'All') return true;
-  if (filter === 'Weather') return kind === 'weather_hazard';
-  if (filter === 'Institution') return kind === 'announcement_institution';
-  return kind === 'announcement_local';
+  if (filter === 'Weather')
+    return ['weather_hazard', 'weather', 'safety_tip'].includes(kind);
+  if (filter === 'Institution')
+    return ['announcement_institution', 'institution'].includes(kind);
+  if (filter === 'System') return kind === 'system';
+  return ['announcement_local', 'local'].includes(kind);
 }
 
 function relativeTime(value: string) {
@@ -144,6 +180,7 @@ function riskColor(level: string | null | undefined) {
 
 export default function AlertsScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const [userId, setUserId] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AlertRow[]>([]);
   const [filter, setFilter] = useState<AlertFilter>('All');
@@ -155,63 +192,200 @@ export default function AlertsScreen() {
   const [undoLabel, setUndoLabel] = useState('');
   const alertsLength = useRef(0);
   const paging = useRef(false);
+  const requestVersion = useRef(0);
+  const activeRequestController = useRef<AbortController | null>(null);
+  const activeFilter = useRef(filter);
+  const notificationOffset = useRef(0);
+  const weatherPage = useRef(0);
 
-  const loadAlerts = useCallback(async (reset = true) => {
-    if (!reset && paging.current) return;
-    if (!reset) paging.current = true;
-    if (reset) {
-      setLoading(true);
-      setError('');
-    }
-    const { data: sessionData, error: sessionError } =
-      await supabase.auth.getSession();
-    if (sessionError) {
-      setError(sessionError.message);
-      setLoading(false);
-      setRefreshing(false);
-      paging.current = false;
-      return;
-    }
-    const currentUserId = sessionData.session?.user.id;
-    if (!currentUserId) {
-      setError('Sign in to view your alerts.');
-      setLoading(false);
-      setRefreshing(false);
-      paging.current = false;
-      return;
-    }
-    setUserId(currentUserId);
-    const start = reset ? 0 : alertsLength.current;
-    let query = supabase
-      .from('notifications')
-      .select(SELECT_FIELDS)
-      .eq('user_id', currentUserId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
-    if (filter === 'Weather') query = query.eq('kind', 'weather_hazard');
-    else if (filter === 'Institution') query = query.eq('kind', 'announcement_institution');
-    else if (filter === 'Local') query = query.eq('kind', 'announcement_local');
-    const { data, error: queryError } = await query.range(start, start + PAGE_SIZE - 1);
-    if (queryError) {
-      setError(queryError.message);
-      setLoading(false);
-      setRefreshing(false);
-      paging.current = false;
-      return;
-    }
-    const rows = (data ?? [])
-      .map(normalizeAlertRow)
-      .filter((row): row is AlertRow => row !== null);
-    setAlerts((current) => {
-      const next = reset ? rows : [...current, ...rows];
-      alertsLength.current = next.length;
-      return next;
-    });
-    setHasMore(rows.length === PAGE_SIZE);
-    setLoading(false);
-    setRefreshing(false);
-    paging.current = false;
-  }, [filter]);
+  const loadAlerts = useCallback(
+    async (reset = true) => {
+      if (filter !== activeFilter.current) return;
+      if (!reset && paging.current) return;
+      const requestId = reset
+        ? ++requestVersion.current
+        : requestVersion.current;
+      paging.current = true;
+      if (reset) activeRequestController.current?.abort();
+      const isCurrentRequest = () =>
+        requestId === requestVersion.current &&
+        filter === activeFilter.current;
+      const abortController = new AbortController();
+      activeRequestController.current = abortController;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        abortController.abort();
+      }, 30_000);
+      if (reset) {
+        setLoading(true);
+        setError('');
+        alertsLength.current = 0;
+        notificationOffset.current = 0;
+        weatherPage.current = 0;
+      }
+      try {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+        if (!isCurrentRequest()) return;
+        if (sessionError) {
+          setError(sessionError.message);
+          return;
+        }
+        const currentUserId = sessionData.session?.user.id;
+        if (!currentUserId) {
+          setError('Sign in to view your alerts.');
+          return;
+        }
+        setUserId(currentUserId);
+        const start = reset ? 0 : notificationOffset.current;
+        const shouldLoadNotifications = true;
+        let query = supabase
+          .from('notifications')
+          .select(SELECT_FIELDS)
+          .eq('user_id', currentUserId)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false });
+        if (filter === 'Institution')
+          query = query.in('kind', ['announcement_institution', 'institution']);
+        else if (filter === 'Local')
+          query = query.in('kind', ['announcement_local', 'local']);
+        else if (filter === 'Weather')
+          query = query.in('kind', [
+            'weather_hazard',
+            'weather',
+            'safety_tip',
+          ]);
+        else if (filter === 'System') query = query.eq('kind', 'system');
+        let notificationRows: AlertRow[] = [];
+        if (shouldLoadNotifications) {
+          const { data, error: queryError } = await query
+            .abortSignal(abortController.signal)
+            .range(start, start + PAGE_SIZE - 1);
+          if (!isCurrentRequest()) return;
+          if (queryError) {
+            setError(
+              timedOut
+                ? 'Loading alerts timed out. Please try again.'
+                : queryError.message,
+            );
+            return;
+          }
+          notificationRows = (data ?? [])
+            .map(normalizeAlertRow)
+            .filter((row): row is AlertRow => row !== null);
+        }
+
+        let weatherRows: AlertRow[] = [];
+        let weatherHasMore = false;
+        if (filter === 'Weather' || filter === 'All') {
+          if (!API_URL) {
+            if (filter === 'Weather') {
+              setError(
+                'Set EXPO_PUBLIC_API_URL to load location-aware weather alerts.',
+              );
+              return;
+            }
+          } else {
+            let response: Response;
+            let result: {
+              alerts?: unknown[];
+              has_more?: boolean;
+              message?: string | string[];
+            };
+            try {
+              response = await fetch(
+                `${API_URL}/alerts/weather-events?page=${weatherPage.current}&limit=${PAGE_SIZE}`,
+                {
+                  headers: {
+                    Authorization: `Bearer ${sessionData.session?.access_token ?? ''}`,
+                  },
+                  signal: abortController.signal,
+                },
+              );
+              result = (await response.json()) as typeof result;
+            } catch (requestError) {
+              if (!isCurrentRequest()) return;
+              setError(
+                timedOut
+                  ? 'Loading alerts timed out. Please try again.'
+                  : requestError instanceof Error
+                    ? requestError.message
+                    : 'Unable to load location-aware weather alerts.',
+              );
+              return;
+            }
+            if (!isCurrentRequest()) return;
+            if (!response.ok) {
+              const message = Array.isArray(result.message)
+                ? result.message.join('\n')
+                : (result.message ??
+                  `Weather alerts failed (HTTP ${response.status}).`);
+              setError(message);
+              return;
+            }
+            weatherRows = (result.alerts ?? [])
+              .map(normalizeAlertRow)
+              .filter((row): row is AlertRow => row !== null);
+            weatherHasMore = result.has_more === true;
+            if (weatherHasMore) weatherPage.current += 1;
+          }
+        }
+        const rows = [...notificationRows, ...weatherRows].sort(
+          (left, right) =>
+            Date.parse(right.created_at) - Date.parse(left.created_at),
+        );
+        const uniqueRows = [...new Map(
+          rows.map((row) => [
+            row.announcement_id
+              ? `announcement:${row.announcement_id}`
+              : row.hazard_id
+                ? `hazard:${row.hazard_id}`
+                : `${row.kind}:${row.id}:${row.created_at}`,
+            row,
+          ]),
+        ).values()];
+        if (!isCurrentRequest()) return;
+        setAlerts((current) => {
+          const next = reset ? uniqueRows : [...current, ...uniqueRows];
+          alertsLength.current = next.length;
+          return next;
+        });
+        notificationOffset.current += notificationRows.length;
+        setHasMore(
+          notificationRows.length === PAGE_SIZE || weatherHasMore,
+        );
+      } catch (requestError) {
+        if (!isCurrentRequest()) return;
+        setError(
+          timedOut
+            ? 'Loading alerts timed out. Please try again.'
+            : requestError instanceof Error
+              ? requestError.message
+              : 'Unable to load alerts.',
+        );
+      } finally {
+        clearTimeout(timeout);
+        if (activeRequestController.current === abortController) {
+          activeRequestController.current = null;
+        }
+        if (isCurrentRequest()) {
+          setLoading(false);
+          setRefreshing(false);
+          paging.current = false;
+        }
+      }
+    },
+    [filter],
+  );
+
+  useEffect(
+    () => () => {
+      requestVersion.current += 1;
+      activeRequestController.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => void loadAlerts(), 0);
@@ -271,9 +445,13 @@ export default function AlertsScreen() {
                   Alert.alert('Unable to delete', updateError.message);
                   return;
                 }
-                setAlerts((current) => current.filter((item) => !ids.includes(item.id)));
+                setAlerts((current) =>
+                  current.filter((item) => !ids.includes(item.id)),
+                );
                 setUndoIds(ids);
-                setUndoLabel(ids.length === 1 ? 'Alert deleted' : 'Alerts cleared');
+                setUndoLabel(
+                  ids.length === 1 ? 'Alert deleted' : 'Alerts cleared',
+                );
               });
           },
         },
@@ -319,41 +497,80 @@ export default function AlertsScreen() {
   };
 
   const renderAlert = ({ item }: { item: AlertRow }) => {
-    const isWeather = item.kind === 'weather_hazard';
-    const badge = isWeather ? 'Weather' : item.kind === 'announcement_institution' ? 'Institution' : 'Local';
-    const locationLabel = isWeather
-      ? item.hazard?.risk_level ?? 'Weather'
-      : item.kind === 'announcement_institution'
-        ? item.announcement?.institution?.short_name ?? item.source_name ?? 'School'
-        : item.announcement?.city ?? item.source_name ?? 'Local';
+    const isWeather = ['weather_hazard', 'weather', 'safety_tip'].includes(
+      item.kind,
+    );
+    const isSystem = item.kind === 'system';
+    const isInstitution = ['announcement_institution', 'institution'].includes(
+      item.kind,
+    );
+    const badge = isSystem
+      ? 'System'
+      : isWeather
+        ? 'Weather'
+        : isInstitution
+          ? 'Institution'
+          : 'Local';
+    const locationLabel = isSystem
+      ? (item.source_name ?? 'Watch System')
+      : isWeather
+        ? ([item.city, item.province].filter(Boolean).join(', ') ||
+          item.hazard?.risk_level ||
+          'Weather')
+        : isInstitution
+          ? (item.announcement?.institution?.short_name ??
+            item.source_name ??
+            'School')
+          : (item.source_name ?? 'Local');
     const sourceUrl = item.source_url ?? item.announcement?.source_url;
-    const summary = item.announcement?.ai_summary ?? item.hazard?.ai_summary ?? item.body;
+    const summary =
+      item.announcement?.ai_summary ?? item.hazard?.ai_summary ?? item.body;
     const unread = item.status !== 'Read' && !item.read_at;
     const severity = item.hazard?.risk_level;
 
     return (
       <Pressable
-        onPress={() => router.push({
-          pathname: '/alert_page/announcement',
-          params: { notificationId: item.id },
-        })}
-        style={styles.card}
+        onPress={() =>
+          router.push({
+            pathname: '/alert_page/announcement',
+            params: { notificationId: item.id },
+          })
+        }
+        style={[styles.card, { borderColor: `${displayed.onPrimary}44` }]}
         accessibilityRole="button"
       >
         <BlurView intensity={38} tint="dark" style={StyleSheet.absoluteFill} />
         <LinearGradient
-          colors={['rgba(41, 28, 72, 0.88)', 'rgba(20, 17, 40, 0.94)']}
+          colors={[displayed.gradient[1], displayed.gradient[2]]}
           style={StyleSheet.absoluteFill}
         />
         <View style={styles.cardTop}>
           <View style={styles.badges}>
-            <Text style={[styles.typeBadge, isWeather && { color: riskColor(severity) }]}>
-              {isWeather ? '⚠  ' : ''}{badge}
+            <Text
+              style={[
+                styles.typeBadge,
+                { color: displayed.onPrimary },
+                isWeather && { color: riskColor(severity) },
+              ]}
+            >
+              {isSystem ? '●  ' : isWeather ? '⚠  ' : ''}
+              {badge}
             </Text>
-            <Text style={styles.locationBadge}>{locationLabel}</Text>
+            <Text
+              style={[styles.locationBadge, { color: displayed.onPrimary }]}
+            >
+              {locationLabel}
+            </Text>
           </View>
           <View style={styles.cardActions}>
-            {unread ? <View style={styles.unreadDot} /> : null}
+            {unread ? (
+              <View
+                style={[
+                  styles.unreadDot,
+                  { backgroundColor: displayed.accent },
+                ]}
+              />
+            ) : null}
             <Pressable
               onPress={(event) => {
                 event.stopPropagation();
@@ -364,26 +581,50 @@ export default function AlertsScreen() {
               accessibilityLabel="Delete alert"
               style={styles.trashButton}
             >
-              <Text style={styles.trashIcon}>×</Text>
+              <Text
+                style={[styles.trashIcon, { color: displayed.onPrimary }]}
+              >
+                ×
+              </Text>
             </Pressable>
           </View>
         </View>
-        <Text style={styles.cardTitle}>{item.title}</Text>
-        <Text numberOfLines={3} style={styles.summary}>{summary}</Text>
+        <Text style={[styles.cardTitle, { color: displayed.onPrimary }]}>
+          {item.title}
+        </Text>
+        <Text
+          numberOfLines={3}
+          style={[styles.summary, { color: displayed.onPrimary }]}
+        >
+          {summary}
+        </Text>
         <View style={styles.cardFooter}>
-          <Text numberOfLines={1} style={styles.source}>{item.source_name ?? 'W.A.T.C.H.'}</Text>
-          <Text style={styles.time}>{relativeTime(item.created_at)}</Text>
+          <Text
+            numberOfLines={1}
+            style={[styles.source, { color: displayed.onPrimary }]}
+          >
+            {item.source_name ?? 'W.A.T.C.H.'}
+          </Text>
+          <Text style={[styles.time, { color: displayed.onPrimary }]}>
+            {relativeTime(item.created_at)}
+          </Text>
         </View>
         {sourceUrl ? (
-          <Text style={styles.externalText}>
+          <Text style={[styles.externalText, { color: displayed.onPrimary }]}>
             For further details, please visit{' '}
             <Text
-              style={styles.externalLink}
+              style={[styles.externalLink, { color: displayed.onPrimary }]}
               onPress={(event) => {
                 event.stopPropagation();
                 void Linking.openURL(sourceUrl).catch((linkError: unknown) => {
-                  console.error('Unable to open the official alert source:', linkError);
-                  Alert.alert('Link unavailable', 'The original post could not be opened.');
+                  console.error(
+                    'Unable to open the official alert source:',
+                    linkError,
+                  );
+                  Alert.alert(
+                    'Link unavailable',
+                    'The original post could not be opened.',
+                  );
                 });
               }}
             >
@@ -396,57 +637,99 @@ export default function AlertsScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: displayed.gradient[2] }]}>
       <LinearGradient
-        colors={['#211344', '#171022', '#100D1D']}
+        colors={displayed.gradient}
         style={StyleSheet.absoluteFill}
       />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} accessibilityRole="button">
-          <Text style={styles.back}>‹</Text>
+          <Text style={[styles.back, { color: displayed.onPrimary }]}>‹</Text>
         </Pressable>
-        <Text style={styles.title}>Alerts</Text>
+        <Text style={[styles.title, { color: displayed.onPrimary }]}>Alerts</Text>
         <Pressable onPress={clearAll} accessibilityRole="button">
-          <Text style={styles.clearAll}>Clear all</Text>
+          <Text style={[styles.clearAll, { color: displayed.onPrimary }]}>
+            Clear all
+          </Text>
         </Pressable>
       </View>
-      <View style={styles.filters}>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        directionalLockEnabled
+        scrollEnabled
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroller}
+        contentContainerStyle={styles.filters}
+      >
         {FILTERS.map((value) => (
           <Pressable
             key={value}
             onPress={() => {
               if (value !== filter) {
+                activeFilter.current = value;
+                requestVersion.current += 1;
+                paging.current = false;
                 alertsLength.current = 0;
                 setAlerts([]);
                 setHasMore(true);
+                setLoading(true);
                 setFilter(value);
               }
             }}
-            style={[styles.filterChip, filter === value && styles.filterChipActive]}
+            style={[
+              styles.filterChip,
+              filter === value && styles.filterChipActive,
+              filter === value && { backgroundColor: displayed.primary },
+              { borderColor: `${displayed.onPrimary}66` },
+            ]}
           >
-            <Text style={[styles.filterText, filter === value && styles.filterTextActive]}>
+            <Text
+              style={[
+                styles.filterText,
+                filter === value && styles.filterTextActive,
+                { color: displayed.onPrimary },
+              ]}
+            >
               {value}
             </Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
       {loading ? (
         <View style={styles.skeletonList}>
           {[0, 1, 2].map((item) => (
-            <View key={item} style={styles.skeletonCard}>
-              <ActivityIndicator color="#C9A7FF" />
+            <View
+              key={item}
+              style={[
+                styles.skeletonCard,
+                { backgroundColor: displayed.primaryDark },
+              ]}
+            >
+              <ActivityIndicator color={displayed.onPrimary} />
             </View>
           ))}
         </View>
       ) : error ? (
         <View style={styles.state}>
-          <Text style={styles.stateMessage}>{error}</Text>
-          <Pressable onPress={() => void loadAlerts()} style={styles.retryButton}>
-            <Text style={styles.retryText}>Retry</Text>
+          <Text style={[styles.stateMessage, { color: displayed.onPrimary }]}>
+            {error}
+          </Text>
+          <Pressable
+            onPress={() => void loadAlerts()}
+            style={[
+              styles.retryButton,
+              { backgroundColor: displayed.primary },
+            ]}
+          >
+            <Text style={[styles.retryText, { color: displayed.onPrimary }]}>
+              Retry
+            </Text>
           </Pressable>
         </View>
       ) : (
         <FlatList
+          key={filter}
           data={visibleAlerts}
           keyExtractor={(item) => item.id}
           renderItem={renderAlert}
@@ -455,8 +738,8 @@ export default function AlertsScreen() {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              tintColor="#D5B6FF"
-              colors={['#C9A7FF']}
+              tintColor={displayed.onPrimary}
+              colors={[displayed.primary]}
               onRefresh={() => {
                 setRefreshing(true);
                 void loadAlerts();
@@ -468,20 +751,42 @@ export default function AlertsScreen() {
           }}
           onEndReachedThreshold={0.4}
           ListEmptyComponent={
-            <Text style={styles.stateMessage}>
-              No alerts yet. We&apos;ll notify you about announcements and weather in your area.
+            <Text style={[styles.stateMessage, { color: displayed.onPrimary }]}>
+              No alerts yet. We&apos;ll notify you about announcements and
+              weather in your area.
             </Text>
           }
         />
       )}
       {undoIds ? (
-        <View style={styles.snackbar}>
-          <Text style={styles.snackbarText}>{undoLabel}</Text>
+        <View
+          style={[
+            styles.snackbar,
+            {
+              backgroundColor: displayed.primaryDark,
+              borderColor: `${displayed.onPrimary}66`,
+            },
+          ]}
+        >
+          <Text style={[styles.snackbarText, { color: displayed.onPrimary }]}>
+            {undoLabel}
+          </Text>
           <Pressable onPress={() => void undoDelete()}>
-            <Text style={styles.undoText}>Undo</Text>
+            <Text style={[styles.undoText, { color: displayed.onPrimary }]}>
+              Undo
+            </Text>
           </Pressable>
-          <Pressable onPress={() => { setUndoIds(null); setUndoLabel(''); }}>
-            <Text style={styles.dismissSnack}>×</Text>
+          <Pressable
+            onPress={() => {
+              setUndoIds(null);
+              setUndoLabel('');
+            }}
+          >
+            <Text
+              style={[styles.dismissSnack, { color: displayed.onPrimary }]}
+            >
+              ×
+            </Text>
           </Pressable>
         </View>
       ) : null}
@@ -491,39 +796,146 @@ export default function AlertsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#171022', paddingTop: 54 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 16 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+  },
   back: { color: '#FFFFFF', fontSize: 34, width: 40 },
   title: { color: '#FFFFFF', fontSize: 23, fontWeight: '700' },
   clearAll: { color: '#D5B6FF', fontSize: 13, fontWeight: '600' },
-  filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 14 },
-  filterChip: { borderWidth: 1, borderColor: 'rgba(220, 204, 255, 0.24)', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 },
-  filterChipActive: { backgroundColor: 'rgba(117, 75, 208, 0.52)', borderColor: 'rgba(220, 204, 255, 0.62)' },
+  filters: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+  },
+  filterScroller: {
+    width: '100%',
+    flexGrow: 0,
+    flexShrink: 0,
+    zIndex: 1,
+    elevation: 1,
+  },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(220, 204, 255, 0.24)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  filterChipActive: {
+    backgroundColor: 'rgba(117, 75, 208, 0.52)',
+    borderColor: 'rgba(220, 204, 255, 0.62)',
+  },
   filterText: { color: '#BEB2CB', fontSize: 12, fontWeight: '600' },
   filterTextActive: { color: '#FFFFFF' },
   list: { paddingHorizontal: 16, paddingBottom: 34, gap: 12, flexGrow: 1 },
-  card: { overflow: 'hidden', borderRadius: 22, borderWidth: 1, borderColor: 'rgba(215, 193, 255, 0.20)', padding: 16, backgroundColor: '#201733' },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  card: {
+    overflow: 'hidden',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(215, 193, 255, 0.20)',
+    padding: 16,
+    backgroundColor: '#201733',
+  },
+  cardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   badges: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  typeBadge: { color: '#D9C0FF', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  typeBadge: {
+    color: '#D9C0FF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   locationBadge: { color: '#BDB1CB', fontSize: 11, flexShrink: 1 },
   cardActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#C9A7FF' },
-  trashButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#C9A7FF',
+  },
+  trashButton: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   trashIcon: { color: '#B7A9C6', fontSize: 23, lineHeight: 25 },
-  cardTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginTop: 12 },
+  cardTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 12,
+  },
   summary: { color: '#E4DCEA', fontSize: 13, lineHeight: 19, marginTop: 7 },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, marginTop: 13 },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 13,
+  },
   source: { color: '#B9A8CC', fontSize: 11, flex: 1 },
   time: { color: '#A99BB9', fontSize: 11 },
-  externalText: { color: '#B9A8CC', fontSize: 11, lineHeight: 16, marginTop: 10 },
-  externalLink: { color: '#D5B6FF', textDecorationLine: 'underline', fontWeight: '600' },
+  externalText: {
+    color: '#B9A8CC',
+    fontSize: 11,
+    lineHeight: 16,
+    marginTop: 10,
+  },
+  externalLink: {
+    color: '#D5B6FF',
+    textDecorationLine: 'underline',
+    fontWeight: '600',
+  },
   skeletonList: { paddingHorizontal: 16, gap: 12 },
-  skeletonCard: { height: 130, borderRadius: 22, justifyContent: 'center', backgroundColor: 'rgba(47, 35, 67, 0.85)' },
-  state: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  stateMessage: { color: '#D5CDE0', padding: 22, textAlign: 'center', lineHeight: 21 },
-  retryButton: { borderRadius: 16, backgroundColor: '#5D3BA5', paddingHorizontal: 22, paddingVertical: 10 },
+  skeletonCard: {
+    height: 130,
+    borderRadius: 22,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(47, 35, 67, 0.85)',
+  },
+  state: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  stateMessage: {
+    color: '#D5CDE0',
+    padding: 22,
+    textAlign: 'center',
+    lineHeight: 21,
+  },
+  retryButton: {
+    borderRadius: 16,
+    backgroundColor: '#5D3BA5',
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
   retryText: { color: '#FFFFFF', fontWeight: '700' },
-  snackbar: { position: 'absolute', left: 16, right: 16, bottom: 24, borderRadius: 16, backgroundColor: '#34264A', paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', gap: 14, borderWidth: 1, borderColor: 'rgba(220,204,255,0.24)' },
+  snackbar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 24,
+    borderRadius: 16,
+    backgroundColor: '#34264A',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(220,204,255,0.24)',
+  },
   snackbarText: { color: '#FFFFFF', flex: 1, fontSize: 13 },
   undoText: { color: '#D5B6FF', fontWeight: '800' },
   dismissSnack: { color: '#AFA3BD', fontSize: 20 },

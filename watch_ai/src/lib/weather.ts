@@ -167,12 +167,24 @@ export async function fetchForecast(
     uvMax: num(d.uv_index_max?.[i]),
   }));
 
-  const rainMm = daily[0]?.precipitationMm ?? 0;
+  const rainMm = current.precipitationMm;
   const heatIndexC = current.feelsLikeC;
+  const aqi = airQuality.aqi;
   let risk: Forecast['risk'] = { level: 'Normal', reason: 'No significant weather hazards expected.' };
-  if (current.windKph >= 62 || rainMm >= 50 || heatIndexC >= 41 || current.weatherCode >= 95) {
+  if (
+    current.windKph >= 62 ||
+    rainMm >= 30 ||
+    heatIndexC >= 52 ||
+    (aqi !== null && aqi >= 201) ||
+    current.weatherCode >= 95
+  ) {
     risk = { level: 'Severe', reason: 'Dangerous conditions possible. Avoid unnecessary travel.' };
-  } else if (current.windKph >= 39 || rainMm >= 15 || heatIndexC >= 33) {
+  } else if (
+    current.windKph >= 39 ||
+    rainMm >= 15 ||
+    heatIndexC >= 42 ||
+    (aqi !== null && aqi >= 101)
+  ) {
     risk = { level: 'Warning', reason: 'Strong wind, heavy rain, or high heat is possible today.' };
   }
 

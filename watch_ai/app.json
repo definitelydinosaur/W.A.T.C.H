@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "watch_ai",
+    "name": "W.A.T.C.H",
     "slug": "watch_ai",
     "version": "1.0.0",
+    "icon": "./assets/images/splash-icon.png",
     "orientation": "portrait",
     "scheme": "watchai",
     "userInterfaceStyle": "automatic",
@@ -31,7 +32,14 @@
           "locationWhenInUsePermission": "W.A.T.C.H. uses your location to show local weather and safety alerts."
         }
       ],
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "largeIcon": "./assets/images/splash-icon.png",
+          "color": "#6738C7"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -42,7 +50,8 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,

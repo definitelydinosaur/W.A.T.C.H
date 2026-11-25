@@ -1,12 +1,12 @@
+
 import {
   BadRequestException,
   ConflictException,
   UnauthorizedException,
-  Inject,
+  InternalServerErrorException,
   Injectable,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { SUPABASE_CLIENT } from '../../supabase/supabase.provider';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -20,18 +20,14 @@ type AuthUser = {
 
 @Injectable()
 export class AuthService {
+  private readonly authClient: SupabaseClient;
   private readonly profiles: SupabaseClient;
 
-  constructor(
-    @Inject(SUPABASE_CLIENT)
-    private readonly supabaseClient: SupabaseClient,
-    configService: ConfigService,
-  ) {
+  constructor(configService: ConfigService) {
     const supabaseUrl = configService.get<string>('SUPABASE_URL')?.trim();
-    const supabaseKey = (
-      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
-      configService.get<string>('SUPABASE_SERVICE_KEY')
-    )?.trim();
+    const supabaseKey =
+      configService.get<string>('SUPABASE_SERVICE_ROLE_KEY')?.trim() ||
+      configService.get<string>('SUPABASE_SERVICE_KEY')?.trim();
 
     if (!supabaseUrl || !supabaseKey) {
       throw new Error(
@@ -39,22 +35,24 @@ export class AuthService {
       );
     }
 
-    // Sign-in stores a user session on the shared client. Profile reads and
-    // writes stay on this client so they keep using the service role.
-    this.profiles = createClient(supabaseUrl, supabaseKey, {
+    const clientOptions = {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
-    });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    this.authClient = createClient(supabaseUrl, supabaseKey, clientOptions);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    this.profiles = createClient(supabaseUrl, supabaseKey, clientOptions);
   }
 
   async register(registerDto: RegisterDto) {
     const { fullName, password } = registerDto;
     const email = registerDto.email.trim().toLowerCase();
 
-    const { data, error } = await this.supabaseClient.auth.signUp({
+    const { data, error } = await this.authClient.auth.signUp({
       email,
       password,
       options: {
@@ -98,22 +96,30 @@ export class AuthService {
 
   async verifyRegistrationOtp(email: string, token: string) {
     const normalizedEmail = email.trim().toLowerCase();
-    const { data, error } = await this.supabaseClient.auth.verifyOtp({
-      email: normalizedEmail,
-      token: token.trim(),
-      type: 'signup',
-    });
+
+    const { data, error } =
+      await this.authClient.auth.verifyOtp({
+        email: normalizedEmail,
+        token: token.trim(),
+        type: 'signup',
+      });
 
     if (error) {
-      throw new BadRequestException('Invalid or expired verification code.');
+      throw new BadRequestException(
+        'Invalid or expired verification code.',
+      );
     }
 
     const user = data.user;
+
     if (!user?.email_confirmed_at) {
-      throw new BadRequestException('Email verification was unsuccessful.');
+      throw new BadRequestException(
+        'Email verification was unsuccessful.',
+      );
     }
 
     const name = this.profileName(user, normalizedEmail);
+
     const { error: profileError } = await this.saveProfile(
       user.id,
       name,
@@ -144,16 +150,19 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const email = loginDto.email.trim().toLowerCase();
     const { password } = loginDto;
-    const { data, error } = await this.supabaseClient.auth.signInWithPassword({
-      email,
-      password,
-    });
+
+    const { data, error } =
+      await this.authClient.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (error) {
       throw new BadRequestException(error.message);
     }
 
     const user = data.user;
+
     if (!user || !data.session) {
       throw new UnauthorizedException('Invalid email or password');
     }
@@ -166,6 +175,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: profile.name ?? user.email?.split('@')[0],
+        role: profile.role ?? 'user',
       },
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
@@ -173,21 +183,68 @@ export class AuthService {
     };
   }
 
+  async getProfileRole(userId: string) {
+    const { data, error } = await this.profiles
+      .from('user_info')
+      .select('role')
+      .eq('id', userId)
+      .maybeSingle()
+      .overrideTypes<{ role: string | null }, { merge: false }>();
+    if (error) {
+      throw new BadRequestException('Unable to load your account role.');
+    }
+    return { role: data?.role ?? 'user' };
+  }
+
+  // Account deletion
+  async deleteAccount(accessToken: string) {
+    const {
+      data: { user },
+      error: authError,
+    } = await this.authClient.auth.getUser(accessToken);
+
+    if (authError || !user) {
+      throw new UnauthorizedException('Invalid or expired session.');
+    }
+
+    const { error: deleteError } =
+      await this.profiles.auth.admin.deleteUser(user.id);
+
+    if (deleteError) {
+      console.error('ACCOUNT DELETION ERROR:', deleteError);
+
+      throw new InternalServerErrorException(
+        'Unable to delete your account. Please try again.',
+      );
+    }
+
+    return {
+      message: 'Your account has been successfully deleted.',
+    };
+  }
+
   private profileName(user: AuthUser, email: string) {
     const fullName = user.user_metadata?.full_name?.trim();
+
     return fullName || email.split('@')[0] || 'User';
   }
 
-  private async saveProfile(id: string, name: string, email: string) {
-    const { error } = await this.profiles.from('user_info').upsert(
-      {
-        id,
-        name,
-        email,
-        role: 'user',
-      },
-      { onConflict: 'id' },
-    );
+  private async saveProfile(
+    id: string,
+    name: string,
+    email: string,
+  ) {
+    const { error } = await this.profiles
+      .from('user_info')
+      .upsert(
+        {
+          id,
+          name,
+          email,
+          role: 'user',
+        },
+        { onConflict: 'id' },
+      );
 
     return { error: error?.message };
   }
@@ -195,13 +252,18 @@ export class AuthService {
   private async loadOrCreateProfile(user: AuthUser) {
     const { data: profile, error: profileError } = await this.profiles
       .from('user_info')
-      .select('name')
+      .select('name,role')
       .eq('id', user.id)
       .maybeSingle()
-      .overrideTypes<{ name: string | null }, { merge: false }>();
+      .overrideTypes<
+        { name: string | null; role: string | null },
+        { merge: false }
+      >();
 
     if (profileError) {
-      throw new BadRequestException('Unable to load your account profile.');
+      throw new BadRequestException(
+        'Unable to load your account profile.',
+      );
     }
 
     if (profile) {
@@ -215,6 +277,7 @@ export class AuthService {
     }
 
     const email = user.email?.trim().toLowerCase() ?? '';
+
     const { error } = await this.saveProfile(
       user.id,
       this.profileName(user, email),
@@ -222,9 +285,11 @@ export class AuthService {
     );
 
     if (error) {
-      throw new BadRequestException('Unable to load your account profile.');
+      throw new BadRequestException(
+        'Unable to load your account profile.',
+      );
     }
 
-    return { name: this.profileName(user, email) };
+    return { name: this.profileName(user, email), role: 'user' };
   }
 }
