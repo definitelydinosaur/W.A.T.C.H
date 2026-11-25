@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,6 +20,7 @@ import {
 } from '../ai/announcement-classifier';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { PushService } from '../notifications/push.service';
+import { HazardIngestionService } from '../map/hazard-ingestion.service';
 import { CreateSourceDto } from './dto/create-source.dto';
 import { ManualAnnouncementDto } from './dto/manual-announcement.dto';
 import {
@@ -74,7 +76,8 @@ export class AlertsService {
     private readonly ai: AiService,
     private readonly push: PushService,
     private readonly config: ConfigService,
-  ) {}
+    @Optional() private readonly hazardIngestion?: HazardIngestionService,
+  ) { }
 
   @Cron('*/5 * * * *', { waitForCompletion: true })
   async pollTrustedSources() {
@@ -275,6 +278,7 @@ export class AlertsService {
         );
       }
       await this.notifyAudience(data);
+      await this.ingestSpatialHazard(data);
     }
     return { announcement: data };
   }
@@ -754,6 +758,7 @@ export class AlertsService {
     }
     if (status === 'published') {
       await this.notifyAudience(announcement);
+      await this.ingestSpatialHazard(announcement);
     } else if (conflict.length) {
       const { error: conflictError } = await this.supabase
         .from('announcements')
@@ -799,8 +804,8 @@ export class AlertsService {
         source.source_type === 'institution'
           ? item.institution_id === source.institution_id
           : typeof item.city === 'string' &&
-            source.city &&
-            normalizeCity(item.city) === normalizeCity(source.city);
+          source.city &&
+          normalizeCity(item.city) === normalizeCity(source.city);
       const effectiveDate =
         typeof item.effective_date === 'string' ? item.effective_date : null;
       const sameDate =
@@ -898,6 +903,31 @@ export class AlertsService {
           url: announcement.source_url ?? '',
         },
       });
+    }
+  }
+
+  private async ingestSpatialHazard(announcement: AnnouncementRow) {
+    if (!this.hazardIngestion) return;
+    if ((announcement.confidence ?? 0) < 0.75) return;
+    try {
+      await this.hazardIngestion.ingestFromOfficialAnnouncement({
+        id: announcement.id,
+        source: announcement.source,
+        source_type: announcement.source_type,
+        source_url: announcement.source_url,
+        title: announcement.title,
+        content: announcement.content,
+        published_at: announcement.published_at,
+        category: announcement.category,
+        ai_summary: announcement.ai_summary,
+        affects_location: announcement.affects_location,
+        confidence: announcement.confidence,
+        city: announcement.city,
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Spatial hazard ingestion skipped for announcement ${announcement.id}: ${errorMessage(error)}`,
+      );
     }
   }
 }

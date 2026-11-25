@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-     "dev": "concurrently -k -n BACKEND,EXPO -c blue,green \"npm run start:dev --prefix backend-watch\" \"npm start --prefix watch_ai\""
+    "dev": "concurrently -k -n BACKEND,EXPO -c blue,green \"npm run start:dev --prefix backend-watch\" \"npm start --prefix watch_ai\""
   },
   "repository": {
     "type": "git",
@@ -21,5 +21,8 @@
   "homepage": "https://github.com/definitelydinosaur/W.A.T.C.H#readme",
   "devDependencies": {
     "concurrently": "^10.0.6"
+  },
+  "dependencies": {
+    "expo": "^58.0.26"
   }
 }

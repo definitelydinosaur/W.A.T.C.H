@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import RNMapView, {
   Circle,
@@ -6,6 +6,9 @@ import RNMapView, {
   type MapType,
   type Region,
 } from 'react-native-maps';
+import HazardAreas from '../hazard-map/HazardAreas';
+import HazardMarkers from '../hazard-map/HazardMarkers';
+import { zoomFromLongitudeDelta } from '../hazard-map/cluster';
 import {
   MapStyleKey,
   MapViewProps,
@@ -13,7 +16,7 @@ import {
   SEVERITY_RADIUS_M,
 } from './types';
 
-const DEFAULT_SPAN = 0.02; // ~2 km across; pinch to zoom down to street/property level
+const DEFAULT_SPAN = 0.02;
 
 const MAP_TYPE: Record<MapStyleKey, MapType> = {
   streets: 'standard',
@@ -51,11 +54,17 @@ export default function MapView({
   label,
   mapStyle = 'streets',
   focus,
+  boundsFocus = null,
   hazards = [],
   showHazards = true,
   onHazardPress,
+  historyHazards = [],
+  historyArchived = false,
+  selectedHistoryId = null,
+  onHistorySelect,
 }: MapViewProps) {
   const ref = useRef<RNMapView>(null);
+  const [zoom, setZoom] = useState(zoomFromLongitudeDelta(DEFAULT_SPAN));
 
   useEffect(() => {
     if (!focus) return;
@@ -68,6 +77,20 @@ export default function MapView({
     };
     ref.current?.animateToRegion(region, 650);
   }, [focus]);
+
+  useEffect(() => {
+    if (!boundsFocus) return;
+    ref.current?.fitToCoordinates(
+      [
+        { latitude: boundsFocus.minLat, longitude: boundsFocus.minLon },
+        { latitude: boundsFocus.maxLat, longitude: boundsFocus.maxLon },
+      ],
+      {
+        edgePadding: { top: 130, right: 48, bottom: 260, left: 48 },
+        animated: true,
+      },
+    );
+  }, [boundsFocus]);
 
   return (
     <View style={styles.container}>
@@ -87,6 +110,10 @@ export default function MapView({
         showsScale
         showsCompass={false}
         toolbarEnabled={false}
+        onRegionChangeComplete={(r: Region) =>
+          setZoom(zoomFromLongitudeDelta(r.longitudeDelta))
+        }
+        onPress={() => onHistorySelect?.(null)}
       >
         {/* Selected Location Pin */}
         <Marker
@@ -96,7 +123,7 @@ export default function MapView({
           pinColor="#7C3AED"
         />
 
-        {/* Hazard Outer Warning Radius + Inner Heatmap Core + Pin Markers */}
+        {/* Non-spatial general weather alerts (radius circles + pins) */}
         {showHazards &&
           hazards.map((hazard) => {
             const color = SEVERITY_COLOR[hazard.severity];
@@ -136,6 +163,32 @@ export default function MapView({
               </React.Fragment>
             );
           })}
+
+        <HazardAreas
+          hazards={historyHazards}
+          archived={historyArchived}
+          selectedId={selectedHistoryId}
+          onSelect={(id) => onHistorySelect?.(id)}
+        />
+        <HazardMarkers
+          hazards={historyHazards}
+          archived={historyArchived}
+          selectedId={selectedHistoryId}
+          zoom={zoom}
+          onSelect={(id) => onHistorySelect?.(id)}
+          onClusterPress={(lat, lon) => {
+            const delta = 360 / Math.pow(2, Math.min(zoom + 2, 16));
+            ref.current?.animateToRegion(
+              {
+                latitude: lat,
+                longitude: lon,
+                latitudeDelta: delta,
+                longitudeDelta: delta,
+              },
+              500,
+            );
+          }}
+        />
       </RNMapView>
     </View>
   );

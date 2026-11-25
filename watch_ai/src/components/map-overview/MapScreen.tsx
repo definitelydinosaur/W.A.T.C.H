@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,8 +17,21 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView from './MapView';
 import BottomSheet, { SheetSnap } from './BottomSheet';
+import HazardHistoryPanel from '../hazard-map/HazardHistoryPanel';
+import { computeHazardsBounds } from '../hazard-map/geometry';
+import { formatTimestamp } from '../hazard-map/history';
+import {
+  HAZARD_META,
+  HAZARD_SEVERITY_COLOR,
+  SOURCE_BADGE_META,
+  type Hazard,
+  type HazardBounds,
+  type HazardSeverityLevel,
+} from '../hazard-map/types';
+import { useHazardHistory } from '../hazard-map/use-hazard-history';
 import {
   HazardSeverity,
+  MapBoundsFocus,
   MapFocus,
   MapHazard,
   MapStyleKey,
@@ -58,7 +73,7 @@ interface HomeHazard {
   hazard?: {
     hazard_type: string;
     risk_level: string;
-    safety_tips: string[];
+    safety_tips: string[] | { do?: string[]; prepare?: string[]; avoid?: string[] };
   } | null;
 }
 
@@ -120,6 +135,26 @@ function timeAgo(iso: string) {
   return hours < 24 ? `${hours} h ago` : `${Math.round(hours / 24)} d ago`;
 }
 
+function flattenTips(
+  tips:
+    | string[]
+    | { do?: string[]; prepare?: string[]; avoid?: string[] }
+    | null
+    | undefined,
+): string[] {
+  if (!tips) return [];
+  if (Array.isArray(tips)) return tips;
+  return [
+    ...(tips.do ?? []),
+    ...(tips.prepare ?? []),
+    ...(tips.avoid ?? []),
+  ];
+}
+
+function toSeverityLevel(value: string): HazardSeverity {
+  return isSeverity(value) ? value : 'Warning';
+}
+
 const humanize = (eventType: string) =>
   eventType
     .replace(/_/g, ' ')
@@ -136,6 +171,7 @@ export default function MapScreen() {
     longitude: DEFAULT_PLACE.longitude,
     token: 0,
   });
+  const [boundsFocus, setBoundsFocus] = useState<MapBoundsFocus | null>(null);
   const [homeCoordinates, setHomeCoordinates] = useState<{
     latitude: number;
     longitude: number;
@@ -146,10 +182,20 @@ export default function MapScreen() {
   const [styleOpen, setStyleOpen] = useState(false);
   const [showHazards, setShowHazards] = useState(true);
   const [snap, setSnap] = useState<SheetSnap>('peek');
+  const hazardHistory = useHazardHistory();
+  const lastFittedEventKey = useRef<string | null>(null);
+  const hasMapCategoryColRef = useRef(true);
 
   const [hazards, setHazards] = useState<MapHazard[]>([]);
-  const [forecast, setForecast] = useState<Forecast | null>(null);
-  const [forecastFailed, setForecastFailed] = useState(false);
+  const [forecastState, setForecastState] = useState<{
+    key: string;
+    data: Forecast | null;
+    failed: boolean;
+  } | null>(null);
+  const placeKey = `${place.latitude},${place.longitude}`;
+  const forecast = forecastState?.key === placeKey ? forecastState.data : null;
+  const forecastFailed =
+    forecastState?.key === placeKey ? forecastState.failed : false;
 
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -167,6 +213,40 @@ export default function MapScreen() {
       token: previous.token + 1,
     }));
   }, []);
+
+  const fitBounds = useCallback((bounds: HazardBounds) => {
+    setBoundsFocus((previous) => ({
+      ...bounds,
+      token: (previous?.token ?? 0) + 1,
+    }));
+  }, []);
+
+  // Automatically frame the whole affected area when switching into a major Cebu disaster event
+  useEffect(() => {
+    if (hazardHistory.viewMode !== 'event' || !hazardHistory.selectedEventGroup) {
+      lastFittedEventKey.current = null;
+      return;
+    }
+    const eventKey = `${hazardHistory.selectedEventGroup}:${hazardHistory.visible.length}`;
+    if (lastFittedEventKey.current === eventKey) return;
+
+    const bounds =
+      hazardHistory.visible.length > 0
+        ? computeHazardsBounds(hazardHistory.visible)
+        : hazardHistory.selectedEvent?.bounds ?? null;
+
+    if (bounds) {
+      lastFittedEventKey.current = eventKey;
+      const timer = setTimeout(() => fitBounds(bounds), 0);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    fitBounds,
+    hazardHistory.selectedEvent,
+    hazardHistory.selectedEventGroup,
+    hazardHistory.viewMode,
+    hazardHistory.visible,
+  ]);
 
   // Load saved home location & personal alert safety tips
   useEffect(() => {
@@ -205,7 +285,9 @@ export default function MapScreen() {
       .then(({ alerts }) => {
         if (active) {
           setHomeHazard(
-            alerts.find((a) => a.hazard?.safety_tips?.length) ?? null,
+            alerts.find(
+              (a) => flattenTips(a.hazard?.safety_tips).length > 0,
+            ) ?? null,
           );
         }
       })
@@ -217,20 +299,39 @@ export default function MapScreen() {
     };
   }, [flyTo]);
 
-  // Poll active hazards from Supabase `hazards` table
+  // Poll non-spatial general weather alerts from Supabase `hazards` table
+  // (Spatial hazards with `map_category IS NOT NULL` are rendered via HazardAreas/HazardMarkers.)
   useEffect(() => {
     let active = true;
     const load = async () => {
-      const { data, error } = await supabase
-        .from('hazards')
-        .select(
-          'id, event_type, severity, description, location_lat, location_lon, detected_at',
-        )
-        .is('resolved_at', null)
-        .not('location_lat', 'is', null)
-        .not('location_lon', 'is', null)
-        .order('detected_at', { ascending: false })
-        .limit(200);
+      const runQuery = async (filterMapCategory: boolean) => {
+        let q = supabase
+          .from('hazards')
+          .select(
+            'id, event_type, severity, description, location_lat, location_lon, detected_at',
+          )
+          .is('resolved_at', null);
+        if (filterMapCategory) {
+          q = q.is('map_category', null);
+        }
+        return q
+          .not('location_lat', 'is', null)
+          .not('location_lon', 'is', null)
+          .order('detected_at', { ascending: false })
+          .limit(200);
+      };
+
+      let { data, error } = await runQuery(hasMapCategoryColRef.current);
+      if (
+        error &&
+        hasMapCategoryColRef.current &&
+        (error.code === '42703' || error.message.includes('map_category'))
+      ) {
+        hasMapCategoryColRef.current = false;
+        const retry = await runQuery(false);
+        data = retry.data;
+        error = retry.error;
+      }
       if (!active) return;
       if (error) {
         console.warn('Unable to load hazards:', error.message);
@@ -240,20 +341,20 @@ export default function MapScreen() {
       setHazards(
         rows.flatMap((row) =>
           row.location_lat !== null &&
-          row.location_lon !== null &&
-          isSeverity(row.severity)
+            row.location_lon !== null &&
+            isSeverity(row.severity)
             ? [
-                {
-                  id: row.id,
-                  eventType: row.event_type ?? 'WEATHER_HAZARD',
-                  severity: row.severity,
-                  description:
-                    row.description ?? 'Weather threshold breached.',
-                  latitude: row.location_lat,
-                  longitude: row.location_lon,
-                  detectedAt: row.detected_at ?? new Date().toISOString(),
-                },
-              ]
+              {
+                id: row.id,
+                eventType: row.event_type ?? 'WEATHER_HAZARD',
+                severity: row.severity,
+                description:
+                  row.description ?? 'Weather threshold breached.',
+                latitude: row.location_lat,
+                longitude: row.location_lon,
+                detectedAt: row.detected_at ?? new Date().toISOString(),
+              },
+            ]
             : [],
         ),
       );
@@ -269,15 +370,18 @@ export default function MapScreen() {
   // Fetch live weather metrics for the selected place
   useEffect(() => {
     const controller = new AbortController();
-    setForecast(null);
-    setForecastFailed(false);
+    const currentKey = `${place.latitude},${place.longitude}`;
     fetchForecast(controller.signal, {
       latitude: place.latitude,
       longitude: place.longitude,
     })
-      .then(setForecast)
+      .then((data) =>
+        setForecastState({ key: currentKey, data, failed: false }),
+      )
       .catch(() => {
-        if (!controller.signal.aborted) setForecastFailed(true);
+        if (!controller.signal.aborted) {
+          setForecastState({ key: currentKey, data: null, failed: true });
+        }
       });
     return () => controller.abort();
   }, [place.latitude, place.longitude]);
@@ -286,20 +390,27 @@ export default function MapScreen() {
   useEffect(() => {
     const text = query.trim();
     if (text.length < 2 || text === pickedName.current) {
-      setSuggestions([]);
-      setSearchMessage('');
-      setSearching(false);
-      return;
+      const timer = setTimeout(() => {
+        setSuggestions([]);
+        setSearchMessage('');
+        setSearching(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
     const coordinates = parseCoordinates(text);
     if (coordinates) {
-      setSuggestions([{ ...coordinates, key: 'coordinates' }]);
-      setSearchMessage('');
-      return;
+      const timer = setTimeout(() => {
+        setSuggestions([{ ...coordinates, key: 'coordinates' }]);
+        setSearchMessage('');
+        setSearching(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
     if (!API_URL) {
-      setSearchMessage('Set EXPO_PUBLIC_API_URL to enable place search.');
-      return;
+      const timer = setTimeout(() => {
+        setSearchMessage('Set EXPO_PUBLIC_API_URL to enable place search.');
+      }, 0);
+      return () => clearTimeout(timer);
     }
     const controller = new AbortController();
     const timer = setTimeout(async () => {
@@ -311,12 +422,12 @@ export default function MapScreen() {
         );
         const body = (await response.json()) as
           | {
-              name: string;
-              detail: string;
-              address: string;
-              latitude: number;
-              longitude: number;
-            }[]
+            name: string;
+            detail: string;
+            address: string;
+            latitude: number;
+            longitude: number;
+          }[]
           | { message?: string };
         if (!response.ok || !Array.isArray(body)) {
           throw new Error(
@@ -426,6 +537,24 @@ export default function MapScreen() {
     [flyTo, hazards],
   );
 
+  const focusSpatialHazard = useCallback(
+    (hazard: Hazard) => {
+      hazardHistory.setSelectedId(hazard.id);
+      const bounds = computeHazardsBounds([hazard]);
+      if (bounds && (hazard.polygon?.length || hazard.path?.length)) {
+        fitBounds(bounds);
+      } else {
+        setFocus((previous) => ({
+          latitude: hazard.latitude,
+          longitude: hazard.longitude,
+          span: 0.008,
+          token: previous.token + 1,
+        }));
+      }
+    },
+    [fitBounds, hazardHistory],
+  );
+
   const nearbyHazards = useMemo(
     () =>
       hazards
@@ -446,7 +575,49 @@ export default function MapScreen() {
     [hazards, place.latitude, place.longitude],
   );
 
+  const sheetSpatialHazards = useMemo(() => {
+    if (hazardHistory.viewMode !== 'live') {
+      return hazardHistory.visible;
+    }
+    return hazardHistory.visible
+      .filter(
+        (hazard) =>
+          distanceKm(
+            place.latitude,
+            place.longitude,
+            hazard.latitude,
+            hazard.longitude,
+          ) <= NEARBY_KM,
+      )
+      .sort(
+        (a, b) =>
+          SEVERITY_RANK[toSeverityLevel(b.severity)] -
+          SEVERITY_RANK[toSeverityLevel(a.severity)] ||
+          Date.parse(b.reportedAt) - Date.parse(a.reportedAt),
+      );
+  }, [
+    hazardHistory.viewMode,
+    hazardHistory.visible,
+    place.latitude,
+    place.longitude,
+  ]);
+
   const status = useMemo(() => {
+    if (hazardHistory.viewMode === 'event' && hazardHistory.selectedEvent) {
+      const peak = hazardHistory.selectedEvent.peakSeverity;
+      return {
+        label: `${peak} · ${hazardHistory.visible.length} Event Zones`,
+        color: HAZARD_SEVERITY_COLOR[peak],
+      };
+    }
+    const topSpatial = sheetSpatialHazards[0];
+    if (topSpatial) {
+      const sev = toSeverityLevel(topSpatial.severity);
+      return {
+        label: `${topSpatial.severity} · ${HAZARD_META[topSpatial.type].label}`,
+        color: SEVERITY_COLOR[sev],
+      };
+    }
     const top = nearbyHazards[0];
     if (top) {
       return {
@@ -465,46 +636,63 @@ export default function MapScreen() {
       label: forecastFailed ? 'Status unavailable' : 'Normal · Clear',
       color: forecastFailed ? '#9CA3AF' : '#34D399',
     };
-  }, [nearbyHazards, forecast, forecastFailed]);
+  }, [
+    forecast,
+    forecastFailed,
+    hazardHistory.selectedEvent,
+    hazardHistory.viewMode,
+    hazardHistory.visible.length,
+    nearbyHazards,
+    sheetSpatialHazards,
+  ]);
 
   const showingHomeArea = Boolean(
     homeCoordinates &&
-      distanceKm(
-        place.latitude,
-        place.longitude,
-        homeCoordinates.latitude,
-        homeCoordinates.longitude,
-      ) < 15,
+    distanceKm(
+      place.latitude,
+      place.longitude,
+      homeCoordinates.latitude,
+      homeCoordinates.longitude,
+    ) < 15,
   );
 
-  // Lowered floating search bar (top: insets.top + 16, clearing camera notch)
   const searchTop = Math.max(insets.top + 16, 56);
-
-  // 3 Snap Points: ['15%', '45%', '85%']
   const peekHeight = Math.max(Math.round(screenHeight * 0.15), 116 + insets.bottom);
   const halfHeight = Math.round(screenHeight * 0.45);
   const fullHeight = Math.round(screenHeight * 0.85);
 
   const metrics = forecast
     ? [
-        {
-          label: 'RAIN RATE',
-          value: `${forecast.current.precipitationMm.toFixed(1)} mm/hr`,
-        },
-        {
-          label: 'WIND SPEED',
-          value: `${Math.round(forecast.current.windKph)} km/h ${forecast.current.windDirection}`,
-        },
-        {
-          label: 'HEAT INDEX',
-          value: `${Math.round(forecast.riskMeasurements.heatIndexC)}°C`,
-        },
-        {
-          label: 'TEMPERATURE',
-          value: `${Math.round(forecast.current.temperatureC)}°C (${Math.round(forecast.current.humidityPercent)}% RH)`,
-        },
-      ]
+      {
+        label: 'RAIN RATE',
+        value: `${forecast.current.precipitationMm.toFixed(1)} mm/hr`,
+      },
+      {
+        label: 'WIND SPEED',
+        value: `${Math.round(forecast.current.windKph)} km/h ${forecast.current.windDirection}`,
+      },
+      {
+        label: 'HEAT INDEX',
+        value: `${Math.round(forecast.riskMeasurements.heatIndexC)}°C`,
+      },
+      {
+        label: 'TEMPERATURE',
+        value: `${Math.round(forecast.current.temperatureC)}°C (${Math.round(forecast.current.humidityPercent)}% RH)`,
+      },
+    ]
     : [];
+
+  const spatialSectionTitle =
+    hazardHistory.viewMode === 'event' && hazardHistory.selectedEvent
+      ? `EVENT ZONES (${sheetSpatialHazards.length})`
+      : hazardHistory.viewMode === 'date'
+        ? `HISTORICAL HAZARDS · ${hazardHistory.day.shortDate.toUpperCase()} (${sheetSpatialHazards.length})`
+        : `ACTIVE SPATIAL HAZARDS (${sheetSpatialHazards.length})`;
+
+  const selectedTips = hazardHistory.selected?.safetyTips
+    ? flattenTips(hazardHistory.selected.safetyTips)
+    : [];
+  const homeTips = flattenTips(homeHazard?.hazard?.safety_tips);
 
   return (
     <View style={styles.screen}>
@@ -514,10 +702,25 @@ export default function MapScreen() {
         label={place.name}
         mapStyle={mapStyle}
         focus={focus}
-        hazards={hazards}
+        boundsFocus={boundsFocus}
+        hazards={hazardHistory.viewMode === 'live' ? hazards : []}
         showHazards={showHazards}
         onHazardPress={selectHazard}
+        historyHazards={showHazards ? hazardHistory.visible : []}
+        historyArchived={hazardHistory.viewMode !== 'live'}
+        selectedHistoryId={hazardHistory.selectedId}
+        onHistorySelect={hazardHistory.setSelectedId}
       />
+
+      {/* Spatial hazards bar: Live / 7d tabs / 30d Archive / Major Cebu Events */}
+      {showHazards && snap === 'peek' && (
+        <HazardHistoryPanel
+          history={hazardHistory}
+          bottom={peekHeight + 8}
+          onFocusHazard={focusSpatialHazard}
+          onFitBounds={fitBounds}
+        />
+      )}
 
       {/* Lowered Floating Glassmorphic Search Bar */}
       <View
@@ -701,7 +904,7 @@ export default function MapScreen() {
         </Pressable>
       </View>
 
-      {/* 3-Snap Contextual Bottom Sheet (15% Peek / 45% Half / 85% Full) */}
+      {/* 3-Snap Contextual Bottom Sheet */}
       <BottomSheet
         snap={snap}
         onSnapChange={setSnap}
@@ -713,10 +916,16 @@ export default function MapScreen() {
           <View style={styles.sheetHeader}>
             <View style={styles.sheetTitleBlock}>
               <Text style={styles.placeTitle} numberOfLines={1}>
-                {place.name}
+                {hazardHistory.viewMode === 'event' &&
+                  hazardHistory.selectedEvent
+                  ? hazardHistory.selectedEvent.title
+                  : place.name}
               </Text>
               <Text style={styles.placeSubtitle} numberOfLines={1}>
-                {place.detail ||
+                {hazardHistory.viewMode === 'event' &&
+                  hazardHistory.selectedEvent
+                  ? `${hazardHistory.selectedEvent.cities.join(', ')} · Historical Event`
+                  : place.detail ||
                   `${place.latitude.toFixed(4)}, ${place.longitude.toFixed(4)}`}
               </Text>
             </View>
@@ -747,7 +956,6 @@ export default function MapScreen() {
           showsVerticalScrollIndicator={snap === 'full'}
           contentContainerStyle={styles.sheetContent}
         >
-          {/* Mid-Expanded Section: Contextual Weather Metrics & Quick Summary */}
           <Text style={styles.sectionHeading}>CONTEXTUAL WEATHER METRICS</Text>
           {forecast ? (
             <View style={styles.metricGrid}>
@@ -775,52 +983,135 @@ export default function MapScreen() {
             </View>
           ) : null}
 
-          {/* Fully-Expanded Section: Active Hazard Logs, Local Advisories & Safety Breakdown */}
-          <Text style={styles.sectionHeading}>
-            ACTIVE HAZARD LOGS ({nearbyHazards.length})
-          </Text>
-          {nearbyHazards.length === 0 ? (
+          <Text style={styles.sectionHeading}>{spatialSectionTitle}</Text>
+          {sheetSpatialHazards.length === 0 ? (
             <Text style={styles.mutedText}>
-              No active hazard events logged within {NEARBY_KM} km of this
-              location.
+              {hazardHistory.loading
+                ? 'Loading spatial hazard overlays…'
+                : 'No spatial flood or road-closure hazards for this selection.'}
             </Text>
           ) : (
-            nearbyHazards.map((hazard) => (
-              <Pressable
-                key={hazard.id}
-                style={[
-                  styles.hazardCard,
-                  { borderLeftColor: SEVERITY_COLOR[hazard.severity] },
-                ]}
-                onPress={() => selectHazard(hazard.id)}
-              >
-                <View style={styles.hazardCardHeader}>
-                  <Text style={styles.hazardCardTitle}>
-                    {humanize(hazard.eventType)}
+            sheetSpatialHazards.map((item) => {
+              const sevColor =
+                HAZARD_SEVERITY_COLOR[toSeverityLevel(item.severity) as HazardSeverityLevel];
+              const sourceBadge =
+                SOURCE_BADGE_META[item.sourceType ?? 'weather_auto'];
+              const areaText = [item.barangay, item.city]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <Pressable
+                  key={item.id}
+                  style={[styles.hazardCard, { borderLeftColor: sevColor }]}
+                  onPress={() => {
+                    focusSpatialHazard(item);
+                    setSnap('peek');
+                  }}
+                >
+                  <View style={styles.hazardCardHeader}>
+                    <Text style={styles.hazardCardTitle} numberOfLines={1}>
+                      {HAZARD_META[item.type].glyph} {item.title}
+                    </Text>
+                    <View
+                      style={[
+                        styles.sheetSourceBadge,
+                        { backgroundColor: sourceBadge.bg },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.sheetSourceText,
+                          { color: sourceBadge.fg },
+                        ]}
+                      >
+                        {sourceBadge.shortLabel}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.hazardSeverityTag, { color: sevColor }]}>
+                    {item.severity} · Started {formatTimestamp(item.reportedAt)}
+                    {item.resolvedAt
+                      ? ` · Resolved ${formatTimestamp(item.resolvedAt)}`
+                      : ' · Active'}
                   </Text>
-                  <Text
-                    style={[
-                      styles.hazardSeverityTag,
-                      { color: SEVERITY_COLOR[hazard.severity] },
-                    ]}
-                  >
-                    {hazard.severity} · {timeAgo(hazard.detectedAt)}
-                  </Text>
-                </View>
-                <Text style={styles.hazardCardBody}>{hazard.description}</Text>
-              </Pressable>
-            ))
+                  {areaText ? (
+                    <Text style={styles.hazardAreaText}>{areaText}</Text>
+                  ) : null}
+                  <Text style={styles.hazardCardBody}>{item.description}</Text>
+                  {item.sourceUrl ? (
+                    <Text
+                      style={styles.hazardSourceLink}
+                      onPress={() =>
+                        void Linking.openURL(item.sourceUrl!).catch(() =>
+                          Alert.alert(
+                            'Link unavailable',
+                            'Could not open the official source URL.',
+                          ),
+                        )
+                      }
+                    >
+                      Source: {item.sourceName ?? sourceBadge.shortLabel} ↗
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })
+          )}
+
+          {hazardHistory.viewMode === 'live' && nearbyHazards.length > 0 && (
+            <>
+              <Text style={styles.sectionHeading}>
+                ACTIVE WEATHER ALERTS ({nearbyHazards.length})
+              </Text>
+              {nearbyHazards.map((hazard) => (
+                <Pressable
+                  key={hazard.id}
+                  style={[
+                    styles.hazardCard,
+                    { borderLeftColor: SEVERITY_COLOR[hazard.severity] },
+                  ]}
+                  onPress={() => selectHazard(hazard.id)}
+                >
+                  <View style={styles.hazardCardHeader}>
+                    <Text style={styles.hazardCardTitle}>
+                      {humanize(hazard.eventType)}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.hazardSeverityTag,
+                        { color: SEVERITY_COLOR[hazard.severity] },
+                      ]}
+                    >
+                      {hazard.severity} · {timeAgo(hazard.detectedAt)}
+                    </Text>
+                  </View>
+                  <Text style={styles.hazardCardBody}>{hazard.description}</Text>
+                </Pressable>
+              ))}
+            </>
           )}
 
           <Text style={styles.sectionHeading}>
             LOCAL ADVISORY & SAFETY BREAKDOWN
           </Text>
-          {showingHomeArea && homeHazard?.hazard ? (
+          {selectedTips.length > 0 && hazardHistory.selected ? (
+            <View style={styles.advisoryCard}>
+              <Text style={styles.advisoryTitle}>
+                {hazardHistory.selected.title} ·{' '}
+                {hazardHistory.selected.severity}
+              </Text>
+              {selectedTips.slice(0, 4).map((tip) => (
+                <Text key={tip} style={styles.advisoryTip}>
+                  • {tip}
+                </Text>
+              ))}
+            </View>
+          ) : showingHomeArea && homeHazard?.hazard && homeTips.length > 0 ? (
             <View style={styles.advisoryCard}>
               <Text style={styles.advisoryTitle}>
                 {homeHazard.hazard.hazard_type} · {homeHazard.hazard.risk_level}
               </Text>
-              {homeHazard.hazard.safety_tips.slice(0, 3).map((tip) => (
+              {homeTips.slice(0, 3).map((tip) => (
                 <Text key={tip} style={styles.advisoryTip}>
                   • {tip}
                 </Text>
@@ -842,8 +1133,8 @@ export default function MapScreen() {
           )}
 
           <Text style={styles.disclaimerText}>
-            Always follow official PAGASA and local government (LGU) advisories.
-            Map data © OpenStreetMap contributors.
+            Always follow official PAGASA, UP NOAH, NDRRMC, and local
+            government (LGU) advisories. Map data © OpenStreetMap contributors.
           </Text>
         </ScrollView>
       </BottomSheet>
@@ -1140,19 +1431,42 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   hazardCardTitle: {
+    flex: 1,
     color: '#FFFFFF',
     fontSize: 13,
+    fontWeight: '800',
+  },
+  sheetSourceBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  sheetSourceText: {
+    fontSize: 9,
     fontWeight: '800',
   },
   hazardSeverityTag: {
     fontSize: 11,
     fontWeight: '700',
+    marginTop: 3,
+  },
+  hazardAreaText: {
+    color: '#E9D5FF',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
   },
   hazardCardBody: {
     color: 'rgba(255, 255, 255, 0.78)',
     fontSize: 12,
     lineHeight: 17,
     marginTop: 4,
+  },
+  hazardSourceLink: {
+    color: '#C084FC',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 6,
   },
   advisoryCard: {
     padding: 12,
@@ -1184,4 +1498,3 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
 });
-

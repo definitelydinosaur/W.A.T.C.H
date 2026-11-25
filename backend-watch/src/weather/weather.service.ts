@@ -133,6 +133,7 @@ interface StoredWeatherRecord {
 interface WeatherMeasurements {
   rainMm: number;
   windKph: number;
+  windGustsKph?: number;
   heatIndexC: number;
   temperatureC: number;
   humidityPercent: number;
@@ -259,7 +260,7 @@ export class WeatherService {
     private readonly supabase: SupabaseClient,
     private readonly ai: AiService,
     private readonly push: PushService,
-  ) {}
+  ) { }
 
   async getForecast(
     latitude: number,
@@ -345,7 +346,7 @@ export class WeatherService {
     const current = sourceData.current;
     const windGustsKph =
       typeof current.wind_gusts_10m === 'number' &&
-      Number.isFinite(current.wind_gusts_10m)
+        Number.isFinite(current.wind_gusts_10m)
         ? current.wind_gusts_10m
         : undefined;
     const fetchedAqi = await this.fetchUsAqi(latitude, longitude);
@@ -359,7 +360,7 @@ export class WeatherService {
       location: {
         name:
           Math.abs(latitude - 10.3157) < 0.05 &&
-          Math.abs(longitude - 123.8854) < 0.05
+            Math.abs(longitude - 123.8854) < 0.05
             ? 'Cebu City'
             : `${latitude.toFixed(2)}, ${longitude.toFixed(2)}`,
         latitude,
@@ -469,15 +470,15 @@ export class WeatherService {
     };
 
     const hazards = detectWeatherHazards(
-            measurements.rainMm,
-            measurements.windKph,
-            measurements.heatIndexC,
-            measurements.weatherCode,
-            measurements.pressureMslHpa,
-            measurements.windGustsKph ?? 0,
-            forecast?.alerts ?? [],
-            measurements.aqi,
-          );
+      measurements.rainMm,
+      measurements.windKph,
+      measurements.heatIndexC,
+      forecast.current.weatherCode,
+      measurements.pressureMslHpa,
+      measurements.windGustsKph ?? 0,
+      forecast?.alerts ?? [],
+      measurements.aqi,
+    );
 
     const activeEventTypes = hazards.map((h) => h.eventType);
 
@@ -490,10 +491,10 @@ export class WeatherService {
 
     const { error: resolveError } = activeEventTypes.length
       ? await resolveQuery.not(
-          'event_type',
-          'in',
-          `(${activeEventTypes.join(',')})`,
-        )
+        'event_type',
+        'in',
+        `(${activeEventTypes.join(',')})`,
+      )
       : await resolveQuery;
 
     if (resolveError) {
@@ -701,7 +702,6 @@ export class WeatherService {
       return null;
     }
   }
-  }
 
   @Cron('*/10 * * * *', { waitForCompletion: true })
   async monitorSavedLocations() {
@@ -791,8 +791,8 @@ export class WeatherService {
           const recordedAt = new Date().toISOString();
           const condition =
             forecast?.current.weatherCode === 95 ||
-            forecast?.current.weatherCode === 96 ||
-            forecast?.current.weatherCode === 99
+              forecast?.current.weatherCode === 96 ||
+              forecast?.current.weatherCode === 99
               ? 'Thunderstorm'
               : forecast
                 ? `WMO ${forecast.current.weatherCode}`
