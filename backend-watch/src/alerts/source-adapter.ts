@@ -1,6 +1,6 @@
 export interface AlertSource {
   id: number | string;
-  source_type: 'lgu' | 'institution';
+  source_type: 'lgu' | 'institution' | 'pagasa';
   school_name: string;
   facebook_url: string | null;
   facebook_page_id?: string | null;
