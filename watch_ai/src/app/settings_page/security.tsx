@@ -1,22 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle, Path, Rect } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import supabase from '../../lib/supabase';
+import { useAppTheme } from '../../theme/theme-context';
 
 export default function SecurityScreen() {
   const router = useRouter();
-  const [isSendingReset, setIsSendingReset] = useState(false);
+  const { displayed } = useAppTheme();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const redirectTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (redirectTimeout.current) clearTimeout(redirectTimeout.current);
+    },
+    [],
+  );
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -26,37 +43,69 @@ export default function SecurityScreen() {
     }
   };
 
-  const sendPasswordReset = async () => {
-    if (isSendingReset) return;
+  const updatePassword = async () => {
+    if (isUpdating) return;
 
-    setIsSendingReset(true);
+    setErrorMessage('');
+    if (!currentPassword) {
+      setErrorMessage('Enter your current password.');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setErrorMessage('Your new password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('Your new passwords do not match.');
+      return;
+    }
+
+    setIsUpdating(true);
     try {
       const {
         data: { user },
         error: userError,
       } = await supabase.auth.getUser();
-
       if (userError) throw userError;
       if (!user?.email) {
         throw new Error('An email address is unavailable for this account.');
       }
 
-      const { error } = await supabase.auth.resetPasswordForEmail(user.email);
-      if (error) throw error;
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword,
+      });
+      if (signInError) {
+        if (signInError.code === 'invalid_credentials') {
+          throw new Error('Your current password is incorrect.');
+        }
+        throw signInError;
+      }
 
-      Alert.alert('Check your email', 'A secure password reset link has been sent.');
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (updateError) throw updateError;
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setIsRedirecting(true);
+      redirectTimeout.current = setTimeout(() => {
+        redirectTimeout.current = null;
+        router.replace('/auth/login');
+      }, 2000);
     } catch (error) {
-      Alert.alert(
-        'Password reset failed',
-        error instanceof Error ? error.message : 'Please try again.',
+      setErrorMessage(
+        error instanceof Error ? error.message : 'Unable to update your password. Please try again.',
       );
     } finally {
-      setIsSendingReset(false);
+      setIsUpdating(false);
     }
   };
 
   return (
-    <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -72,7 +121,7 @@ export default function SecurityScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -89,59 +138,122 @@ export default function SecurityScreen() {
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Account Security</Text>
+              <Text style={styles.sectionTitle}>Reset Password</Text>
               <View style={styles.sectionCard}>
+                <Text style={styles.formDescription}>
+                  Choose a new password for your account.
+                </Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Current Password</Text>
+                  <TextInput
+                    accessibilityLabel="Current password"
+                    autoCapitalize="none"
+                    autoComplete="current-password"
+                    editable={!isUpdating}
+                    onChangeText={(value) => {
+                      setCurrentPassword(value);
+                      setErrorMessage('');
+                    }}
+                    placeholder="Enter current password"
+                    placeholderTextColor="#8D879B"
+                    secureTextEntry
+                    style={styles.input}
+                    textContentType="password"
+                    value={currentPassword}
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>New Password</Text>
+                  <TextInput
+                    accessibilityLabel="New password"
+                    autoCapitalize="none"
+                    autoComplete="new-password"
+                    editable={!isUpdating}
+                    onChangeText={(value) => {
+                      setNewPassword(value);
+                      setErrorMessage('');
+                    }}
+                    placeholder="Enter new password"
+                    placeholderTextColor="#8D879B"
+                    secureTextEntry
+                    style={styles.input}
+                    textContentType="newPassword"
+                    value={newPassword}
+                  />
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.fieldLabel}>Confirm New Password</Text>
+                  <TextInput
+                    accessibilityLabel="Confirm new password"
+                    autoCapitalize="none"
+                    autoComplete="new-password"
+                    editable={!isUpdating}
+                    onChangeText={(value) => {
+                      setConfirmPassword(value);
+                      setErrorMessage('');
+                    }}
+                    placeholder="Re-enter new password"
+                    placeholderTextColor="#8D879B"
+                    secureTextEntry
+                    style={styles.input}
+                    textContentType="newPassword"
+                    value={confirmPassword}
+                  />
+                </View>
+
+                {errorMessage ? (
+                  <Text accessibilityRole="alert" style={styles.errorText}>
+                    {errorMessage}
+                  </Text>
+                ) : null}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Change Password"
-                  accessibilityState={{ disabled: isSendingReset }}
-                  disabled={isSendingReset}
-                  onPress={() => void sendPasswordReset()}
+                  accessibilityState={{ disabled: isUpdating }}
+                  disabled={isUpdating}
+                  onPress={() => void updatePassword()}
                   style={({ pressed }) => [
-                    styles.actionRow,
-                    pressed && styles.actionRowPressed,
-                    isSendingReset && styles.actionRowDisabled,
+                    styles.updateButton,
+                    { backgroundColor: displayed.primary },
+                    pressed && styles.updateButtonPressed,
+                    isUpdating && styles.updateButtonDisabled,
                   ]}
                 >
-                  <View style={styles.iconContainer}>
-                    <Svg width={25} height={25} viewBox="0 0 24 24">
-                      <Rect
-                        x={4}
-                        y={10}
-                        width={16}
-                        height={11}
-                        rx={2}
-                        fill="none"
-                        stroke="#4B32B5"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <Path
-                        d="M8 10V7a4 4 0 0 1 8 0v3"
-                        fill="none"
-                        stroke="#4B32B5"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                      <Circle cx={12} cy={15} r={1} fill="#4B32B5" />
-                    </Svg>
-                  </View>
-                  <View style={styles.actionCopy}>
-                    <Text style={styles.actionLabel}>
-                      {isSendingReset ? 'Sending reset link...' : 'Change Password'}
-                    </Text>
-                    <Text style={styles.actionDescription}>
-                      Receive a secure link by email to reset your password.
-                    </Text>
-                  </View>
+                  <Text
+                    style={[
+                      styles.updateButtonText,
+                      { color: displayed.onPrimary },
+                    ]}
+                  >
+                    {isUpdating ? 'Updating Password...' : 'Update Password'}
+                  </Text>
                 </Pressable>
               </View>
             </View>
           </ScrollView>
         </View>
       </SafeAreaView>
+      <Modal
+        animationType="fade"
+        onRequestClose={() => undefined}
+        statusBarTranslucent
+        transparent
+        visible={isRedirecting}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.redirectModal}>
+            <ActivityIndicator size="large" color={displayed.primary} />
+            <Text style={[styles.modalTitle, { color: displayed.text }]}>
+              Password Updated
+            </Text>
+            <Text style={[styles.modalMessage, { color: displayed.muted }]}>
+              You are being redirected to login...
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -207,42 +319,87 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   sectionCard: {
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    gap: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#E3E4EC',
     backgroundColor: '#FAFAFD',
   },
-  actionRow: {
-    minHeight: 56,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 5,
-  },
-  actionRowPressed: {
-    opacity: 0.65,
-  },
-  actionRowDisabled: {
-    opacity: 0.6,
-  },
-  iconContainer: {
-    width: 62,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-  },
-  actionCopy: {
-    flex: 1,
-    gap: 3,
-    paddingVertical: 8,
-  },
-  actionLabel: {
+  formDescription: {
     color: '#342C46',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  fieldGroup: {
+    gap: 7,
+  },
+  fieldLabel: {
+    marginLeft: 4,
+    color: '#342448',
     fontSize: 14,
     fontWeight: '600',
   },
-  actionDescription: {
+  input: {
+    minHeight: 50,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#D8D4E3',
+    borderRadius: 15,
+    backgroundColor: '#FFFFFF',
+    color: '#342448',
+    fontSize: 15,
+  },
+  updateButton: {
+    minHeight: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+    borderRadius: 16,
+    backgroundColor: '#4B32B5',
+  },
+  updateButtonPressed: {
+    opacity: 0.8,
+  },
+  updateButtonDisabled: {
+    opacity: 0.55,
+  },
+  updateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  errorText: {
+    color: '#B42318',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  modalBackdrop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: 'rgba(25, 18, 40, 0.55)',
+  },
+  redirectModal: {
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+  },
+  modalTitle: {
+    color: '#342448',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  modalMessage: {
     color: '#6A6475',
-    fontSize: 12,
+    fontSize: 14,
+    textAlign: 'center',
   },
 });

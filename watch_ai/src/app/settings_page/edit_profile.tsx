@@ -36,6 +36,62 @@ const PICKER_OPTIONS: Record<PickerField, string[]> = {
   'Country/Region': ['Philippines', 'United States', 'Canada', 'Japan', 'Australia'],
 };
 
+type ProfileSnapshot = {
+  name: string;
+  birthdate: string;
+  country: string;
+  homeLocation: string;
+  institution: string;
+};
+
+function birthdateValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function homeLocationValue(location: HomeLocationInput | null) {
+  if (!location) return '';
+  return (
+    JSON.stringify([
+      location.address,
+      location.latitude,
+      location.longitude,
+      location.city,
+      location.province,
+      location.barangay,
+    ]) ?? ''
+  );
+}
+
+function institutionValue(institution: InstitutionOption | null) {
+  if (!institution) return '';
+  return (
+    JSON.stringify([
+      institution.id,
+      institution.name,
+      institution.facebook_page_url,
+    ]) ?? ''
+  );
+}
+
+function profileSnapshot(
+  name: string,
+  dateOfBirth: Date,
+  country: string,
+  homeLocation: HomeLocationInput | null,
+  institution: InstitutionOption | null,
+): ProfileSnapshot {
+  return {
+    name,
+    birthdate: birthdateValue(dateOfBirth),
+    country,
+    homeLocation: homeLocationValue(homeLocation),
+    institution: institutionValue(institution),
+  };
+}
+
 function parseBirthdate(value: string | null): Date | null {
   if (!value) {
     return null;
@@ -89,7 +145,18 @@ export default function EditProfileScreen() {
   const [institution, setInstitution] = useState<InstitutionOption | null>(null);
   const [selectionPicker, setSelectionPicker] =
     useState<'location' | 'institution' | null>(null);
-  const [isSavingSelection, setIsSavingSelection] = useState(false);
+  const [savedProfileSnapshot, setSavedProfileSnapshot] =
+    useState<ProfileSnapshot | null>(null);
+
+  const hasUnsavedChanges =
+    savedProfileSnapshot !== null &&
+    (name !== savedProfileSnapshot.name ||
+      birthdateValue(dateOfBirth) !== savedProfileSnapshot.birthdate ||
+      country !== savedProfileSnapshot.country ||
+      homeLocationValue(homeLocation) !==
+        savedProfileSnapshot.homeLocation ||
+      institutionValue(institution) !==
+        savedProfileSnapshot.institution);
 
 
 const loadProfile = useCallback(async () => {
@@ -106,33 +173,42 @@ const loadProfile = useCallback(async () => {
         institution: InstitutionOption | null;
       };
     }>('/profile');
-    setName(profile.name ?? '');
-    setEmail(profile.email ?? '');
-    setCountry(profile.country ?? 'Philippines');
-    setHomeLocation(
-      profile.home_location
-        ? {
-            ...profile.home_location,
-            name:
-              profile.home_location.city ??
-              profile.home_location.barangay ??
-              profile.home_location.address.split(',')[0],
-            detail: [
-              profile.home_location.city,
-              profile.home_location.province,
-            ]
-              .filter(Boolean)
-              .join(', '),
-          }
-        : null,
-    );
-    setInstitution(profile.institution);
+    const loadedName = profile.name ?? '';
+    const loadedEmail = profile.email ?? '';
+    const loadedCountry = profile.country ?? 'Philippines';
+    const loadedHomeLocation = profile.home_location
+      ? {
+          ...profile.home_location,
+          name:
+            profile.home_location.city ??
+            profile.home_location.barangay ??
+            profile.home_location.address.split(',')[0],
+          detail: [
+            profile.home_location.city,
+            profile.home_location.province,
+          ]
+            .filter(Boolean)
+            .join(', '),
+        }
+      : null;
+    const loadedInstitution = profile.institution;
+    const loadedDateOfBirth =
+      parseBirthdate(profile.birthdate) ?? new Date(1995, 4, 23);
 
-    const birthdate = parseBirthdate(profile.birthdate);
-    if (birthdate) {
-      setDateOfBirth(birthdate);
-      setDatePickerDraft(birthdate);
-    }
+    setSavedProfileSnapshot(profileSnapshot(
+      loadedName,
+      loadedDateOfBirth,
+      loadedCountry,
+      loadedHomeLocation,
+      loadedInstitution,
+    ));
+    setName(loadedName);
+    setEmail(loadedEmail);
+    setCountry(loadedCountry);
+    setHomeLocation(loadedHomeLocation);
+    setInstitution(loadedInstitution);
+    setDateOfBirth(loadedDateOfBirth);
+    setDatePickerDraft(loadedDateOfBirth);
   } catch (error) {
     console.error('Load profile error:', error);
     Alert.alert(
@@ -161,6 +237,8 @@ useFocusEffect(
   };
 
 const saveChanges = async () => {
+  const savedProfile = savedProfileSnapshot;
+  if (isSaving || !savedProfile || !hasUnsavedChanges) return;
   if (name.trim().length < 3) {
     Alert.alert('Invalid name', 'Please enter a name with at least 3 characters.');
     return;
@@ -188,28 +266,81 @@ const saveChanges = async () => {
       return;
     }
 
-    const year = dateOfBirth.getFullYear();
-    const month = String(dateOfBirth.getMonth() + 1).padStart(2, '0');
-    const day = String(dateOfBirth.getDate()).padStart(2, '0');
-    const birthdate = `${year}-${month}-${day}`;
+    const homeLocationChanged =
+      homeLocationValue(homeLocation) !== savedProfile.homeLocation;
+    const institutionChanged =
+      institutionValue(institution) !== savedProfile.institution;
+    const profileFieldsChanged =
+      name !== savedProfile.name ||
+      birthdateValue(dateOfBirth) !== savedProfile.birthdate ||
+      country !== savedProfile.country;
 
-    const { data: updatedProfile, error: updateError } = await supabase
-      .from('user_info')
-      .update({
-        name: name.trim(),
-        birthdate,
-        country: country.trim(),
-      })
-      .eq('id', user.id)
-      .select('id')
-      .maybeSingle();
-
-    if (updateError) throw updateError;
-
-    if (!updatedProfile) {
-      throw new Error('No profile was found for the signed-in user.');
+    if (homeLocationChanged && homeLocation) {
+      await profileApi('/profile/home-location', {
+        method: 'POST',
+        body: JSON.stringify({
+          full_address: homeLocation.address,
+          latitude: homeLocation.latitude,
+          longitude: homeLocation.longitude,
+          city: homeLocation.city,
+          province: homeLocation.province,
+          barangay: homeLocation.barangay,
+        }),
+      });
     }
 
+    let savedInstitution = institution;
+    if (institutionChanged) {
+      const institutionBody = institution
+        ? institution.id
+          ? { institutionId: institution.id }
+          : {
+              name: institution.name,
+              facebookPageUrl: institution.facebook_page_url,
+            }
+        : { institutionId: null };
+      const result = await profileApi<{
+        institution: InstitutionOption | null;
+      }>('/profile/institution', {
+        method: 'PUT',
+        body: JSON.stringify(institutionBody),
+      });
+      savedInstitution = result.institution;
+      setInstitution(savedInstitution);
+    }
+
+    const savedName = name.trim();
+    const savedCountry = country.trim();
+    if (profileFieldsChanged) {
+      const { data: updatedProfile, error: updateError } = await supabase
+        .from('user_info')
+        .update({
+          name: savedName,
+          birthdate: birthdateValue(dateOfBirth),
+          country: savedCountry,
+        })
+        .eq('id', user.id)
+        .select('id')
+        .maybeSingle();
+      if (updateError) throw updateError;
+      if (!updatedProfile) {
+        throw new Error('No profile was found for the signed-in user.');
+      }
+      setName(savedName);
+      setCountry(savedCountry);
+    }
+
+    setSavedProfileSnapshot(profileSnapshot(
+      profileFieldsChanged ? savedName : name,
+      dateOfBirth,
+      profileFieldsChanged ? savedCountry : country,
+      homeLocation,
+      savedInstitution,
+    ));
+    if (profileFieldsChanged) {
+      setName(savedName);
+      setCountry(savedCountry);
+    }
     Alert.alert('Success', 'Your profile has been updated.');
   } catch (error) {
     console.error('Update profile error:', error);
@@ -222,82 +353,14 @@ const saveChanges = async () => {
   }
 };
 
-const saveHomeLocation = async (location: HomeLocationInput) => {
-  if (isSavingSelection) return;
-  setIsSavingSelection(true);
-  try {
-    await profileApi('/profile/home-location', {
-      method: 'POST',
-      body: JSON.stringify({
-        full_address: location.address,
-        latitude: location.latitude,
-        longitude: location.longitude,
-        city: location.city,
-        province: location.province,
-        barangay: location.barangay,
-      }),
-    });
-    setHomeLocation(location);
-    setSelectionPicker(null);
-    Alert.alert('Success', 'Your home location has been updated.');
-  } catch (error) {
-    Alert.alert(
-      'Update failed',
-      error instanceof Error ? error.message : 'Unable to save home location.',
-    );
-  } finally {
-    setIsSavingSelection(false);
-  }
+const stageHomeLocation = (location: HomeLocationInput) => {
+  setHomeLocation(location);
+  setSelectionPicker(null);
 };
 
-const saveInstitution = async (selected: InstitutionOption | null) => {
-  if (isSavingSelection) return;
-  setIsSavingSelection(true);
-  try {
-    const body = selected
-      ? selected.id
-        ? { institutionId: selected.id }
-        : {
-            name: selected.name,
-            facebookPageUrl: selected.facebook_page_url,
-          }
-      : { institutionId: null };
-    const result = await profileApi<{ institution: InstitutionOption | null }>(
-      '/profile/institution',
-      { method: 'PUT', body: JSON.stringify(body) },
-    );
-    setInstitution(result.institution);
-    setSelectionPicker(null);
-    Alert.alert('Success', 'Your institution has been updated.');
-  } catch (error) {
-    Alert.alert(
-      'Update failed',
-      error instanceof Error ? error.message : 'Unable to save institution.',
-    );
-  } finally {
-    setIsSavingSelection(false);
-  }
-};
-
-const sendPasswordReset = async () => {
-  if (!email.trim()) {
-    Alert.alert(
-      'Email unavailable',
-      'A password reset email cannot be sent for this account.',
-    );
-    return;
-  }
-
-  try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
-    if (error) throw error;
-    Alert.alert('Check your email', 'A secure password reset link has been sent.');
-  } catch (error) {
-    Alert.alert(
-      'Password reset failed',
-      error instanceof Error ? error.message : 'Please try again.',
-    );
-  }
+const stageInstitution = (selected: InstitutionOption | null) => {
+  setInstitution(selected);
+  setSelectionPicker(null);
 };
 
 const uploadProfileImage = async (uri: string, mimeType: string) => {
@@ -656,23 +719,6 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
                   />
                 </ProfileField>
 
-                <ProfileField label="Password">
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Send secure password reset link"
-                    onPress={() => void sendPasswordReset()}
-                    style={({ pressed }) => [
-                      styles.input,
-                      styles.passwordResetButton,
-                      pressed && styles.pickerPressed,
-                    ]}
-                  >
-                    <Text style={styles.passwordResetText}>
-                      Send secure reset link
-                    </Text>
-                  </Pressable>
-                </ProfileField>
-
                 <ProfileField label="Date of Birth">
                   <PickerButton
                     accessibilityLabel="Select date of birth"
@@ -693,13 +739,9 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
                   <PickerButton
                     accessibilityLabel="Change home location"
                     onPress={() => {
-                      if (!isSavingSelection) setSelectionPicker('location');
+                      if (!isSaving) setSelectionPicker('location');
                     }}
-                    value={
-                      isSavingSelection
-                        ? 'Saving...'
-                        : homeLocation?.address ?? 'Choose home location'
-                    }
+                    value={homeLocation?.address ?? 'Choose home location'}
                   />
                 </ProfileField>
 
@@ -707,24 +749,24 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
                   <PickerButton
                     accessibilityLabel="Change institution"
                     onPress={() => {
-                      if (!isSavingSelection) setSelectionPicker('institution');
+                      if (!isSaving) setSelectionPicker('institution');
                     }}
-                    value={
-                      isSavingSelection
-                        ? 'Saving...'
-                        : institution?.name ?? 'Choose institution (optional)'
-                    }
+                    value={institution?.name ?? 'Choose institution (optional)'}
                   />
                 </ProfileField>
               </View>
 
               <Pressable
                 accessibilityRole="button"
-                disabled={isSaving}
+                accessibilityState={{
+                  disabled: !hasUnsavedChanges || isSaving,
+                }}
+                disabled={!hasUnsavedChanges || isSaving}
                 onPress={saveChanges}
                 style={({ pressed }) => [
                   styles.saveButton,
                   { backgroundColor: displayed.primary },
+                  !hasUnsavedChanges && styles.saveButtonDisabled,
                   isSaving && styles.saveButtonPressed,
                   pressed && styles.saveButtonPressed,
                 ]}
@@ -829,14 +871,14 @@ const uploadProfileImage = async (uri: string, mimeType: string) => {
         kind="location"
         includeCurrentLocation
         onClose={() => setSelectionPicker(null)}
-        onSelectLocation={(location) => void saveHomeLocation(location)}
+        onSelectLocation={stageHomeLocation}
       />
       <ProfileSelectionModal
         visible={selectionPicker === 'institution'}
         kind="institution"
         onClose={() => setSelectionPicker(null)}
-        onSelectInstitution={(selected) => void saveInstitution(selected)}
-        onClearInstitution={() => void saveInstitution(null)}
+        onSelectInstitution={stageInstitution}
+        onClearInstitution={() => stageInstitution(null)}
       />
     </View>
   );
@@ -1044,13 +1086,6 @@ const styles = StyleSheet.create({
   readOnlyInput: {
     opacity: 0.7,
   },
-  passwordResetButton: {
-    justifyContent: 'center',
-  },
-  passwordResetText: {
-    color: '#37343D',
-    fontSize: 12,
-  },
   pickerButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1075,6 +1110,9 @@ const styles = StyleSheet.create({
   },
   saveButtonPressed: {
     opacity: 0.8,
+  },
+  saveButtonDisabled: {
+    opacity: 0.5,
   },
   saveButtonText: {
     color: '#FFFFFF',
