@@ -1,4 +1,3 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -185,27 +184,19 @@ export default function PolicyDocumentScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
+  background: { flex: 1, backgroundColor: '#FFFFFF' },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
   },
   panel: {
     flex: 1,
-    overflow: 'hidden',
-    borderRadius: 38,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#4B32B5',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    elevation: 8,
   },
   header: {
     minHeight: 72,

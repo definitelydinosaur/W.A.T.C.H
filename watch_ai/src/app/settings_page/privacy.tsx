@@ -300,27 +300,19 @@ const confirmAccountDeletion = async () => {
           </View>
         </View>
       </Modal>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
+  background: { flex: 1, backgroundColor: '#FFFFFF' },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
   },
   panel: {
     flex: 1,
-    overflow: 'hidden',
-    borderRadius: 38,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#4B32B5',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    elevation: 8,
   },
   header: {
     height: 72,

@@ -10,7 +10,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -198,10 +197,7 @@ export default function NotificationSettingsScreen() {
     permissionStatus === 'denied' || permissionStatus === 'blocked';
 
   return (
-    <LinearGradient
-      colors={displayed.settingsGradient}
-      style={styles.background}
-    >
+    <View style={styles.background}>
       <StatusBar style="dark" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -341,23 +337,19 @@ export default function NotificationSettingsScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
-  safeArea: { flex: 1, paddingHorizontal: 16, paddingVertical: 10 },
+  background: { flex: 1, backgroundColor: '#FFFFFF' },
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
   panel: {
     flex: 1,
-    overflow: 'hidden',
-    borderRadius: 38,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#4B32B5',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    elevation: 8,
   },
   header: {
     height: 72,
