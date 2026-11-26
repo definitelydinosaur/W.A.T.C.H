@@ -300,7 +300,7 @@ const confirmAccountDeletion = async () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </LinearGradient>
   );
 }
 
