@@ -3,6 +3,7 @@ import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
+  ImageBackground,
   Linking,
   Pressable,
   ScrollView,
@@ -15,6 +16,37 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path, Rect } from "react-native-svg";
 
 const SUPPORT_EMAIL = "";
+
+const DEVELOPMENT_TEAM = [
+  {
+    name: "Joram Zhient B. Entice",
+    role: "Fullstack",
+    githubHandle: "@definitelydinosaur",
+    githubUrl: "https://github.com/definitelydinosaur",
+    photo: require("../../../assets/images/devteam/joram.jpg"),
+  },
+  {
+    name: "Eric A. Alegrid",
+    role: "Fullstack / Project Manager",
+    githubHandle: "@EricTheGreat25",
+    githubUrl: "https://github.com/EricTheGreat25",
+    photo: require("../../../assets/images/devteam/eric.jpg"),
+  },
+  {
+    name: "Rhona Bea Villamil",
+    role: "UI Design / Frontend",
+    githubHandle: "@googiegoobers",
+    githubUrl: "https://github.com/googiegoobers",
+    photo: require("../../../assets/images/devteam/villamil.png"),
+  },
+  {
+    name: "Harlie Khurt T. Cañas",
+    role: "Fullstack",
+    githubHandle: "@major119791",
+    githubUrl: "https://github.com/major119791",
+    photo: require("../../../assets/images/devteam/harlie.jpg"),
+  },
+] as const;
 
 export default function ContactUsScreen() {
   const router = useRouter();
@@ -57,6 +89,17 @@ export default function ContactUsScreen() {
         error instanceof Error
           ? error.message
           : "No email application is available.",
+      );
+    }
+  };
+
+  const openGitHubProfile = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch (error) {
+      Alert.alert(
+        "Unable to open GitHub profile",
+        error instanceof Error ? error.message : "Please try again.",
       );
     }
   };
@@ -184,7 +227,7 @@ export default function ContactUsScreen() {
               </Pressable>
             </View>
 
-            <View style={styles.contactCard}>
+            <View style={styles.teamSection}>
               <View style={styles.cardHeading}>
                 <View style={styles.iconCircle}>
                   <Svg width={21} height={21} viewBox="0 0 24 24">
@@ -200,9 +243,37 @@ export default function ContactUsScreen() {
                 </View>
                 <Text style={styles.cardTitle}>Development Team</Text>
               </View>
-              <Text style={styles.placeholder}>
-                Development team information will be added here.
-              </Text>
+              {DEVELOPMENT_TEAM.map((member) => (
+                <ImageBackground
+                  key={member.githubUrl}
+                  source={member.photo}
+                  resizeMode="cover"
+                  imageStyle={styles.profileImage}
+                  style={styles.profileCard}
+                >
+                  <LinearGradient
+                    colors={["transparent", "rgba(22, 18, 38, 0.96)"]}
+                    locations={[0.2, 1]}
+                    style={styles.profileGradient}
+                  >
+                    <Text style={styles.profileRole}>{member.role}</Text>
+                    <Text style={styles.profileName}>{member.name}</Text>
+                    <Pressable
+                      accessibilityRole="link"
+                      accessibilityLabel={`Open ${member.githubHandle}'s GitHub profile`}
+                      onPress={() => void openGitHubProfile(member.githubUrl)}
+                      style={({ pressed }) => [
+                        styles.githubButton,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={styles.githubButtonText}>
+                        {member.githubHandle}
+                      </Text>
+                    </Pressable>
+                  </LinearGradient>
+                </ImageBackground>
+              ))}
             </View>
           </ScrollView>
         </View>
@@ -324,9 +395,50 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.7 },
   buttonDisabled: { opacity: 0.45 },
-  placeholder: {
-    color: "#6A6475",
-    fontSize: 13,
-    lineHeight: 19,
+  teamSection: {
+    gap: 14,
+  },
+  profileCard: {
+    height: 290,
+    overflow: "hidden",
+    borderRadius: 22,
+    backgroundColor: "#342C46",
+  },
+  profileImage: {
+    borderRadius: 22,
+  },
+  profileGradient: {
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 18,
+    paddingTop: 80,
+  },
+  profileRole: {
+    color: "#E5DFF3",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  profileName: {
+    marginTop: 5,
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "700",
+    lineHeight: 27,
+  },
+  githubButton: {
+    alignSelf: "flex-start",
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.18)",
+  },
+  githubButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+    textDecorationLine: "underline",
   },
 });

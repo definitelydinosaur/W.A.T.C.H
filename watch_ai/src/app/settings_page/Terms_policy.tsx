@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import { useAppTheme } from '../../theme/theme-context';
 
 const POLICY_CARDS = [
   {
@@ -24,6 +25,7 @@ const POLICY_CARDS = [
 
 export default function TermsPolicyScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
 
   const goBack = () => {
     if (router.canGoBack()) {
@@ -34,7 +36,7 @@ export default function TermsPolicyScreen() {
   };
 
   return (
-    <LinearGradient colors={['#F8F7FB', '#E7E1F3', '#CEC3E2']} style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -50,7 +52,7 @@ export default function TermsPolicyScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -90,7 +92,9 @@ export default function TermsPolicyScreen() {
                   <Text style={styles.cardTitle}>{card.title}</Text>
                   <Text style={styles.cardDescription}>{card.description}</Text>
                 </View>
-                <Text style={styles.chevron}>›</Text>
+                <Text style={[styles.chevron, { color: displayed.primary }]}>
+                  ›
+                </Text>
               </Pressable>
             ))}
           </ScrollView>

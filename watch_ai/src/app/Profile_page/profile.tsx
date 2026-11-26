@@ -15,11 +15,44 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useProfilePicture } from '../../hooks/loadprofilepicture';
 import supabase from '../../lib/supabase';
+import { profileApi } from '../../lib/profile-api';
 import { useAppTheme } from '../../theme/theme-context';
 
 type ProfileDetails = {
   name: string | null;
   email: string | null;
+  institution: string | null;
+  homeLocation: string | null;
+};
+
+type ProfileResponse = {
+  profile: {
+    name: string | null;
+    email: string | null;
+    institution: {
+      name: string;
+      short_name: string | null;
+    } | null;
+    home_location: {
+      address: string | null;
+      city: string | null;
+      province: string | null;
+      barangay: string | null;
+    } | null;
+  };
+};
+
+function formatHomeLocation(
+  location: ProfileResponse['profile']['home_location'],
+) {
+  if (!location) return null;
+  return (
+    location.address?.trim() ||
+    [location.barangay, location.city, location.province]
+      .filter(Boolean)
+      .join(', ') ||
+    null
+  );
 };
 
 export default function ProfileScreen() {
@@ -30,6 +63,8 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<ProfileDetails>({
     name: null,
     email: null,
+    institution: null,
+    homeLocation: null,
   });
   const [loading, setLoading] = useState(true);
 
@@ -39,34 +74,45 @@ export default function ProfileScreen() {
 
       const loadProfile = async () => {
         setLoading(true);
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
+        try {
+          const {
+            data: { user },
+            error: userError,
+          } = await supabase.auth.getUser();
 
-        if (userError) throw userError;
-        if (!user) {
-          setProfile({ name: null, email: null });
-          return;
+          if (userError) throw userError;
+          if (!isActive) return;
+          if (!user) {
+            setProfile({
+              name: null,
+              email: null,
+              institution: null,
+              homeLocation: null,
+            });
+            return;
+          }
+
+          const { profile: details } = await profileApi<ProfileResponse>(
+            '/profile',
+          );
+          if (!isActive) return;
+
+          const metadataName =
+            user.user_metadata?.full_name ?? user.user_metadata?.name;
+          setProfile({
+            name:
+              details.name ??
+              (typeof metadataName === 'string' ? metadataName : null),
+            email: details.email ?? user.email ?? null,
+            institution:
+              details.institution?.short_name?.trim() ||
+              details.institution?.name?.trim() ||
+              null,
+            homeLocation: formatHomeLocation(details.home_location),
+          });
+        } finally {
+          if (isActive) setLoading(false);
         }
-
-        const { data, error } = await supabase
-          .from('user_info')
-          .select('name, email')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (!isActive) return;
-
-        const metadataName =
-          user.user_metadata?.full_name ?? user.user_metadata?.name;
-        setProfile({
-          name:
-            data?.name ??
-            (typeof metadataName === 'string' ? metadataName : null),
-          email: data?.email ?? user.email ?? null,
-        });
       };
 
       void loadProfile().catch((error: unknown) => {
@@ -149,14 +195,10 @@ export default function ProfileScreen() {
             <ProfileDetail label="Full name" value={profile.name || 'Not provided'} labelColor={displayed.muted} valueColor={displayed.text} />
             <View style={styles.divider} />
             <ProfileDetail label="Email address" value={profile.email || 'Not available'} labelColor={displayed.muted} valueColor={displayed.text} />
-          </View>
-
-          <View style={[styles.noteCard, { backgroundColor: displayed.primary + '22' }]}>
-            <Text style={[styles.noteTitle, { color: displayed.primaryDark }]}>Read-only profile</Text>
-            <Text style={[styles.noteText, { color: displayed.muted }]}>
-              Your account information is shown here. To update your profile picture,
-              use the Edit Profile option in Settings.
-            </Text>
+            <View style={styles.divider} />
+            <ProfileDetail label="Institution" value={profile.institution || 'Not provided'} labelColor={displayed.muted} valueColor={displayed.text} />
+            <View style={styles.divider} />
+            <ProfileDetail label="Home location" value={profile.homeLocation || 'Not provided'} labelColor={displayed.muted} valueColor={displayed.text} />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -298,22 +340,5 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: 'rgba(74,61,91,0.16)',
-  },
-  noteCard: {
-    marginTop: 16,
-    padding: 18,
-    borderRadius: 20,
-    backgroundColor: 'rgba(109,69,184,0.1)',
-  },
-  noteTitle: {
-    color: '#49328D',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  noteText: {
-    color: '#5D5668',
-    fontSize: 13,
-    lineHeight: 19,
   },
 });
