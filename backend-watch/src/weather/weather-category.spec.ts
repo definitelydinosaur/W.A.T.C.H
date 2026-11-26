@@ -37,6 +37,17 @@ describe('classifyWeatherAnnouncement', () => {
     ).toBe('PAGASA/Weather');
   });
 
+  it('classifies the generated unhealthy-air announcement title', () => {
+    expect(
+      classifyWeatherAnnouncement({
+        eventType: 'unhealthy_air',
+        hazardType: 'Unhealthy Air Warning in Manila',
+        category: 'unhealthy_air',
+        sourceType: 'weather_auto',
+      })?.category,
+    ).toBe('Unhealthy Air');
+  });
+
   it('does not classify unrelated incidents as PAGASA weather', () => {
     expect(
       classifyWeatherAnnouncement({

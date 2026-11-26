@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -24,6 +25,8 @@ import {
   NotificationPreferences,
   saveExpoPushToken,
   saveNotificationPreferences,
+  WEATHER_ALERT_SUSTAINED_MINUTES_MAX,
+  WEATHER_ALERT_SUSTAINED_MINUTES_MIN,
 } from '../../lib/notification-settings';
 
 const PREFERENCES: {
@@ -62,6 +65,8 @@ export default function NotificationSettingsScreen() {
   const [isTogglingMaster, setIsTogglingMaster] = useState(false);
   const [savingPreference, setSavingPreference] =
     useState<NotificationPreferenceKey | null>(null);
+  const [weatherDurationText, setWeatherDurationText] = useState('60');
+  const [savingWeatherDuration, setSavingWeatherDuration] = useState(false);
   const [lastError, setLastError] = useState('');
 
   const refreshSettings = useCallback(async () => {
@@ -73,6 +78,9 @@ export default function NotificationSettingsScreen() {
       setPermissionStatus(permission.permissionStatus);
       setDeviceAvailable(permission.deviceAvailable);
       setPreferences(saved.preferences);
+      setWeatherDurationText(
+        String(saved.preferences.weather_sustained_minutes),
+      );
       setTokenSaved(saved.tokenSaved);
       setEnabled(permission.granted && saved.tokenSaved);
       setLastError('');
@@ -86,7 +94,10 @@ export default function NotificationSettingsScreen() {
             error instanceof Error
               ? error.message
               : 'Unable to disable the saved push token.';
-          console.error('[notifications] unable to clear inactive token:', error);
+          console.error(
+            '[notifications] unable to clear inactive token:',
+            error,
+          );
           setLastError(message);
         }
       }
@@ -172,6 +183,44 @@ export default function NotificationSettingsScreen() {
       setLastError(message);
     } finally {
       setSavingPreference(null);
+    }
+  };
+
+  const saveWeatherDuration = async () => {
+    const trimmed = weatherDurationText.trim();
+    const minutes = Number(trimmed);
+    if (
+      !/^\d+$/.test(trimmed) ||
+      !Number.isSafeInteger(minutes) ||
+      minutes < WEATHER_ALERT_SUSTAINED_MINUTES_MIN ||
+      minutes > WEATHER_ALERT_SUSTAINED_MINUTES_MAX
+    ) {
+      setLastError(
+        `Enter a whole number from ${WEATHER_ALERT_SUSTAINED_MINUTES_MIN} to ${WEATHER_ALERT_SUSTAINED_MINUTES_MAX} minutes.`,
+      );
+      return;
+    }
+
+    setSavingWeatherDuration(true);
+    setLastError('');
+    try {
+      const saved = await saveNotificationPreferences({
+        weather_sustained_minutes: minutes,
+      });
+      setPreferences(saved);
+      setWeatherDurationText(String(saved.weather_sustained_minutes));
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to save the weather alert delay.';
+      console.error(
+        '[notifications] could not save weather alert delay:',
+        error,
+      );
+      setLastError(message);
+    } finally {
+      setSavingWeatherDuration(false);
     }
   };
 
@@ -305,7 +354,11 @@ export default function NotificationSettingsScreen() {
                       <Switch
                         accessibilityLabel={preference.title}
                         value={preferences[preference.key]}
-                        disabled={!enabled || savingPreference !== null}
+                        disabled={
+                          !enabled ||
+                          savingPreference !== null ||
+                          savingWeatherDuration
+                        }
                         onValueChange={(value) =>
                           void togglePreference(preference.key, value)
                         }
@@ -318,6 +371,50 @@ export default function NotificationSettingsScreen() {
                     )}
                   </View>
                 ))}
+                <View style={styles.durationSection}>
+                  <Text style={styles.title}>
+                    Automated weather alert delay
+                  </Text>
+                  <Text style={styles.description}>
+                    Send detected extreme heat, unhealthy air, or heavy rain
+                    alerts after the condition has lasted this many minutes.
+                    Default: 60 minutes.
+                  </Text>
+                  <View style={styles.durationRow}>
+                    <TextInput
+                      accessibilityLabel="Automated weather alert delay in minutes"
+                      value={weatherDurationText}
+                      onChangeText={setWeatherDurationText}
+                      keyboardType="number-pad"
+                      maxLength={3}
+                      returnKeyType="done"
+                      onSubmitEditing={() => void saveWeatherDuration()}
+                      style={styles.durationInput}
+                    />
+                    <Text style={styles.durationUnit}>minutes</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={
+                        savingWeatherDuration || savingPreference !== null
+                      }
+                      onPress={() => void saveWeatherDuration()}
+                      style={[
+                        styles.durationSaveButton,
+                        { backgroundColor: displayed.primary },
+                        (savingWeatherDuration || savingPreference !== null) &&
+                          styles.disabledButton,
+                      ]}
+                    >
+                      <Text style={styles.durationSaveText}>
+                        {savingWeatherDuration ? 'Saving…' : 'Save'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <Text style={styles.durationHint}>
+                    Choose {WEATHER_ALERT_SUSTAINED_MINUTES_MIN}–
+                    {WEATHER_ALERT_SUSTAINED_MINUTES_MAX} minutes.
+                  </Text>
+                </View>
               </View>
             ) : null}
 
@@ -330,8 +427,7 @@ export default function NotificationSettingsScreen() {
             {__DEV__ ? (
               <Text style={styles.debugText}>
                 Permission: {permissionStatus} · Token saved:{' '}
-                {tokenSaved ? 'yes' : 'no'} · Last error:{' '}
-                {lastError || 'none'}
+                {tokenSaved ? 'yes' : 'no'} · Last error: {lastError || 'none'}
               </Text>
             ) : null}
           </ScrollView>
@@ -370,7 +466,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   headerSpacer: { width: 48 },
-  content: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24, gap: 14 },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 24,
+    gap: 14,
+  },
   card: {
     paddingHorizontal: 16,
     borderRadius: 20,
@@ -383,7 +484,10 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingVertical: 14,
   },
-  preferenceDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#DAD6E2' },
+  preferenceDivider: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#DAD6E2',
+  },
   preferenceCopy: { flex: 1 },
   title: { color: '#342448', fontSize: 15, fontWeight: '700' },
   description: { color: '#746C7D', fontSize: 12, lineHeight: 17, marginTop: 4 },
@@ -393,6 +497,41 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingTop: 16,
   },
+  durationSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#DAD6E2',
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  durationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  durationInput: {
+    minWidth: 76,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    color: '#342448',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DAD6E2',
+    borderRadius: 10,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  durationUnit: { color: '#746C7D', fontSize: 13 },
+  durationSaveButton: {
+    marginLeft: 'auto',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  durationSaveText: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  disabledButton: { opacity: 0.6 },
+  durationHint: { color: '#746C7D', fontSize: 11, marginTop: 6 },
   notice: { color: '#62576F', fontSize: 12, lineHeight: 18, paddingBottom: 14 },
   permissionNotice: { paddingTop: 8 },
   settingsButton: {

@@ -12,13 +12,23 @@ export const NOTIFICATION_PREFERENCE_DEFAULTS = {
   weather: true,
   safety: true,
   school: true,
+  weather_sustained_minutes: 60,
 } as const;
 
-export type NotificationPreferenceKey =
-  keyof typeof NOTIFICATION_PREFERENCE_DEFAULTS;
+export type NotificationPreferenceKey = 'weather' | 'safety' | 'school';
 
 export type NotificationPreferences = Record<string, unknown> &
-  Record<NotificationPreferenceKey, boolean>;
+  Record<NotificationPreferenceKey, boolean> & {
+    weather_sustained_minutes: number;
+  };
+export type NotificationPreferenceUpdates = Partial<
+  Record<NotificationPreferenceKey, boolean>
+> & {
+  weather_sustained_minutes?: number;
+};
+
+export const WEATHER_ALERT_SUSTAINED_MINUTES_MIN = 10;
+export const WEATHER_ALERT_SUSTAINED_MINUTES_MAX = 180;
 
 export type PushRegistrationResult =
   | {
@@ -38,6 +48,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizePreferences(value: unknown): NotificationPreferences {
   const saved = isRecord(value) ? value : {};
+  const savedDuration = saved.weather_sustained_minutes;
   return {
     ...NOTIFICATION_PREFERENCE_DEFAULTS,
     ...saved,
@@ -57,6 +68,13 @@ function normalizePreferences(value: unknown): NotificationPreferences {
         : typeof saved.announcements === 'boolean'
           ? saved.announcements
           : NOTIFICATION_PREFERENCE_DEFAULTS.school,
+    weather_sustained_minutes:
+      typeof savedDuration === 'number' &&
+      Number.isSafeInteger(savedDuration) &&
+      savedDuration >= WEATHER_ALERT_SUSTAINED_MINUTES_MIN &&
+      savedDuration <= WEATHER_ALERT_SUSTAINED_MINUTES_MAX
+        ? savedDuration
+        : NOTIFICATION_PREFERENCE_DEFAULTS.weather_sustained_minutes,
   };
 }
 
@@ -71,9 +89,7 @@ function logSupabaseFailure(action: string, error: unknown): Error {
   const code =
     typeof databaseError.code === 'string' ? databaseError.code : undefined;
   console.error(`[notifications] ${action} failed`, { message, code });
-  return new Error(
-    `${message}${code ? ` (code ${code})` : ''}`,
-  );
+  return new Error(`${message}${code ? ` (code ${code})` : ''}`);
 }
 
 async function getSignedInUserId(): Promise<string> {
@@ -110,8 +126,20 @@ export async function loadNotificationSettings(): Promise<{
 }
 
 export async function saveNotificationPreferences(
-  updates: Partial<Record<NotificationPreferenceKey, boolean>>,
+  updates: NotificationPreferenceUpdates,
 ): Promise<NotificationPreferences> {
+  const requestedDuration = updates.weather_sustained_minutes;
+  if (
+    requestedDuration !== undefined &&
+    (!Number.isSafeInteger(requestedDuration) ||
+      requestedDuration < WEATHER_ALERT_SUSTAINED_MINUTES_MIN ||
+      requestedDuration > WEATHER_ALERT_SUSTAINED_MINUTES_MAX)
+  ) {
+    throw new Error(
+      `Choose a whole number from ${WEATHER_ALERT_SUSTAINED_MINUTES_MIN} to ${WEATHER_ALERT_SUSTAINED_MINUTES_MAX} minutes.`,
+    );
+  }
+
   const userId = await getSignedInUserId();
   const { data: current, error: readError } = await supabase
     .from('user_info')
@@ -126,9 +154,7 @@ export async function saveNotificationPreferences(
   }
 
   const merged = {
-    ...(isRecord(current.notification_prefs)
-      ? current.notification_prefs
-      : {}),
+    ...(isRecord(current.notification_prefs) ? current.notification_prefs : {}),
     ...updates,
   };
   const { data, error } = await supabase
@@ -241,7 +267,8 @@ export async function enablePushNotifications(): Promise<PushRegistrationResult>
         permissionStatus:
           Platform.OS === 'web'
             ? 'unavailable on web'
-            : Constants.executionEnvironment === ExecutionEnvironment.StoreClient
+            : Constants.executionEnvironment ===
+                ExecutionEnvironment.StoreClient
               ? 'unsupported in Expo Go'
               : 'physical device required',
         tokenSaved: false,

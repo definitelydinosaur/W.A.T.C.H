@@ -80,6 +80,7 @@ type AnnouncementRow = {
   source: string | null;
   source_name: string | null;
   source_url: string | null;
+  external_post_id: string | null;
   published_at: string;
   category: string | null;
   ai_scope: string | null;
@@ -90,7 +91,8 @@ type AnnouncementRow = {
 
 type WeatherAlertEventRow = {
   id: string;
-  alert_type: 'extreme_heat' | 'unhealthy_air' | 'heavy_rain' | 'pagasa_weather';
+  alert_type:
+    'extreme_heat' | 'unhealthy_air' | 'heavy_rain' | 'pagasa_weather';
   city: string;
   province: string | null;
   area_key: string;
@@ -111,11 +113,7 @@ type WeatherAlertEventRow = {
 
 type FeedEvent = {
   id: string;
-  item_type:
-    | 'announcement'
-    | 'hazard'
-    | 'pagasa'
-    | 'weather_event';
+  item_type: 'announcement' | 'hazard' | 'pagasa' | 'weather_event';
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -191,7 +189,7 @@ export class HazardFeedService {
       Math.max(1, Number.parseInt(limitValue ?? '20', 10) || 20),
     );
     const [events, userLocations] = await Promise.all([
-      this.loadEvents(),
+      this.loadEvents(true),
       this.getUserLocations(userId),
     ]);
     const visible = events.filter((event) =>
@@ -242,40 +240,6 @@ export class HazardFeedService {
 
     const notifiedEvents = visible.flatMap((event) => {
       const notification = notificationByEvent.get(event.id);
-      if (
-        event.item_type === 'weather_event' &&
-        event.hazard_ids.length === 0 &&
-        event.source_type === 'weather_auto'
-      ) {
-        return [
-          {
-            ...event,
-            id: event.id,
-            user_id: userId,
-            announcement_id: null,
-            hazard_id: null,
-            status: 'Sent',
-            kind: 'weather',
-            created_at: event.published_at,
-            read_at: null,
-            deleted_at: null,
-            body: event.content,
-            hazard: {
-              hazard_type: event.category,
-              risk_level: event.severity,
-              ai_summary: event.ai_summary,
-              safety_tips: event.safety_tips,
-              source_type: event.source_type,
-              source_name: event.source_name,
-              city: event.city,
-              province: event.province,
-              observed_at: event.observed_at,
-              measurements: event.measurements,
-            },
-            announcement: null,
-          },
-        ];
-      }
       if (!notification) return [];
       return [
         {
@@ -285,7 +249,10 @@ export class HazardFeedService {
           announcement_id: event.announcement_id,
           hazard_id: notification.hazard_id ?? event.hazard_id,
           status: notification.status,
-          kind: event.item_type === 'pagasa' ? 'weather' : 'weather_hazard',
+          kind:
+            event.item_type === 'pagasa' || event.item_type === 'weather_event'
+              ? 'weather'
+              : 'weather_hazard',
           created_at: notification.created_at,
           read_at:
             notification.status === 'Read' ? notification.created_at : null,
@@ -327,10 +294,10 @@ export class HazardFeedService {
       ? this.supabase
           .from('announcements')
           .select(
-            'id,title,content,ai_summary,source,source_name,source_url,published_at,category,ai_scope,source_type,city,pagasa_alert_id',
+            'id,title,content,ai_summary,source,source_name,source_url,external_post_id,published_at,category,ai_scope,source_type,city,pagasa_alert_id',
           )
           .eq('status', 'published')
-          .or('ai_scope.is.null,ai_scope.eq.weather')
+          .or('ai_scope.is.null,ai_scope.neq.system')
           .order('published_at', { ascending: false })
           .limit(EVENT_PAGE_LIMIT)
           .overrideTypes<AnnouncementRow[], { merge: false }>()
@@ -394,6 +361,17 @@ export class HazardFeedService {
     const pagasaRows = (pagasaResult.data ?? []) as PagasaRow[];
     const weatherEventRows = weatherEventsResult.data ?? [];
     const announcementRows = announcementsResult.data ?? [];
+    const eventAnnouncements = announcementRows.filter(
+      (announcement) =>
+        announcement.source === 'weather_auto' &&
+        announcement.external_post_id?.startsWith('weather-event:'),
+    );
+    const announcementIdByWeatherEvent = new Map(
+      eventAnnouncements.map((announcement) => [
+        announcement.external_post_id!.slice('weather-event:'.length),
+        announcement.id,
+      ]),
+    );
     const locationById = new Map(
       locations.map((location) => [location.loc_id, location]),
     );
@@ -409,10 +387,6 @@ export class HazardFeedService {
     const hazardNotifications = await this.getNotifications(hazardIds, []);
     applyCounts(hazardEvents, hazardNotifications);
 
-    const dedicatedEvents = weatherEventRows.map((event) =>
-      this.toWeatherAlertEvent(event),
-    );
-
     const linkedAnnouncementIds = new Set(
       pagasaRows
         .map((alert) => alert.notification_announcement_id)
@@ -424,6 +398,7 @@ export class HazardFeedService {
         !['admin_manual', 'admin_test_replay', 'admin_system'].includes(
           announcement.source ?? '',
         ) &&
+        !eventAnnouncements.includes(announcement) &&
         !linkedAnnouncementIds.has(announcement.id) &&
         (announcement.pagasa_alert_id === null ||
           !pagasaAlertIds.has(announcement.pagasa_alert_id)),
@@ -434,6 +409,7 @@ export class HazardFeedService {
     const announcementIds = [
       ...new Set([
         ...pagasaIds,
+        ...eventAnnouncements.map((announcement) => announcement.id),
         ...weatherAnnouncementRows.map((announcement) => announcement.id),
       ]),
     ];
@@ -444,6 +420,16 @@ export class HazardFeedService {
     const announcementCounts = countAnnouncementNotifications(
       announcementNotifications,
     );
+    const dedicatedEvents = weatherEventRows.map((event) => {
+      const announcementId = announcementIdByWeatherEvent.get(event.id) ?? null;
+      return this.toWeatherAlertEvent(
+        event,
+        announcementId,
+        announcementId
+          ? (announcementCounts.get(announcementId) ?? {})
+          : {},
+      );
+    });
     const pagasaEvents = dedupePagasaEvents(
       pagasaRows.map((alert) =>
         this.toPagasaEvent(alert, locations, announcementCounts),
@@ -542,7 +528,11 @@ export class HazardFeedService {
     };
   }
 
-  private toWeatherAlertEvent(event: WeatherAlertEventRow): FeedEvent {
+  private toWeatherAlertEvent(
+    event: WeatherAlertEventRow,
+    announcementId: number | null,
+    notificationCounts: Record<string, number>,
+  ): FeedEvent {
     const category =
       event.alert_type === 'extreme_heat'
         ? 'Extreme Heat'
@@ -554,7 +544,7 @@ export class HazardFeedService {
     return {
       id: `weather-event-${event.id}`,
       item_type: 'weather_event',
-      announcement_id: null,
+      announcement_id: announcementId,
       hazard_id: null,
       pagasa_id: null,
       title: event.title,
@@ -569,13 +559,15 @@ export class HazardFeedService {
       area_key: event.area_key,
       city: event.city,
       province: event.province,
-      place_name: event.province ? `${event.city}, ${event.province}` : event.city,
+      place_name: event.province
+        ? `${event.city}, ${event.province}`
+        : event.city,
       affected_areas: [event.city],
       requires_area_review: false,
       published_at: event.measured_at,
       observed_at: event.measured_at,
       measurements: event.measurement,
-      notification_counts: {},
+      notification_counts: notificationCounts,
       audience_count: event.notified_count,
       hazard_ids: [],
       active: event.status === 'active',

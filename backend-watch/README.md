@@ -11,9 +11,11 @@ npm install
 Copy-Item .env.example .env
 ```
 
-Set `SUPABASE_URL` and either `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in `.env`. These service keys are server-only. AI uses the shared backend provider layer; `AI_PROVIDER` supports `gemini`, `groq`, `openrouter`, and `anthropic`. Gemini is the default provider and `gemini-3.5-flash-lite` is the default model. Set `AI_API_KEY` to enable AI. Without it, the backend still starts and official-source classification/summaries use source-only fallbacks; system announcement formatting reports that AI is not configured. Weather alert summaries remain rule/template-based.
+Set `SUPABASE_URL`, either `SUPABASE_SERVICE_KEY` or `SUPABASE_SERVICE_ROLE_KEY`, and `RESEND_API_KEY` in `.env`. These credentials are server-only. `RESEND_API_KEY` is currently required at startup because the email service is initialized with the Nest application; `RESEND_FROM_EMAIL` and `REPORT_EMAIL_RECEIVER` are needed when sending report emails. AI uses the shared backend provider layer; `AI_PROVIDER` supports `gemini`, `groq`, `openrouter`, and `anthropic`. Gemini is the default provider and `gemini-3.5-flash-lite` is the default model. Set `AI_API_KEY` to enable AI. Without it, the backend still starts and official-source classification/summaries use source-only fallbacks; system announcement formatting reports that AI is not configured. Weather alert summaries remain rule/template-based.
 
 The optional `CHATBOT_API_URL` points to a separately deployed chatbot service. Leave it empty to disable chatbot requests without affecting backend startup.
+
+Users with push notifications enabled can choose a per-user automated weather alert delay of 10-180 minutes in Notification Settings (default: 60 minutes). This applies to detected extreme heat, unhealthy air, and heavy rain/flood conditions. Official PAGASA advisories are not delayed by this setting.
 
 Free-tier providers may use submitted data to improve their products; Google's unpaid Gemini API terms also say human reviewers may process prompts and outputs. Google requires API users to be at least 18 and prohibits API clients directed to or likely accessed by under-18s. W.A.T.C.H. is student-facing, so **do not enable Google's unpaid Gemini API for the deployed app** unless Google confirms your use is permitted. Do not send sensitive, confidential, personal, or user-linked data to any free-tier provider. The backend's announcement prompts contain announcement text only; they do not include user profile fields, tokens, or saved locations. Review your provider's current terms before production use.
 
@@ -29,7 +31,6 @@ Optional variables:
 - `EXPO_ACCESS_TOKEN` — only needed if Expo enhanced push security is enabled.
 - `AI_BASE_URL` — optional provider API root override.
 - `CHATBOT_API_URL` — optional chatbot service base URL; omitted means chatbot is unavailable.
-- `WEATHER_ALERT_SUSTAINED_MINUTES` — sustained weather-condition duration (default `60`).
 - `TRUSTED_ANNOUNCEMENT_DOMAINS` — comma-separated trusted source hostnames.
 - `ANNOUNCEMENT_ADMIN_TOKEN` — optional server-only token for legacy admin confirmation flows.
 - `WATCH_ADMIN_PASSWORD` — only needed by the one-time `scripts/bootstrap-admin.mjs` script.

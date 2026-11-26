@@ -22,7 +22,7 @@ export function classifyWeatherAnnouncement(input: {
   if (/heat|thermal/.test(text)) {
     return { category: 'Extreme Heat', templateKey: 'extreme_heat' };
   }
-  if (/air.?quality|air.?pollution|\baqi\b/.test(text)) {
+  if (/unhealthy.?air|air.?quality|air.?pollution|\baqi\b/.test(text)) {
     return { category: 'Unhealthy Air', templateKey: 'unhealthy_air' };
   }
   if (/rain|flood|precip/.test(text)) {
