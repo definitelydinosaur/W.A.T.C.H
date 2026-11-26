@@ -1,4 +1,5 @@
 import { useRouter } from "expo-router";
+import { LinearGradient } from "expo-linear-gradient";
 import { useState } from "react";
 import {
   Alert,
@@ -11,7 +12,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path, Rect } from "react-native-svg";
 

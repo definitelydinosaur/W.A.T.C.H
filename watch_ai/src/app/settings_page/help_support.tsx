@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   Pressable,
   ScrollView,
@@ -7,7 +8,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';

@@ -4,24 +4,41 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
+  private readonly resend: Resend;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    const apiKey = this.configService.get<string>('RESEND_API_KEY');
+
+    if (!apiKey) {
+      throw new Error('Missing RESEND_API_KEY environment variable.');
+    }
+
+    this.resend = new Resend(apiKey);
+  }
 
   async sendTestEmail(): Promise<void> {
-    const { email, receiver, transporter } = this.getMailConfiguration();
-
     try {
-      await transporter.sendMail({
-        from: `"W.A.T.C.H. Reports" <${email}>`,
+      const receiver = this.configService.get<string>('REPORT_EMAIL_RECEIVER');
+      const from = this.configService.get<string>('RESEND_FROM_EMAIL');
+
+      if (!receiver || !from) {
+        throw new Error('Missing email configuration.');
+      }
+
+      const { error } = await this.resend.emails.send({
+        from,
         to: receiver,
         subject: 'W.A.T.C.H. Email Integration Test',
         text: 'Email integration is working! W.A.T.C.H. can now send issue report notifications.',
       });
+
+      if (error) {
+        throw new Error(error.message);
+      }
     } catch (error) {
       console.error('Email sending failed:', error);
       throw new InternalServerErrorException('Failed to send email.');
@@ -35,13 +52,19 @@ export class EmailService {
     body: string;
     created_at: string;
   }): Promise<void> {
-    const { email, receiver, transporter } = this.getMailConfiguration();
+    const receiver = this.configService.get<string>('REPORT_EMAIL_RECEIVER');
+    const from = this.configService.get<string>('RESEND_FROM_EMAIL');
 
-    await transporter.sendMail({
-      from: `"W.A.T.C.H. Reports" <${email}>`,
-      to: receiver,
-      subject: `W.A.T.C.H. New Issue Report #${report.id}`,
-      text: `
+    if (!receiver || !from) {
+      throw new Error('Missing email configuration.');
+    }
+
+    try {
+      const { error } = await this.resend.emails.send({
+        from,
+        to: receiver,
+        subject: `W.A.T.C.H. New Issue Report #${report.id}`,
+        text: `
 A new issue report has been submitted through W.A.T.C.H.
 
 Report ID: ${report.id}
@@ -53,40 +76,17 @@ ${report.title}
 
 Description:
 ${report.body}
-      `,
-    });
-  }
-
-  private getMailConfiguration() {
-    const email = this.configService.get<string>('GMAIL_USER')?.trim();
-    const password = this.configService
-      .get<string>('GMAIL_APP_PASSWORD')
-      ?.trim();
-    const receiver = this.configService.get<string>('GMAIL_RECEIVER')?.trim();
-
-    if (!email || !password || !receiver) {
-      const missing = [
-        !email ? 'GMAIL_USER' : null,
-        !password ? 'GMAIL_APP_PASSWORD' : null,
-        !receiver ? 'GMAIL_RECEIVER' : null,
-      ].filter((name): name is string => name !== null);
-      throw new ServiceUnavailableException(
-        `Email notifications are not configured. Set ${missing.join(', ')} in the backend environment to enable email.`,
-      );
-    }
-
-    let transporter = this.transporter;
-    if (!transporter) {
-      transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: email,
-          pass: password,
-        },
+        `,
       });
-      this.transporter = transporter;
-    }
 
-    return { email, receiver, transporter };
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      console.log(`Report notification sent for report #${report.id}`);
+    } catch (error) {
+      console.error(`Report email notification failed for #${report.id}:`, error);
+      throw error;
+    }
   }
 }
