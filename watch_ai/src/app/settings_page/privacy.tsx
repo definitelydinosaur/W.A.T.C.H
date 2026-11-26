@@ -14,9 +14,11 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import supabase from '../../lib/supabase';
+import { useAppTheme } from '../../theme/theme-context';
 
 export default function PrivacyScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -106,7 +108,7 @@ const confirmAccountDeletion = async () => {
 
 
   return (
-    <View style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -122,7 +124,7 @@ const confirmAccountDeletion = async () => {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -157,13 +159,13 @@ const confirmAccountDeletion = async () => {
                         cy={8}
                         r={3.5}
                         fill="none"
-                        stroke="#4B32B5"
+                        stroke={displayed.primary}
                         strokeWidth={1.8}
                       />
                       <Path
                         d="M4.5 21v-1a7.5 7.5 0 0 1 15 0v1"
                         fill="none"
-                        stroke="#4B32B5"
+                        stroke={displayed.primary}
                         strokeWidth={1.8}
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -176,7 +178,9 @@ const confirmAccountDeletion = async () => {
                       View and manage personal details associated with your account.
                     </Text>
                   </View>
-                  <Text style={styles.chevron}>›</Text>
+                  <Text style={[styles.chevron, { color: displayed.primary }]}>
+                    ›
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -201,10 +205,18 @@ const confirmAccountDeletion = async () => {
                     onPress={() => setDeleteDialogVisible(true)}
                     style={({ pressed }) => [
                       styles.deleteButton,
+                      { backgroundColor: displayed.primary },
                       pressed && styles.rowPressed,
                     ]}
                   >
-                    <Text style={styles.deleteButtonText}>Delete</Text>
+                    <Text
+                      style={[
+                        styles.deleteButtonText,
+                        { color: displayed.onPrimary },
+                      ]}
+                    >
+                      Delete
+                    </Text>
                   </Pressable>
                 </View>
               </View>
@@ -249,10 +261,18 @@ const confirmAccountDeletion = async () => {
                 onPress={closeDeleteDialog}
                 style={({ pressed }) => [
                   styles.cancelButton,
+                  { backgroundColor: displayed.settingsGradient[1] },
                   pressed && styles.rowPressed,
                 ]}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text
+                  style={[
+                    styles.cancelButtonText,
+                    { color: displayed.text },
+                  ]}
+                >
+                  Cancel
+                </Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -261,11 +281,19 @@ const confirmAccountDeletion = async () => {
                 onPress={confirmAccountDeletion}
                 style={({ pressed }) => [
                   styles.confirmDeleteButton,
+                  { backgroundColor: displayed.primary },
                   deleteConfirmation !== 'delete-account' && styles.confirmDeleteDisabled,
                   pressed && styles.rowPressed,
                 ]}
               >
-                <Text style={styles.confirmDeleteText}>{isDeleting ? 'Deleting...' : 'Confirm delete'}</Text>
+                <Text
+                  style={[
+                    styles.confirmDeleteText,
+                    { color: displayed.onPrimary },
+                  ]}
+                >
+                  {isDeleting ? 'Deleting...' : 'Confirm delete'}
+                </Text>
               </Pressable>
             </View>
           </View>

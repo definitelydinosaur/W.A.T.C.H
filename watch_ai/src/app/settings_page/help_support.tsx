@@ -10,6 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
+import { useAppTheme } from '../../theme/theme-context';
 
 const FAQ_ITEMS = [
   {
@@ -36,6 +37,7 @@ const FAQ_ITEMS = [
 
 export default function HelpSupportScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const [faqsExpanded, setFaqsExpanded] = useState(false);
   const [expandedQuestion, setExpandedQuestion] = useState<number | null>(null);
 
@@ -48,7 +50,7 @@ export default function HelpSupportScreen() {
   };
 
   return (
-    <View style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -64,7 +66,7 @@ export default function HelpSupportScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -97,7 +99,9 @@ export default function HelpSupportScreen() {
                   ]}
                 >
                   <Text style={styles.optionLabel}>FAQs</Text>
-                  <Text style={styles.chevron}>{faqsExpanded ? '−' : '+'}</Text>
+                  <Text style={[styles.chevron, { color: displayed.primary }]}>
+                    {faqsExpanded ? '−' : '+'}
+                  </Text>
                 </Pressable>
 
                 {faqsExpanded && (
@@ -119,7 +123,9 @@ export default function HelpSupportScreen() {
                             ]}
                           >
                             <Text style={styles.questionText}>{item.question}</Text>
-                            <Text style={styles.chevron}>{expanded ? '−' : '+'}</Text>
+                            <Text style={[styles.chevron, { color: displayed.primary }]}>
+                              {expanded ? '−' : '+'}
+                            </Text>
                           </Pressable>
                           {expanded && (
                             <Text style={styles.answerText}>{item.answer}</Text>
@@ -139,7 +145,9 @@ export default function HelpSupportScreen() {
                   ]}
                 >
                   <Text style={styles.optionLabel}>How W.A.T.C.H. Works</Text>
-                  <Text style={styles.chevron}>›</Text>
+                  <Text style={[styles.chevron, { color: displayed.primary }]}>
+                    ›
+                  </Text>
                 </Pressable>
 
                 <Pressable
@@ -151,7 +159,9 @@ export default function HelpSupportScreen() {
                   ]}
                 >
                   <Text style={styles.optionLabel}>Contact us</Text>
-                  <Text style={styles.chevron}>›</Text>
+                  <Text style={[styles.chevron, { color: displayed.primary }]}>
+                    ›
+                  </Text>
                 </Pressable>
 
                 <Pressable
@@ -163,7 +173,9 @@ export default function HelpSupportScreen() {
                   ]}
                 >
                   <Text style={styles.optionLabel}>About W.A.T.C.H.</Text>
-                  <Text style={styles.chevron}>›</Text>
+                  <Text style={[styles.chevron, { color: displayed.primary }]}>
+                    ›
+                  </Text>
                 </Pressable>
               </View>
             </View>

@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import { useAppTheme } from '../../theme/theme-context';
 
 const DOCUMENTS = {
   terms: {
@@ -122,6 +123,7 @@ function isDocumentId(value: string | string[] | undefined): value is DocumentId
 
 export default function PolicyDocumentScreen() {
   const router = useRouter();
+  const { displayed } = useAppTheme();
   const { document } = useLocalSearchParams<{ document?: string | string[] }>();
   const selectedDocument = isDocumentId(document) ? DOCUMENTS[document] : null;
 
@@ -134,7 +136,7 @@ export default function PolicyDocumentScreen() {
   };
 
   return (
-    <View style={styles.background}>
+    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -150,7 +152,7 @@ export default function PolicyDocumentScreen() {
                 <Path
                   d="m15 4-8 8 8 8"
                   fill="none"
-                  stroke="#342448"
+                  stroke={displayed.text}
                   strokeWidth={2.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"
