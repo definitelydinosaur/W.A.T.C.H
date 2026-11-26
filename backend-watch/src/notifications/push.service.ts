@@ -90,6 +90,14 @@ export class PushService {
         `Push preferences could not be loaded: ${profileError.message}`,
       );
     }
+    const profileToken =
+      typeof profile?.expo_push_token === 'string'
+        ? profile.expo_push_token
+        : null;
+    const token = await this.getValidExpoPushToken(
+      input.userId,
+      profileToken,
+    );
     const notificationPrefs = (profile?.notification_prefs ??
       {}) as NotificationPreferences;
     const allowsPush =
@@ -108,29 +116,6 @@ export class PushService {
               false;
     const body = this.ensureOpenAppInstruction(input.body);
     const title = input.title.trim().slice(0, 80) || 'W.A.T.C.H. Alert';
-    let token =
-      typeof profile?.expo_push_token === 'string'
-        ? profile.expo_push_token
-        : null;
-    if (!token) {
-      const { data: pushToken, error: tokenError } = await this.supabase
-        .from('push_tokens')
-        .select('expo_push_token')
-        .eq('user_id', input.userId)
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (tokenError) {
-        throw new Error(
-          `Registered push token could not be loaded: ${tokenError.message}`,
-        );
-      }
-      token =
-        typeof pushToken?.expo_push_token === 'string'
-          ? pushToken.expo_push_token
-          : null;
-    }
 
     const { data: notification, error: insertError } = await this.supabase
       .from('notifications')
@@ -263,40 +248,9 @@ export class PushService {
   }
 
   async sendTestPushToUser(userId: string) {
-    const { data: profile, error: profileError } = await this.supabase
-      .from('user_info')
-      .select('expo_push_token')
-      .eq('id', userId)
-      .maybeSingle();
-    if (profileError) {
-      throw new Error(`Push token could not be loaded: ${profileError.message}`);
-    }
-    let token =
-      typeof profile?.expo_push_token === 'string'
-        ? profile.expo_push_token
-        : null;
-    if (!token) {
-      const { data: pushToken, error: tokenError } = await this.supabase
-        .from('push_tokens')
-        .select('expo_push_token')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (tokenError) {
-        throw new Error(`Registered push token could not be loaded: ${tokenError.message}`);
-      }
-      token =
-        typeof pushToken?.expo_push_token === 'string'
-          ? pushToken.expo_push_token
-          : null;
-    }
+    const token = await this.getValidExpoPushToken(userId);
     if (!token) {
       return { sent: false, no_token: true, raw: null, delivery_error: 'No Expo push token is registered for this device.' };
-    }
-    if (!Expo.isExpoPushToken(token)) {
-      return { sent: false, no_token: true, raw: null, delivery_error: 'The registered token is not an Expo push token.' };
     }
     const message: ExpoPushMessage = {
       to: token,
@@ -442,6 +396,53 @@ export class PushService {
         `Invalid registered Expo token could not be disabled: ${tokenError.message}`,
       );
     }
+  }
+
+  private async getValidExpoPushToken(
+    userId: string,
+    profileToken?: string | null,
+  ): Promise<string | null> {
+    let token = profileToken;
+    if (token === undefined) {
+      const { data: profile, error: profileError } = await this.supabase
+        .from('user_info')
+        .select('expo_push_token')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profileError) {
+        throw new Error(
+          `Push token could not be loaded: ${profileError.message}`,
+        );
+      }
+      token =
+        typeof profile?.expo_push_token === 'string'
+          ? profile.expo_push_token
+          : null;
+    }
+    if (typeof token === 'string' && Expo.isExpoPushToken(token)) {
+      return token;
+    }
+
+    const { data: pushTokens, error: tokenError } = await this.supabase
+      .from('push_tokens')
+      .select('expo_push_token')
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false })
+      .limit(50)
+      .overrideTypes<{ expo_push_token: string }[], { merge: false }>();
+    if (tokenError) {
+      throw new Error(
+        `Registered push token could not be loaded: ${tokenError.message}`,
+      );
+    }
+    return (
+      pushTokens?.find(
+        (pushToken) =>
+          typeof pushToken.expo_push_token === 'string' &&
+          Expo.isExpoPushToken(pushToken.expo_push_token),
+      )?.expo_push_token ?? null
+    );
   }
 
   private ensureOpenAppInstruction(body: string) {

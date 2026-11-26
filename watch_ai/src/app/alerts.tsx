@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   ActivityIndicator,
   Alert,
   FlatList,
@@ -13,7 +14,7 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import supabase from '../lib/supabase';
 import { useAppTheme } from '../theme/theme-context';
 
@@ -215,9 +216,17 @@ export default function AlertsScreen() {
       const abortController = new AbortController();
       activeRequestController.current = abortController;
       let timedOut = false;
+      let requestStep = 'account session';
+      let timedOutStep = requestStep;
+      let rejectTimeout!: (reason?: Error) => void;
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        rejectTimeout = reject;
+      });
       const timeout = setTimeout(() => {
         timedOut = true;
+        timedOutStep = requestStep;
         abortController.abort();
+        rejectTimeout(new Error('Alerts request timed out.'));
       }, 30_000);
       if (reset) {
         setLoading(true);
@@ -229,7 +238,7 @@ export default function AlertsScreen() {
       }
       try {
         const { data: sessionData, error: sessionError } =
-          await supabase.auth.getSession();
+          await Promise.race([supabase.auth.getSession(), timeoutPromise]);
         if (!isCurrentRequest()) return;
         if (sessionError) {
           setError(sessionError.message);
@@ -262,6 +271,7 @@ export default function AlertsScreen() {
         else if (filter === 'System') query = query.eq('kind', 'system');
         let notificationRows: AlertRow[] = [];
         if (shouldLoadNotifications) {
+          requestStep = 'saved alerts';
           const { data, error: queryError } = await query
             .abortSignal(abortController.signal)
             .range(start, start + PAGE_SIZE - 1);
@@ -269,7 +279,7 @@ export default function AlertsScreen() {
           if (queryError) {
             setError(
               timedOut
-                ? 'Loading alerts timed out. Please try again.'
+                ? `Loading ${timedOutStep} timed out. Please try again.`
                 : queryError.message,
             );
             return;
@@ -282,6 +292,7 @@ export default function AlertsScreen() {
         let userReportRows: AlertRow[] = [];
         if (filter === 'System' || filter === 'All') {
           const reportStart = reset ? 0 : userReportOffset.current;
+          requestStep = 'report history';
           const { data, error: reportsError } = await supabase
             .from('user_reports')
             .select('id,user_id,title,body,created_at')
@@ -293,7 +304,7 @@ export default function AlertsScreen() {
           if (reportsError) {
             setError(
               timedOut
-                ? 'Loading alerts timed out. Please try again.'
+                ? `Loading ${timedOutStep} timed out. Please try again.`
                 : reportsError.message,
             );
             return;
@@ -337,6 +348,7 @@ export default function AlertsScreen() {
               message?: string | string[];
             };
             try {
+              requestStep = 'location-aware weather alerts';
               response = await fetch(
                 `${API_URL}/alerts/weather-events?page=${weatherPage.current}&limit=${PAGE_SIZE}`,
                 {
@@ -351,7 +363,7 @@ export default function AlertsScreen() {
               if (!isCurrentRequest()) return;
               setError(
                 timedOut
-                  ? 'Loading alerts timed out. Please try again.'
+                  ? `Loading ${timedOutStep} timed out. Please try again.`
                   : requestError instanceof Error
                     ? requestError.message
                     : 'Unable to load location-aware weather alerts.',
@@ -408,7 +420,7 @@ export default function AlertsScreen() {
         if (!isCurrentRequest()) return;
         setError(
           timedOut
-            ? 'Loading alerts timed out. Please try again.'
+            ? `Loading ${timedOutStep} timed out. Please try again.`
             : requestError instanceof Error
               ? requestError.message
               : 'Unable to load alerts.',
@@ -428,18 +440,29 @@ export default function AlertsScreen() {
     [filter],
   );
 
-  useEffect(
-    () => () => {
-      requestVersion.current += 1;
-      activeRequestController.current?.abort();
-    },
-    [],
+  useFocusEffect(
+    useCallback(() => {
+      let focused = true;
+      const refresh = () => {
+        if (focused) void loadAlerts();
+      };
+      const timer = setTimeout(refresh, 0);
+      const appStateSubscription = AppState.addEventListener(
+        'change',
+        (state) => {
+          if (state === 'active') refresh();
+        },
+      );
+      return () => {
+        focused = false;
+        clearTimeout(timer);
+        requestVersion.current += 1;
+        activeRequestController.current?.abort();
+        paging.current = false;
+        appStateSubscription.remove();
+      };
+    }, [loadAlerts]),
   );
-
-  useEffect(() => {
-    const timer = setTimeout(() => void loadAlerts(), 0);
-    return () => clearTimeout(timer);
-  }, [loadAlerts]);
 
   useEffect(() => {
     if (!userId) return;

@@ -4,6 +4,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance } from 'expo-notifications';
 import supabase from './supabase';
+import { profileApi } from './profile-api';
 
 export const EAS_PROJECT_ID = '0f8597f6-574b-4514-9047-936c801fbb8d';
 
@@ -148,19 +149,53 @@ export async function saveNotificationPreferences(
 }
 
 export async function saveExpoPushToken(token: string | null): Promise<void> {
-  const userId = await getSignedInUserId();
-  const { data, error } = await supabase
-    .from('user_info')
-    .update({ expo_push_token: token })
-    .eq('id', userId)
-    .select('id')
-    .maybeSingle();
-  if (error) throw logSupabaseFailure('Saving the Expo push token', error);
-  if (!data) {
-    throw new Error(
-      'No profile row was updated. Check the user_info UPDATE grant and own-row RLS policy.',
-    );
+  await profileApi('/profile/push-token', {
+    method: token ? 'POST' : 'DELETE',
+    ...(token ? { body: JSON.stringify({ token }) } : {}),
+  });
+}
+
+async function registerCurrentDeviceToken() {
+  if (Platform.OS === 'android') {
+    const channelOptions = {
+      importance: AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#8B5CF6',
+    };
+    await Notifications.setNotificationChannelAsync('default', {
+      ...channelOptions,
+      name: 'Notifications',
+    });
+    await Notifications.setNotificationChannelAsync('weather-alerts', {
+      ...channelOptions,
+      name: 'Weather alerts',
+    });
   }
+
+  const token = await Notifications.getExpoPushTokenAsync({
+    projectId: EAS_PROJECT_ID,
+  });
+  if (!token.data) {
+    throw new Error('The device did not return an Expo push token.');
+  }
+  console.log(
+    '[notifications] saving Expo token:',
+    `${token.data.slice(0, 12)}...`,
+  );
+  await saveExpoPushToken(token.data);
+}
+
+export async function registerPushTokenIfGranted(): Promise<boolean> {
+  const deviceAvailable =
+    Platform.OS !== 'web' &&
+    Device.isDevice &&
+    Constants.executionEnvironment !== ExecutionEnvironment.StoreClient;
+  if (!deviceAvailable) return false;
+
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) return false;
+  await registerCurrentDeviceToken();
+  return true;
 }
 
 export async function getPushPermissionStatus(): Promise<{
@@ -230,26 +265,7 @@ export async function enablePushNotifications(): Promise<PushRegistrationResult>
       };
     }
 
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('default', {
-        name: 'Notifications',
-        importance: AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#8B5CF6',
-      });
-    }
-
-    const token = await Notifications.getExpoPushTokenAsync({
-      projectId: EAS_PROJECT_ID,
-    });
-    if (!token.data) {
-      throw new Error('The device did not return an Expo push token.');
-    }
-    console.log(
-      '[notifications] saving Expo token:',
-      `${token.data.slice(0, 12)}...`,
-    );
-    await saveExpoPushToken(token.data);
+    await registerCurrentDeviceToken();
     return {
       status: 'enabled',
       permissionStatus: permission.status,

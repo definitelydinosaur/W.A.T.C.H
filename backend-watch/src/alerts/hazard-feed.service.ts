@@ -72,6 +72,22 @@ type PagasaRow = {
   notification_announcement_id: number | null;
 };
 
+type AnnouncementRow = {
+  id: number;
+  title: string | null;
+  content: string | null;
+  ai_summary: string | null;
+  source: string | null;
+  source_name: string | null;
+  source_url: string | null;
+  published_at: string;
+  category: string | null;
+  ai_scope: string | null;
+  source_type: string | null;
+  city: string | null;
+  pagasa_alert_id: number | null;
+};
+
 type WeatherAlertEventRow = {
   id: string;
   alert_type: 'extreme_heat' | 'unhealthy_air' | 'heavy_rain' | 'pagasa_weather';
@@ -95,7 +111,11 @@ type WeatherAlertEventRow = {
 
 type FeedEvent = {
   id: string;
-  item_type: 'hazard' | 'pagasa' | 'weather_event';
+  item_type:
+    | 'announcement'
+    | 'hazard'
+    | 'pagasa'
+    | 'weather_event';
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -143,7 +163,7 @@ export class HazardFeedService {
       50,
       Math.max(1, Number.parseInt(input.limit ?? '20', 10) || 20),
     );
-    const events = await this.loadEvents();
+    const events = await this.loadEvents(true);
     const search = input.search?.trim().toLocaleLowerCase();
     const category = input.category?.trim();
     const filtered = events.filter((event) => {
@@ -300,8 +320,31 @@ export class HazardFeedService {
     };
   }
 
-  private async loadEvents(): Promise<FeedEvent[]> {
-    const [hazardsResult, locations, pagasaResult, weatherEventsResult] = await Promise.all([
+  private async loadEvents(
+    includeStoredAnnouncements = false,
+  ): Promise<FeedEvent[]> {
+    const announcementsRequest = includeStoredAnnouncements
+      ? this.supabase
+          .from('announcements')
+          .select(
+            'id,title,content,ai_summary,source,source_name,source_url,published_at,category,ai_scope,source_type,city,pagasa_alert_id',
+          )
+          .eq('status', 'published')
+          .or('ai_scope.is.null,ai_scope.eq.weather')
+          .order('published_at', { ascending: false })
+          .limit(EVENT_PAGE_LIMIT)
+          .overrideTypes<AnnouncementRow[], { merge: false }>()
+      : Promise.resolve({
+          data: [] as AnnouncementRow[],
+          error: null,
+        });
+    const [
+      hazardsResult,
+      locations,
+      pagasaResult,
+      weatherEventsResult,
+      announcementsResult,
+    ] = await Promise.all([
       this.supabase
         .from('hazards')
         .select(
@@ -319,9 +362,13 @@ export class HazardFeedService {
         .limit(EVENT_PAGE_LIMIT),
       this.supabase
         .from('weather_alert_events')
-        .select('id,alert_type,city,province,area_key,severity,measurement,measured_at,sustained_since,title,ai_summary,safety,source,source_name,source_url,status,resolved_at,notified_count')
+        .select(
+          'id,alert_type,city,province,area_key,severity,measurement,measured_at,sustained_since,title,ai_summary,safety,source,source_name,source_url,status,resolved_at,notified_count',
+        )
         .order('measured_at', { ascending: false })
-        .limit(EVENT_PAGE_LIMIT),
+        .limit(EVENT_PAGE_LIMIT)
+        .overrideTypes<WeatherAlertEventRow[], { merge: false }>(),
+      announcementsRequest,
     ]);
     if (hazardsResult.error) {
       throw new ServiceUnavailableException(
@@ -338,32 +385,161 @@ export class HazardFeedService {
         `Weather alert events could not be loaded: ${weatherEventsResult.error.message}`,
       );
     }
+    if (includeStoredAnnouncements && announcementsResult.error) {
+      throw new ServiceUnavailableException(
+        `Weather announcements could not be loaded: ${announcementsResult.error.message}`,
+      );
+    }
     const hazardRows = (hazardsResult.data ?? []) as HazardRow[];
     const pagasaRows = (pagasaResult.data ?? []) as PagasaRow[];
-    const weatherEventRows =
-      (weatherEventsResult.data ?? []) as WeatherAlertEventRow[];
+    const weatherEventRows = weatherEventsResult.data ?? [];
+    const announcementRows = announcementsResult.data ?? [];
     const locationById = new Map(
       locations.map((location) => [location.loc_id, location]),
     );
-    // Map/flood hazards belong to the map, not automated weather announcements.
+    const hazardEvents = dedupeHazards(
+      hazardRows
+        .filter((hazard) => !isTestHazard(hazard))
+        .map((hazard) => this.toHazardEvent(hazard, locationById, locations))
+        .filter((event): event is FeedEvent => event !== null),
+    );
+    const hazardIds = [
+      ...new Set(hazardEvents.flatMap((event) => event.hazard_ids)),
+    ];
+    const hazardNotifications = await this.getNotifications(hazardIds, []);
+    applyCounts(hazardEvents, hazardNotifications);
+
     const dedicatedEvents = weatherEventRows.map((event) =>
       this.toWeatherAlertEvent(event),
     );
 
+    const linkedAnnouncementIds = new Set(
+      pagasaRows
+        .map((alert) => alert.notification_announcement_id)
+        .filter((id): id is number => id !== null),
+    );
+    const pagasaAlertIds = new Set(pagasaRows.map((alert) => alert.id));
+    const weatherAnnouncementRows = announcementRows.filter(
+      (announcement) =>
+        !['admin_manual', 'admin_test_replay', 'admin_system'].includes(
+          announcement.source ?? '',
+        ) &&
+        !linkedAnnouncementIds.has(announcement.id) &&
+        (announcement.pagasa_alert_id === null ||
+          !pagasaAlertIds.has(announcement.pagasa_alert_id)),
+    );
     const pagasaIds = pagasaRows
       .map((alert) => alert.notification_announcement_id)
       .filter((id): id is number => id !== null);
-    const pagasaNotifications = await this.getNotifications([], pagasaIds);
-    const pagasaCounts = countAnnouncementNotifications(pagasaNotifications);
+    const announcementIds = [
+      ...new Set([
+        ...pagasaIds,
+        ...weatherAnnouncementRows.map((announcement) => announcement.id),
+      ]),
+    ];
+    const announcementNotifications = await this.getNotifications(
+      [],
+      announcementIds,
+    );
+    const announcementCounts = countAnnouncementNotifications(
+      announcementNotifications,
+    );
     const pagasaEvents = dedupePagasaEvents(
       pagasaRows.map((alert) =>
-        this.toPagasaEvent(alert, locations, pagasaCounts),
+        this.toPagasaEvent(alert, locations, announcementCounts),
       ),
     );
-    return [...dedicatedEvents, ...pagasaEvents].sort(
+    const weatherAnnouncements = weatherAnnouncementRows
+      .filter(
+        (announcement) =>
+          !isDuplicatePagasaAnnouncement(announcement, pagasaEvents),
+      )
+      .map((announcement) =>
+        this.toAnnouncementEvent(
+          announcement,
+          announcementCounts.get(announcement.id) ?? {},
+        ),
+      )
+      .filter((event): event is FeedEvent => event !== null);
+    return [
+      ...hazardEvents,
+      ...dedicatedEvents,
+      ...pagasaEvents,
+      ...weatherAnnouncements,
+    ].sort(
       (left, right) =>
         Date.parse(right.published_at) - Date.parse(left.published_at),
     );
+  }
+
+  private toAnnouncementEvent(
+    announcement: AnnouncementRow,
+    notificationCounts: Record<string, number>,
+  ): FeedEvent | null {
+    const source = announcement.source?.trim().toLocaleLowerCase() ?? '';
+    const sourceType =
+      announcement.source_type?.trim().toLocaleLowerCase() ??
+      (source.includes('pagasa') ? 'pagasa' : source);
+    const classification = classifyWeatherAnnouncement({
+      eventType: announcement.ai_scope,
+      hazardType: announcement.title,
+      category: announcement.category,
+      sourceType,
+    });
+    if (!classification) return null;
+
+    const title = announcement.title?.trim() || 'Weather announcement';
+    const content =
+      announcement.ai_summary?.trim() || announcement.content?.trim() || title;
+    const sourceName =
+      sourceType === 'pagasa' &&
+      announcement.source_name?.trim().toLocaleLowerCase() === 'unknown source'
+        ? 'PAGASA'
+        : announcement.source_name?.trim() ||
+          (sourceType === 'pagasa' ? 'PAGASA' : 'W.A.T.C.H.');
+    const city = announcement.city?.trim() || null;
+
+    return {
+      id: `announcement-${announcement.id}`,
+      item_type: 'announcement',
+      announcement_id: announcement.id,
+      hazard_id: null,
+      pagasa_id: null,
+      title,
+      content,
+      ai_summary: content,
+      source_name: sourceName,
+      source_url: announcement.source_url,
+      source_type: sourceType ?? 'announcement',
+      category: classification.category,
+      severity: null,
+      event_type: announcement.category,
+      area_key: city
+        ? normalizeAreaKey({
+            city,
+            province: null,
+            latitude: null,
+            longitude: null,
+          })
+        : '',
+      city,
+      province: null,
+      place_name: city ?? 'All locations',
+      affected_areas: city ? [city] : [],
+      requires_area_review: false,
+      published_at: announcement.published_at,
+      observed_at: announcement.published_at,
+      measurements: null,
+      notification_counts: notificationCounts,
+      audience_count: Object.values(notificationCounts).reduce(
+        (total, count) => total + count,
+        0,
+      ),
+      hazard_ids: [],
+      active: true,
+      window_key: String(announcement.id),
+      safety_tips: null,
+    };
   }
 
   private toWeatherAlertEvent(event: WeatherAlertEventRow): FeedEvent {
@@ -644,11 +820,15 @@ export class HazardFeedService {
   ) {
     const rows: NotificationRow[] = [];
     if (hazardIds.length) {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('notifications')
         .select(
           'id,hazard_id,announcement_id,user_id,status,created_at,deleted_at',
-        )
+        );
+      if (userId) {
+        query = query.eq('user_id', userId).is('deleted_at', null);
+      }
+      const { data, error } = await query
         .in('hazard_id', hazardIds)
         .order('created_at', { ascending: false });
       if (error) {
@@ -659,11 +839,15 @@ export class HazardFeedService {
       rows.push(...((data ?? []) as NotificationRow[]));
     }
     if (announcementIds.length) {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('notifications')
         .select(
           'id,hazard_id,announcement_id,user_id,status,created_at,deleted_at',
-        )
+        );
+      if (userId) {
+        query = query.eq('user_id', userId).is('deleted_at', null);
+      }
+      const { data, error } = await query
         .in('announcement_id', announcementIds)
         .order('created_at', { ascending: false });
       if (error) {
@@ -735,6 +919,45 @@ function dedupePagasaEvents(events: FeedEvent[]) {
     }
   }
   return [...unique.values()];
+}
+
+function isDuplicatePagasaAnnouncement(
+  announcement: AnnouncementRow,
+  pagasaEvents: FeedEvent[],
+) {
+  const isPagasa =
+    announcement.source_type?.trim().toLocaleLowerCase() === 'pagasa' ||
+    announcement.source?.trim().toLocaleLowerCase().includes('pagasa') === true;
+  if (!isPagasa) return false;
+
+  const title = normalizePagasaText(announcement.title);
+  if (!title) return false;
+  const content = normalizePagasaText(announcement.content);
+  const publishedAt = Date.parse(announcement.published_at);
+
+  return pagasaEvents.some((event) => {
+    if (
+      event.item_type !== 'pagasa' ||
+      normalizePagasaText(event.title) !== title
+    ) {
+      return false;
+    }
+
+    if (content && normalizePagasaText(event.content) === content) return true;
+    const eventPublishedAt = Date.parse(event.published_at);
+    return (
+      Number.isFinite(publishedAt) &&
+      Number.isFinite(eventPublishedAt) &&
+      Math.abs(publishedAt - eventPublishedAt) <= 6 * 60 * 60 * 1000
+    );
+  });
+}
+
+function normalizePagasaText(value: string | null | undefined) {
+  return (value ?? '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 function applyCounts(events: FeedEvent[], notifications: NotificationRow[]) {
