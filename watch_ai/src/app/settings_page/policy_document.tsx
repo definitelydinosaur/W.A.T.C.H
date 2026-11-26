@@ -1,4 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -184,7 +185,7 @@ export default function PolicyDocumentScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </View>
+    </LinearGradient>
   );
 }
 

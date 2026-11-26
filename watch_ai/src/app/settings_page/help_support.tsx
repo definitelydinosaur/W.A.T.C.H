@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   Pressable,
   ScrollView,
@@ -182,7 +183,7 @@ export default function HelpSupportScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </View>
+    </LinearGradient>
   );
 }
 

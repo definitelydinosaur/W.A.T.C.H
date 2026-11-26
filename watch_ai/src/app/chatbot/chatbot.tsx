@@ -712,11 +712,19 @@ const sendMessage = async () => {
       },
     );
 
-    if (!response.ok) {
-      throw new Error(
-        `Chatbot request failed with status ${response.status}`,
-      );
-    }
+   if (!response.ok) {
+  const errorText = await response.text();
+
+  console.error("Chatbot API Error:", {
+    status: response.status,
+    statusText: response.statusText,
+    body: errorText,
+  });
+
+  throw new Error(
+    `Chatbot request failed: ${response.status} - ${errorText}`,
+  );
+}
 
     const data: ChatbotResponse = await response.json();
 
