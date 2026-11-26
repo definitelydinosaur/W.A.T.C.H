@@ -109,6 +109,14 @@ export class AdminFeaturesController {
     return this.features.sendManualNotification(request.user.id, body);
   }
 
+  @Get('notifications/manual-history')
+  getManualAnnouncementHistory(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.features.getManualAnnouncementHistory(page, limit);
+  }
+
   @Post('notifications/test')
   sendTestPush(@Req() request: AdminRequest) {
     return this.features.sendTestPush(request.user.id);

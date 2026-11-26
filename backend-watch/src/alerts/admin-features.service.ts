@@ -24,6 +24,16 @@ type ManualSendInput = {
   institution_id?: string;
 };
 
+type ManualAnnouncementHistoryRow = {
+  id: number;
+  title: string;
+  content: string | null;
+  source_name: string | null;
+  published_at: string;
+  category: string | null;
+  ai_scope: string | null;
+};
+
 type SystemAnnouncement = SystemAnnouncementFormat;
 
 type AutomatedAnnouncementRow = {
@@ -204,6 +214,40 @@ export class AdminFeaturesService {
       announcement_id: announcement.id,
       audience_count: recipients.length,
       ...result,
+    };
+  }
+
+  async getManualAnnouncementHistory(
+    pageValue?: string,
+    limitValue?: string,
+  ) {
+    const page = Math.max(0, Number.parseInt(pageValue ?? '0', 10) || 0);
+    const limit = Math.min(
+      50,
+      Math.max(1, Number.parseInt(limitValue ?? '20', 10) || 20),
+    );
+    const start = page * limit;
+    const { data, error } = await this.supabase
+      .from('announcements')
+      .select(
+        'id,title,content,source_name,published_at,category,ai_scope',
+      )
+      .eq('source', 'admin_manual')
+      .eq('status', 'published')
+      .order('published_at', { ascending: false })
+      .range(start, start + limit)
+      .overrideTypes<ManualAnnouncementHistoryRow[], { merge: false }>();
+    if (error) {
+      throw new ServiceUnavailableException(
+        `Manual announcement history could not be loaded: ${error.message}`,
+      );
+    }
+    const rows = data ?? [];
+    return {
+      items: rows.slice(0, limit),
+      page,
+      limit,
+      has_more: rows.length > limit,
     };
   }
 

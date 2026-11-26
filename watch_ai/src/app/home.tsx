@@ -8,6 +8,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Dimensions,
+  AppState,
   Animated,
   Platform,
   Modal,
@@ -898,92 +899,110 @@ export default function HomeScreen() {
   const [isDashboardExpanded, setIsDashboardExpanded] = useState(true);
   const [liveClock, setLiveClock] = useState(new Date());
 
-  useEffect(() => {
-    let active = true;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let started = false;
-    const loadUnreadCount = async () => {
-      if (started) return;
-      started = true;
-      const { data: sessionData, error: sessionError } =
-        await supabase.auth.getSession();
-      if (sessionError) {
-        console.warn("Unable to load alert badge count:", sessionError.message);
-        return;
-      }
-      const userId = sessionData.session?.user.id;
-      if (!userId || !active) return;
-      const refreshCount = async () => {
-        const [
-          { count: notificationCount, error: notificationCountError },
-          { count: userReportCount, error: userReportCountError },
-        ] = await Promise.all([
-          supabase
-            .from("notifications")
-            .select("id", { count: "exact", head: true })
-            .eq("user_id", userId)
-            .is("deleted_at", null)
-            .neq("status", "Read"),
-          supabase
-            .from("user_reports")
-            .select("id", { count: "exact", head: true })
-            .eq("user_id", userId),
-        ]);
-        if (notificationCountError || userReportCountError) {
-          console.warn(
-            "Unable to refresh alert badge count:",
-            notificationCountError?.message ??
-              userReportCountError?.message,
-          );
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      let channel: ReturnType<typeof supabase.channel> | null = null;
+      let removeAppStateListener: (() => void) | null = null;
+      let refreshVersion = 0;
+      const loadUnreadCount = async () => {
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+        if (!active) return;
+        if (sessionError) {
+          console.warn("Unable to load alert badge count:", sessionError.message);
           return;
         }
-        if (active) {
-          setUnreadAlertCount(
-            (notificationCount ?? 0) + (userReportCount ?? 0),
-          );
+        const userId = sessionData.session?.user.id;
+        if (!userId) {
+          setUnreadAlertCount(0);
+          return;
         }
-      };
-      await refreshCount();
-      const topic = `home-alert-count-${userId}`;
-      for (const existing of supabase.getChannels()) {
-        if (existing.topic === `realtime:${topic}`) {
-          await supabase.removeChannel(existing);
-        }
-      }
-      channel = supabase
-        .channel(topic)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "notifications",
-            filter: `user_id=eq.${userId}`,
-          },
-          () => void refreshCount(),
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "user_reports",
-            filter: `user_id=eq.${userId}`,
-          },
-          () => void refreshCount(),
-        )
-        .subscribe((status) => {
-          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            console.warn(`Alert badge realtime status: ${status}`);
+        const refreshCount = async () => {
+          const currentVersion = ++refreshVersion;
+          const [
+            { count: notificationCount, error: notificationCountError },
+            { count: userReportCount, error: userReportCountError },
+          ] = await Promise.all([
+            supabase
+              .from("notifications")
+              .select("id", { count: "exact", head: true })
+              .eq("user_id", userId)
+              .is("deleted_at", null)
+              .neq("status", "Read"),
+            supabase
+              .from("user_reports")
+              .select("id", { count: "exact", head: true })
+              .eq("user_id", userId),
+          ]);
+          if (notificationCountError || userReportCountError) {
+            console.warn(
+              "Unable to refresh alert badge count:",
+              notificationCountError?.message ??
+                userReportCountError?.message,
+            );
+            return;
           }
-        });
-    };
-    void loadUnreadCount();
-    return () => {
-      active = false;
-      if (channel) void supabase.removeChannel(channel);
-    };
-  }, []);
+          if (active && currentVersion === refreshVersion) {
+            setUnreadAlertCount(
+              (notificationCount ?? 0) + (userReportCount ?? 0),
+            );
+          }
+        };
+        const topic = `home-alert-count-${userId}`;
+        for (const existing of supabase.getChannels()) {
+          if (existing.topic === `realtime:${topic}`) {
+            await supabase.removeChannel(existing);
+          }
+        }
+        if (!active) return;
+        channel = supabase
+          .channel(topic)
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "notifications",
+              filter: `user_id=eq.${userId}`,
+            },
+            () => void refreshCount(),
+          )
+          .on(
+            "postgres_changes",
+            {
+              event: "*",
+              schema: "public",
+              table: "user_reports",
+              filter: `user_id=eq.${userId}`,
+            },
+            () => void refreshCount(),
+          )
+          .subscribe((status) => {
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+              console.warn(`Alert badge realtime status: ${status}`);
+            }
+          });
+        const appStateSubscription = AppState.addEventListener(
+          "change",
+          (state) => {
+            if (state === "active") void refreshCount();
+          },
+        );
+        removeAppStateListener = () => appStateSubscription.remove();
+        await refreshCount();
+      };
+      void loadUnreadCount().catch((error: unknown) => {
+        console.warn("Unable to load alert badge count:", error);
+      });
+      return () => {
+        active = false;
+        refreshVersion += 1;
+        removeAppStateListener?.();
+        if (channel) void supabase.removeChannel(channel);
+      };
+    }, []),
+  );
 
   useEffect(() => {
     if (!hazardId) return;

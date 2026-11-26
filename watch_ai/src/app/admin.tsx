@@ -58,6 +58,15 @@ type AutomatedAnnouncement = {
   audience_count: number;
   notification_counts: Record<string, number>;
 };
+type ManualAnnouncementHistoryItem = {
+  id: number;
+  title: string;
+  content: string | null;
+  source_name: string | null;
+  published_at: string;
+  category: string | null;
+  ai_scope: string | null;
+};
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, "");
 const SECTIONS: AdminSection[] = ["Manual", "AI Announcements", "System"];
@@ -179,6 +188,13 @@ export default function AdminScreen() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [manualHistory, setManualHistory] = useState<
+    ManualAnnouncementHistoryItem[]
+  >([]);
+  const [manualHistoryPage, setManualHistoryPage] = useState(0);
+  const [manualHistoryHasMore, setManualHistoryHasMore] = useState(false);
+  const [manualHistoryLoading, setManualHistoryLoading] = useState(false);
+  const [manualHistoryRefreshing, setManualHistoryRefreshing] = useState(false);
 
   const [rawText, setRawText] = useState("");
   const [instruction, setInstruction] = useState("");
@@ -267,6 +283,38 @@ export default function AdminScreen() {
     [appliedSearch, category],
   );
 
+  const loadManualHistory = useCallback(
+    async (nextPage = 0, replace = true) => {
+      setManualHistoryLoading(true);
+      try {
+        const params = new URLSearchParams({
+          page: String(nextPage),
+          limit: "20",
+        });
+        const response = await adminRequest<{
+          items: ManualAnnouncementHistoryItem[];
+          has_more: boolean;
+        }>(
+          `/admin/features/notifications/manual-history?${params.toString()}`,
+        );
+        setManualHistory((current) =>
+          replace ? response.items : [...current, ...response.items],
+        );
+        setManualHistoryPage(nextPage);
+        setManualHistoryHasMore(response.has_more);
+      } catch (error) {
+        showAdminAlert(
+          "Unable to load manual announcement history",
+          prettyError(error),
+        );
+      } finally {
+        setManualHistoryLoading(false);
+        setManualHistoryRefreshing(false);
+      }
+    },
+    [],
+  );
+
   const loadSystemAnnouncements = useCallback(async () => {
     try {
       const response = await adminRequest<{
@@ -315,6 +363,9 @@ export default function AdminScreen() {
   useEffect(() => {
     if (!verified) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    if (section === "Manual") {
+      timer = setTimeout(() => void loadManualHistory(), 0);
+    }
     if (section === "AI Announcements") {
       timer = setTimeout(() => void loadAutomated(), 0);
     }
@@ -324,7 +375,13 @@ export default function AdminScreen() {
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [loadAutomated, loadSystemAnnouncements, section, verified]);
+  }, [
+    loadAutomated,
+    loadManualHistory,
+    loadSystemAnnouncements,
+    section,
+    verified,
+  ]);
 
   const sendManual = async (target: "all" | "institution") => {
     if (!title.trim() || !message.trim()) {
@@ -365,6 +422,7 @@ export default function AdminScreen() {
       setSendResult(
         `Sent: ${result.sent} · Failed: ${result.failed} · No token: ${result.no_token}${result.failure_details?.length ? ` · ${result.failure_details.join("; ")}` : ""}`,
       );
+      void loadManualHistory();
     } catch (error) {
       showAdminAlert("Send failed", prettyError(error));
     } finally {
@@ -655,7 +713,20 @@ export default function AdminScreen() {
       </ScrollView>
 
       {section === "Manual" ? (
-        <ScrollView style={styles.flex} contentContainerStyle={styles.content}>
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={manualHistoryRefreshing}
+              tintColor="#D5B6FF"
+              onRefresh={() => {
+                setManualHistoryRefreshing(true);
+                void loadManualHistory();
+              }}
+            />
+          }
+        >
           <GlassCard styles={styles} darkMode={darkMode}>
             <Text style={styles.cardTitle}>Send notification</Text>
             <Text style={styles.helper}>
@@ -753,6 +824,54 @@ export default function AdminScreen() {
               <Text style={styles.result}>{sendResult}</Text>
             ) : null}
           </GlassCard>
+          <Text style={styles.cardTitle}>Manual announcement history</Text>
+          {manualHistoryLoading && manualHistory.length === 0 ? (
+            <ActivityIndicator color="#C9A7FF" style={styles.loader} />
+          ) : null}
+          {manualHistory.map((item) => (
+            <GlassCard
+              key={item.id}
+              styles={styles}
+              darkMode={darkMode}
+            >
+              <View style={styles.cardHeadingRow}>
+                <Text style={styles.badge}>
+                  {item.category || item.ai_scope || "Manual"}
+                </Text>
+                <Text style={styles.date}>
+                  {new Date(item.published_at).toLocaleString()}
+                </Text>
+              </View>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.bodyText} numberOfLines={3}>
+                {item.content || "No message content available."}
+              </Text>
+              <Text style={styles.helper}>
+                {item.source_name || "W.A.T.C.H. Admin"}
+              </Text>
+            </GlassCard>
+          ))}
+          {!manualHistory.length && !manualHistoryLoading ? (
+            <Text style={styles.stateText}>
+              No published manual announcements yet.
+            </Text>
+          ) : null}
+          {manualHistoryHasMore ? (
+            <Pressable
+              style={[
+                styles.secondaryButton,
+                manualHistoryLoading && styles.disabled,
+              ]}
+              disabled={manualHistoryLoading}
+              onPress={() =>
+                void loadManualHistory(manualHistoryPage + 1, false)
+              }
+            >
+              <Text style={styles.secondaryButtonText}>
+                {manualHistoryLoading ? "Loading…" : "Load more"}
+              </Text>
+            </Pressable>
+          ) : null}
         </ScrollView>
       ) : null}
 

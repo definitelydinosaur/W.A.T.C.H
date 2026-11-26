@@ -109,4 +109,61 @@ describe('HazardFeedService admin weather feed', () => {
       ]),
     );
   });
+
+  it('does not list a legacy PAGASA announcement already in the PAGASA feed', async () => {
+    const service = createService({
+      hazards: { data: [], error: null },
+      locations: { data: [], error: null },
+      pagasa_alerts: {
+        data: [
+          {
+            id: 8,
+            event: 'General Flood Advisory (Final)',
+            content: 'Flood advisory details',
+            severity: 'Advisory',
+            alert_status: 'active',
+            published_at: '2026-11-15T05:06:59.538Z',
+            expires: null,
+            affected_areas: [],
+            area_review_status: 'needs_review',
+            notification_announcement_id: null,
+          },
+        ],
+        error: null,
+      },
+      weather_alert_events: { data: [], error: null },
+      announcements: {
+        data: [
+          {
+            id: 6,
+            title: 'General Flood Advisory (Final)',
+            content: 'Flood advisory details',
+            ai_summary: 'Flood advisory details',
+            source: 'PAGASA',
+            source_name: 'Unknown Source',
+            source_url: null,
+            published_at: '2026-11-15T05:06:59.538Z',
+            category: 'hazard',
+            ai_scope: null,
+            source_type: null,
+            city: null,
+            pagasa_alert_id: null,
+          },
+        ],
+        error: null,
+      },
+      notifications: { data: [], error: null },
+    });
+
+    const result = await service.getAdminEvents({});
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        item_type: 'pagasa',
+        title: 'General Flood Advisory (Final)',
+        source_name: 'PAGASA',
+      }),
+    );
+  });
 });

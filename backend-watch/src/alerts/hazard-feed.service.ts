@@ -450,6 +450,10 @@ export class HazardFeedService {
       ),
     );
     const weatherAnnouncements = weatherAnnouncementRows
+      .filter(
+        (announcement) =>
+          !isDuplicatePagasaAnnouncement(announcement, pagasaEvents),
+      )
       .map((announcement) =>
         this.toAnnouncementEvent(
           announcement,
@@ -472,9 +476,10 @@ export class HazardFeedService {
     announcement: AnnouncementRow,
     notificationCounts: Record<string, number>,
   ): FeedEvent | null {
+    const source = announcement.source?.trim().toLocaleLowerCase() ?? '';
     const sourceType =
-      announcement.source_type ??
-      (announcement.source === 'pagasa' ? 'pagasa' : announcement.source);
+      announcement.source_type?.trim().toLocaleLowerCase() ??
+      (source.includes('pagasa') ? 'pagasa' : source);
     const classification = classifyWeatherAnnouncement({
       eventType: announcement.ai_scope,
       hazardType: announcement.title,
@@ -815,11 +820,15 @@ export class HazardFeedService {
   ) {
     const rows: NotificationRow[] = [];
     if (hazardIds.length) {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('notifications')
         .select(
           'id,hazard_id,announcement_id,user_id,status,created_at,deleted_at',
-        )
+        );
+      if (userId) {
+        query = query.eq('user_id', userId).is('deleted_at', null);
+      }
+      const { data, error } = await query
         .in('hazard_id', hazardIds)
         .order('created_at', { ascending: false });
       if (error) {
@@ -830,11 +839,15 @@ export class HazardFeedService {
       rows.push(...((data ?? []) as NotificationRow[]));
     }
     if (announcementIds.length) {
-      const { data, error } = await this.supabase
+      let query = this.supabase
         .from('notifications')
         .select(
           'id,hazard_id,announcement_id,user_id,status,created_at,deleted_at',
-        )
+        );
+      if (userId) {
+        query = query.eq('user_id', userId).is('deleted_at', null);
+      }
+      const { data, error } = await query
         .in('announcement_id', announcementIds)
         .order('created_at', { ascending: false });
       if (error) {
@@ -906,6 +919,45 @@ function dedupePagasaEvents(events: FeedEvent[]) {
     }
   }
   return [...unique.values()];
+}
+
+function isDuplicatePagasaAnnouncement(
+  announcement: AnnouncementRow,
+  pagasaEvents: FeedEvent[],
+) {
+  const isPagasa =
+    announcement.source_type?.trim().toLocaleLowerCase() === 'pagasa' ||
+    announcement.source?.trim().toLocaleLowerCase().includes('pagasa') === true;
+  if (!isPagasa) return false;
+
+  const title = normalizePagasaText(announcement.title);
+  if (!title) return false;
+  const content = normalizePagasaText(announcement.content);
+  const publishedAt = Date.parse(announcement.published_at);
+
+  return pagasaEvents.some((event) => {
+    if (
+      event.item_type !== 'pagasa' ||
+      normalizePagasaText(event.title) !== title
+    ) {
+      return false;
+    }
+
+    if (content && normalizePagasaText(event.content) === content) return true;
+    const eventPublishedAt = Date.parse(event.published_at);
+    return (
+      Number.isFinite(publishedAt) &&
+      Number.isFinite(eventPublishedAt) &&
+      Math.abs(publishedAt - eventPublishedAt) <= 6 * 60 * 60 * 1000
+    );
+  });
+}
+
+function normalizePagasaText(value: string | null | undefined) {
+  return (value ?? '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
 function applyCounts(events: FeedEvent[], notifications: NotificationRow[]) {
