@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import supabase from '../lib/supabase';
+import { registerPushTokenIfGranted } from '../lib/notification-settings';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const isExpoGo =
@@ -37,6 +38,23 @@ export default function RootLayout() {
   const pendingNotification = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
+    let pushTokenSyncInProgress = false;
+    let syncedPushTokenUserId: string | null = null;
+    const syncPushToken = (userId: string) => {
+      if (pushTokenSyncInProgress || syncedPushTokenUserId === userId) return;
+      pushTokenSyncInProgress = true;
+      void registerPushTokenIfGranted()
+        .then((saved) => {
+          if (saved) syncedPushTokenUserId = userId;
+        })
+        .catch((error: unknown) => {
+          console.warn('Push token could not be refreshed:', error);
+        })
+        .finally(() => {
+          pushTokenSyncInProgress = false;
+        });
+    };
+
     if (__DEV__) {
       if (!API_URL) {
         console.warn('API health check skipped: set EXPO_PUBLIC_API_URL.');
@@ -155,11 +173,28 @@ export default function RootLayout() {
       try {
         const { data: authListener } = supabase.auth.onAuthStateChange(
           (_event, session) => {
+            if (session) {
+              setTimeout(() => syncPushToken(session.user.id), 0);
+            } else {
+              syncedPushTokenUserId = null;
+            }
             if (session && pendingNotification.current) {
               showPendingNotification();
             }
           },
         );
+        void supabase.auth
+          .getSession()
+          .then(({ data, error }) => {
+            if (error) {
+              console.warn('Push token refresh could not check the session:', error);
+            } else if (data.session) {
+              syncPushToken(data.session.user.id);
+            }
+          })
+          .catch((error: unknown) => {
+            console.warn('Push token refresh could not check the session:', error);
+          });
         responseListener =
           Notifications.addNotificationResponseReceivedListener(
             openFromNotification,

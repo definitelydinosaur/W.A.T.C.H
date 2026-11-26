@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useAppTheme } from '../../theme/theme-context';
@@ -100,7 +101,7 @@ export default function TermsPolicyScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </View>
+    </LinearGradient>
   );
 }
 

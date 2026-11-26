@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -300,7 +301,7 @@ const confirmAccountDeletion = async () => {
           </View>
         </View>
       </Modal>
-    </View>
+    </LinearGradient>
   );
 }
 

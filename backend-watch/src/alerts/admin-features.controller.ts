@@ -137,6 +137,18 @@ export class AdminFeaturesController {
     return this.features.resendAnnouncementToAllUsers(id, request.user.id);
   }
 
+  @Post('announcements/:id/resend-all')
+  resendAnnouncementToAllUsersNow(
+    @Param('id') id: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.resendAnnouncementToAllUsers(
+      id,
+      request.user.id,
+      'all',
+    );
+  }
+
   @Post('weather-events/:id/resend-test')
   resendWeatherEventToMe(
     @Param('id') id: string,

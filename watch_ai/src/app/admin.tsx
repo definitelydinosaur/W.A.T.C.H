@@ -38,7 +38,7 @@ type SystemDraft = {
 };
 type AutomatedAnnouncement = {
   id: string;
-  item_type: "hazard" | "pagasa" | "weather_event";
+  item_type: "announcement" | "hazard" | "pagasa" | "weather_event";
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -488,11 +488,13 @@ export default function AdminScreen() {
 
   const resendToAllUsers = (item: AutomatedAnnouncement) => {
     const path =
-      item.item_type === "pagasa"
-        ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
-        : item.item_type === "weather_event"
-          ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-all`
-          : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
+      item.item_type === "announcement"
+        ? `/admin/features/announcements/${item.announcement_id}/resend-all`
+        : item.item_type === "pagasa"
+          ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
+          : item.item_type === "weather_event"
+            ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-all`
+            : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
     confirmAdminAction(
       "Re-send to all users?",
       item.item_type === "weather_event"

@@ -487,13 +487,30 @@ export class ProfileService {
   }
 
   async savePushToken(userId: string, token: string) {
-    const { error } = await this.supabase
+    const { data, error } = await this.supabase
       .from('user_info')
       .update({ expo_push_token: token })
-      .eq('id', userId);
-    if (error) {
+      .eq('id', userId)
+      .select('id')
+      .maybeSingle();
+    if (error || !data) {
       throw new InternalServerErrorException(
-        `Push token could not be saved: ${error.message}`,
+        `Push token could not be saved: ${error?.message ?? 'Profile not found.'}`,
+      );
+    }
+    return { saved: true };
+  }
+
+  async clearPushToken(userId: string) {
+    const { data, error } = await this.supabase
+      .from('user_info')
+      .update({ expo_push_token: null })
+      .eq('id', userId)
+      .select('id')
+      .maybeSingle();
+    if (error || !data) {
+      throw new InternalServerErrorException(
+        `Push token could not be cleared: ${error?.message ?? 'Profile not found.'}`,
       );
     }
     return { saved: true };

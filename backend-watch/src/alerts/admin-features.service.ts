@@ -536,7 +536,11 @@ export class AdminFeaturesService {
     return { ...result, audience_count: recipients.length };
   }
 
-  async resendAnnouncementToAllUsers(id: string, adminId: string) {
+  async resendAnnouncementToAllUsers(
+    id: string,
+    adminId: string,
+    audience: 'me' | 'all' = 'me',
+  ) {
     const announcementId = Number(id);
     if (!Number.isSafeInteger(announcementId) || announcementId < 1) {
       throw new BadRequestException(
@@ -546,10 +550,9 @@ export class AdminFeaturesService {
     const { data: announcement, error } = await this.supabase
       .from('announcements')
       .select(
-        'id,title,ai_summary,content,source_name,source_url,ai_scope,category',
+        'id,title,ai_summary,content,source,source_name,source_url,ai_scope,category,source_type',
       )
       .eq('id', announcementId)
-      .neq('source', 'admin_manual')
       .maybeSingle()
       .overrideTypes<
         {
@@ -557,10 +560,12 @@ export class AdminFeaturesService {
           title: string | null;
           ai_summary: string | null;
           content: string | null;
+          source: string | null;
           source_name: string | null;
           source_url: string | null;
           ai_scope: string | null;
           category: string | null;
+          source_type: string | null;
         },
         { merge: false }
       >();
@@ -571,29 +576,45 @@ export class AdminFeaturesService {
     }
     if (!announcement)
       throw new NotFoundException('Announcement was not found.');
+    if (
+      announcement.source === 'admin_manual' ||
+      announcement.source === 'admin_system' ||
+      (audience === 'all' && announcement.ai_scope === 'system')
+    ) {
+      throw new NotFoundException('Announcement was not found.');
+    }
     const kind =
-      announcement.ai_scope === 'weather'
+      audience === 'all' || announcement.ai_scope === 'weather'
         ? 'weather'
         : announcement.ai_scope === 'institution'
           ? 'announcement_institution'
           : 'announcement_local';
     const title = announcement.title ?? 'W.A.T.C.H. Alert';
     const body = announcement.ai_summary ?? announcement.content ?? '';
+    const sourceType =
+      announcement.source_type ??
+      (announcement.source === 'pagasa' ? 'pagasa' : null);
+    const storedSourceName = announcement.source_name?.trim();
+    const sourceName =
+      sourceType === 'pagasa' &&
+      storedSourceName?.toLocaleLowerCase() === 'unknown source'
+        ? 'PAGASA'
+        : storedSourceName || 'W.A.T.C.H.';
     const replayId = await this.createReplayAnnouncement({
       title,
       body,
-      sourceName: announcement.source_name ?? 'W.A.T.C.H.',
+      sourceName,
       sourceUrl: announcement.source_url,
       category: announcement.category ?? announcement.ai_scope,
       aiScope: announcement.ai_scope,
     });
-    const recipients = await this.getRecipients('me', adminId);
+    const recipients = await this.getRecipients(audience, adminId);
     const result = await this.sendToUsers(recipients, {
       title,
       body,
       kind,
       announcementId: String(replayId),
-      sourceName: announcement.source_name ?? 'W.A.T.C.H.',
+      sourceName,
       sourceUrl: announcement.source_url,
     });
     return { ...result, audience_count: recipients.length };

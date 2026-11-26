@@ -1,6 +1,7 @@
 import {
   Controller,
   Post,
+  Delete,
   Get,
   UploadedFile,
   UseInterceptors,
@@ -94,6 +95,11 @@ export class ProfileController {
     @Req() req: Request & { user: { id: string } },
   ) {
     return this.profileService.savePushToken(req.user.id, token.token);
+  }
+
+  @Delete('push-token')
+  async clearPushToken(@Req() req: Request & { user: { id: string } }) {
+    return this.profileService.clearPushToken(req.user.id);
   }
 
   @Patch()
