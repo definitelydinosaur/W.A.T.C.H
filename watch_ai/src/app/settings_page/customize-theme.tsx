@@ -53,7 +53,7 @@ export default function CustomizeThemeScreen() {
   };
 
   return (
-    <LinearGradient colors={displayed.settingsGradient} style={styles.background}>
+    <View style={styles.background}>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.panel}>
@@ -167,17 +167,18 @@ export default function CustomizeThemeScreen() {
           </ScrollView>
         </View>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
-  safeArea: { flex: 1, paddingHorizontal: 16, paddingVertical: 10 },
+  background: { flex: 1, backgroundColor: "#FFFFFF" },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
   panel: {
     flex: 1,
-    overflow: "hidden",
-    borderRadius: 38,
     backgroundColor: "#FFFFFF",
   },
   header: { height: 72, flexDirection: "row", alignItems: "center", paddingHorizontal: 18 },
