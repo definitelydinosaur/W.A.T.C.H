@@ -3,12 +3,15 @@ import {
   Injectable,
   Inject,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class ReportsService {
+  private readonly logger = new Logger(ReportsService.name);
+
   constructor(
     @Inject('SUPABASE_CLIENT')
     private readonly supabase: SupabaseClient,
@@ -32,20 +35,23 @@ export class ReportsService {
       .single();
 
     if (error) {
-      console.error('Report insertion failed:', error);
+      this.logger.error('Report insertion failed:', error);
       throw new InternalServerErrorException(
         'Failed to submit your report.',
       );
     }
 
-    // 2. Send email notification after successful insertion.
-    try {
-      await this.emailService.sendReportNotification(data);
-    } catch (error) {
-      // The report is already saved, so don't lose it.
-      console.error('Report email notification failed:', error);
-    }
+    // 2. Send email notification independently.
+    void this.emailService
+      .sendReportNotification(data)
+      .catch((error) => {
+        this.logger.error(
+          `Report email notification failed for #${data.id}:`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      });
 
+    // 3. Return immediately without waiting for email delivery.
     return {
       success: true,
       message: 'Report submitted successfully.',
