@@ -10,6 +10,7 @@ import {
   Platform,
   Image,
 } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -28,6 +29,9 @@ export default function RegisterScreen() {
   );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] =
+    useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [showSlowLoading, setShowSlowLoading] = useState(false);
   const { AnimatedView, animatedStyle, navigateTo, isTransitioning } = useAuthCardTransition();
@@ -162,26 +166,108 @@ export default function RegisterScreen() {
 
                 <View style={styles.fieldGroup}>
                   <Text style={styles.label}>Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter password"
-                    placeholderTextColor="rgba(255,255,255,0.9)"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                  />
+                  <View style={styles.passwordInputWrap}>
+                    <TextInput
+                      style={[styles.input, styles.passwordInput]}
+                      placeholder="Enter password"
+                      placeholderTextColor="rgba(255,255,255,0.9)"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!isPasswordVisible}
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordVisibilityButton}
+                      onPress={() => setIsPasswordVisible((visible) => !visible)}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isPasswordVisible ? 'Hide password' : 'Show password'
+                      }
+                      hitSlop={8}
+                    >
+                      <Svg width={20} height={20} viewBox="0 0 24 24">
+                        <Path
+                          d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                        {isPasswordVisible ? (
+                          <Circle
+                            cx={12}
+                            cy={12}
+                            r={3}
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            fill="none"
+                          />
+                        ) : (
+                          <Path
+                            d="m3 3 18 18"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        )}
+                      </Svg>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <View style={styles.fieldGroup}>
                   <Text style={styles.label}>Confirm Password</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Re-enter password"
-                    placeholderTextColor="rgba(255,255,255,0.9)"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry
-                  />
+                  <View style={styles.passwordInputWrap}>
+                    <TextInput
+                      style={[styles.input, styles.passwordInput]}
+                      placeholder="Re-enter password"
+                      placeholderTextColor="rgba(255,255,255,0.9)"
+                      value={confirmPassword}
+                      onChangeText={setConfirmPassword}
+                      secureTextEntry={!isConfirmPasswordVisible}
+                    />
+                    <TouchableOpacity
+                      style={styles.passwordVisibilityButton}
+                      onPress={() =>
+                        setIsConfirmPasswordVisible((visible) => !visible)
+                      }
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isConfirmPasswordVisible
+                          ? 'Hide confirm password'
+                          : 'Show confirm password'
+                      }
+                      hitSlop={8}
+                    >
+                      <Svg width={20} height={20} viewBox="0 0 24 24">
+                        <Path
+                          d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"
+                          stroke="#ffffff"
+                          strokeWidth={2}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          fill="none"
+                        />
+                        {isConfirmPasswordVisible ? (
+                          <Circle
+                            cx={12}
+                            cy={12}
+                            r={3}
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            fill="none"
+                          />
+                        ) : (
+                          <Path
+                            d="m3 3 18 18"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        )}
+                      </Svg>
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
                 <TouchableOpacity
@@ -297,6 +383,20 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 5,
     elevation: 4,
+  },
+  passwordInputWrap: {
+    position: 'relative',
+  },
+  passwordInput: {
+    paddingRight: 44,
+  },
+  passwordVisibilityButton: {
+    position: 'absolute',
+    right: 14,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   button: {
     height: 44,
