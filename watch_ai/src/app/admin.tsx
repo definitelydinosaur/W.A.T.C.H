@@ -411,6 +411,36 @@ export default function AdminScreen() {
     );
   };
 
+  const removeManualAnnouncement = (item: ManualAnnouncementHistoryItem) => {
+    confirmAdminAction(
+      "Remove manual announcement?",
+      `"${item.title}" will be removed from manual announcement history.`,
+      "Remove",
+      () => {
+        void (async () => {
+          setRemovingAnnouncementId(item.id);
+          try {
+            await adminRequest(
+              `/admin/features/notifications/manual-history/${item.id}`,
+              { method: "DELETE" },
+            );
+            setManualHistory((current) =>
+              current.filter((announcement) => announcement.id !== item.id),
+            );
+          } catch (error) {
+            showAdminAlert(
+              "Unable to remove manual announcement",
+              prettyError(error),
+            );
+          } finally {
+            setRemovingAnnouncementId(null);
+          }
+        })();
+      },
+      "destructive",
+    );
+  };
+
   useEffect(() => {
     if (!verified) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -902,9 +932,23 @@ export default function AdminScreen() {
                 <Text style={styles.badge}>
                   {item.category || item.ai_scope || "Manual"}
                 </Text>
-                <Text style={styles.date}>
-                  {new Date(item.published_at).toLocaleString()}
-                </Text>
+                <View style={styles.cardHeadingActions}>
+                  <Text style={styles.date}>
+                    {new Date(item.published_at).toLocaleString()}
+                  </Text>
+                  <Pressable
+                    onPress={() => removeManualAnnouncement(item)}
+                    disabled={removingAnnouncementId !== null}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${item.title}`}
+                    style={styles.removeAnnouncementButton}
+                  >
+                    <Text style={styles.removeAnnouncementIcon}>
+                      {removingAnnouncementId === item.id ? "…" : "×"}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.bodyText} numberOfLines={3}>
@@ -1585,6 +1629,10 @@ function createStyles(darkMode: boolean) {
     cardHeadingRow: {
       flexDirection: "row",
       justifyContent: "space-between",
+      alignItems: "center",
+    },
+    cardHeadingActions: {
+      flexDirection: "row",
       alignItems: "center",
       gap: 8,
       flexWrap: "wrap",

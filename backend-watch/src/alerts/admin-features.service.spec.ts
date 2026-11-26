@@ -76,6 +76,45 @@ describe('AdminFeaturesService manual announcement history', () => {
     ]);
   });
 
+  it('soft-removes only a published manual announcement', async () => {
+    const calls: string[] = [];
+    const builder = {
+      update: (values: Record<string, unknown>) => {
+        calls.push(`update=${JSON.stringify(values)}`);
+        return builder;
+      },
+      eq: (column: string, value: string) => {
+        calls.push(`${column}=${value}`);
+        return builder;
+      },
+      select: () => builder,
+      maybeSingle: () => builder,
+      overrideTypes: () => builder,
+      then: (
+        resolve: (value: unknown) => unknown,
+        reject?: (reason: unknown) => unknown,
+      ) =>
+        Promise.resolve({ data: { id: 8 }, error: null }).then(resolve, reject),
+    };
+    const service = new AdminFeaturesService(
+      { from: () => builder } as unknown as SupabaseClient,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.removeManualAnnouncement('8')).resolves.toEqual({
+      announcement_id: 8,
+      removed: true,
+    });
+    expect(calls).toEqual([
+      'update={"status":"rejected"}',
+      'id=8',
+      'source=admin_manual',
+      'status=published',
+    ]);
+  });
+
   it('sends default weather-template guidance to all users', async () => {
     const insertedAnnouncements: Record<string, unknown>[] = [];
     const supabase = {

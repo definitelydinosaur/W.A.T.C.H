@@ -117,6 +117,11 @@ export class AdminFeaturesController {
     return this.features.getManualAnnouncementHistory(page, limit);
   }
 
+  @Delete('notifications/manual-history/:id')
+  removeManualAnnouncement(@Param('id') id: string) {
+    return this.features.removeManualAnnouncement(id);
+  }
+
   @Post('notifications/test')
   sendTestPush(@Req() request: AdminRequest) {
     return this.features.sendTestPush(request.user.id);

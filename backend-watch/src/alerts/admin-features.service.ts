@@ -252,6 +252,27 @@ export class AdminFeaturesService {
     };
   }
 
+  async removeManualAnnouncement(id: string) {
+    const { data, error } = await this.supabase
+      .from('announcements')
+      .update({ status: 'rejected' })
+      .eq('id', id)
+      .eq('source', 'admin_manual')
+      .eq('status', 'published')
+      .select('id')
+      .maybeSingle()
+      .overrideTypes<{ id: number }, { merge: false }>();
+    if (error) {
+      throw new ServiceUnavailableException(
+        `Manual announcement could not be removed: ${error.message}`,
+      );
+    }
+    if (!data) {
+      throw new NotFoundException('Published manual announcement was not found.');
+    }
+    return { announcement_id: data.id, removed: true };
+  }
+
   async getAutomatedAnnouncements(
     pageValue?: string,
     limitValue?: string,
