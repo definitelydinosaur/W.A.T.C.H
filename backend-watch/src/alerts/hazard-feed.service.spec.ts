@@ -4,7 +4,7 @@ import { HazardFeedService } from './hazard-feed.service';
 
 type QueryResult = {
   data: unknown[];
-  error: null;
+  error: { message: string } | null;
 };
 
 function makeQuery(result: QueryResult, table: string) {
@@ -245,14 +245,82 @@ describe('HazardFeedService admin weather feed', () => {
 
     const result = await service.getAdminEvents({});
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toEqual(
+    const liveItems = result.items.filter(
+      (item) => item.item_type !== 'template',
+    );
+    expect(liveItems).toHaveLength(1);
+    expect(liveItems[0]).toEqual(
       expect.objectContaining({
         item_type: 'pagasa',
         title: 'General Flood Advisory (Final)',
         source_name: 'PAGASA',
       }),
     );
+  });
+
+  it('always lists the four default safety-guide templates in the admin feed', async () => {
+    const service = createService({
+      hazards: { data: [], error: null },
+      locations: { data: [], error: null },
+      pagasa_alerts: { data: [], error: null },
+      weather_alert_events: { data: [], error: null },
+      announcements: { data: [], error: null },
+      notifications: { data: [], error: null },
+    });
+
+    const result = await service.getAdminEvents({});
+    const templates = result.items.filter(
+      (item) => item.item_type === 'template',
+    );
+
+    expect(templates).toHaveLength(4);
+    expect(templates.map((item) => item.category)).toEqual([
+      'Extreme Heat',
+      'Unhealthy Air',
+      'Heavy Rain/Flood',
+      'PAGASA/Weather',
+    ]);
+    expect(templates[0].safety_tips).toEqual(
+      expect.objectContaining({
+        do_list: expect.any(Array),
+        dont_list: expect.any(Array),
+        prepare_list: expect.any(Array),
+      }),
+    );
+
+    const filtered = await service.getAdminEvents({
+      category: 'Unhealthy Air',
+    });
+    expect(filtered.items).toHaveLength(1);
+    expect(filtered.items[0]).toEqual(
+      expect.objectContaining({
+        item_type: 'template',
+        category: 'Unhealthy Air',
+      }),
+    );
+  });
+
+  it('returns default safety guides and reports live-feed failures', async () => {
+    const service = createService({
+      hazards: { data: [], error: { message: 'relation unavailable' } },
+      locations: { data: [], error: null },
+      pagasa_alerts: { data: [], error: null },
+      weather_alert_events: { data: [], error: null },
+      announcements: { data: [], error: null },
+      notifications: { data: [], error: null },
+    });
+
+    const result = await service.getAdminEvents({});
+
+    expect(
+      result.items.filter((item) => item.item_type === 'template'),
+    ).toHaveLength(4);
+    expect(result.diagnostics).toEqual({
+      template_count: 4,
+      templates_with_safety_tips: 4,
+      live_event_count: 0,
+      live_feed_error: 'Hazards could not be loaded: relation unavailable',
+    });
   });
 
   it('links delivered generated weather alerts to user notifications', async () => {

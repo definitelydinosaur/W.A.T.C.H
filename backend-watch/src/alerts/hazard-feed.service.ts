@@ -15,6 +15,7 @@ import {
   placeName,
 } from '../weather/hazard-area';
 import { renderHazardTemplate } from '../weather/hazard-templates';
+import { getDefaultAnnouncementTemplates } from '../weather/default-announcement-templates';
 import { classifyWeatherAnnouncement } from '../weather/weather-category';
 
 type HazardRow = HazardAreaLocation & {
@@ -113,7 +114,9 @@ type WeatherAlertEventRow = {
 
 type FeedEvent = {
   id: string;
-  item_type: 'announcement' | 'hazard' | 'pagasa' | 'weather_event';
+  item_type:
+    'announcement' | 'hazard' | 'pagasa' | 'weather_event' | 'template';
+  template_key?: string;
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -161,10 +164,17 @@ export class HazardFeedService {
       50,
       Math.max(1, Number.parseInt(input.limit ?? '20', 10) || 20),
     );
-    const events = await this.loadEvents(true);
+    let events: FeedEvent[] = [];
+    let liveFeedError: string | null = null;
+    try {
+      events = await this.loadEvents(true);
+    } catch (error) {
+      if (!(error instanceof ServiceUnavailableException)) throw error;
+      liveFeedError = error.message;
+    }
     const search = input.search?.trim().toLocaleLowerCase();
     const category = input.category?.trim();
-    const filtered = events.filter((event) => {
+    const matchesFilters = (event: FeedEvent) => {
       if (category && category !== 'All' && event.category !== category) {
         return false;
       }
@@ -172,13 +182,56 @@ export class HazardFeedService {
       return `${event.title} ${event.content} ${event.source_name} ${event.place_name}`
         .toLocaleLowerCase()
         .includes(search);
-    });
+    };
+    const templates = getDefaultAnnouncementTemplates().map((template) => ({
+      id: `default-template-${template.key}`,
+      item_type: 'template' as const,
+      template_key: template.key,
+      announcement_id: null,
+      hazard_id: null,
+      pagasa_id: null,
+      title: template.title,
+      content: template.content,
+      ai_summary: template.ai_summary,
+      source_name: template.source_name,
+      source_url: template.source_url,
+      source_type: 'weather_auto',
+      category: template.category,
+      severity: null,
+      event_type: template.key,
+      area_key: '',
+      city: null,
+      province: null,
+      place_name: 'All users',
+      affected_areas: [],
+      requires_area_review: false,
+      published_at: new Date().toISOString(),
+      observed_at: null,
+      measurements: null,
+      notification_counts: {},
+      audience_count: 0,
+      hazard_ids: [],
+      active: false,
+      window_key: template.key,
+      safety_tips: template.safety_tips,
+    }));
+    const matchedTemplates = templates.filter(matchesFilters);
+    const matchedEvents = events.filter(matchesFilters);
+    const filtered = [...matchedTemplates, ...matchedEvents];
     const items = filtered.slice(page * limit, (page + 1) * limit);
     return {
       items,
       page,
       limit,
       has_more: filtered.length > (page + 1) * limit,
+      diagnostics: {
+        template_count: matchedTemplates.length,
+        templates_with_safety_tips: matchedTemplates.filter(
+          (template) => template.safety_tips !== null,
+        ).length,
+        live_event_count: matchedEvents.length,
+        live_feed_error: liveFeedError,
+      },
     };
   }
 

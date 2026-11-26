@@ -157,6 +157,17 @@ export class AdminFeaturesController {
     );
   }
 
+  @Post('announcement-templates/:key/resend-all')
+  sendDefaultAnnouncementTemplateToAllUsers(
+    @Param('key') key: string,
+    @Req() request: AdminRequest,
+  ) {
+    return this.features.sendDefaultAnnouncementTemplateToAllUsers(
+      key,
+      request.user.id,
+    );
+  }
+
   @Post('weather-events/:id/resend-test')
   resendWeatherEventToMe(
     @Param('id') id: string,
