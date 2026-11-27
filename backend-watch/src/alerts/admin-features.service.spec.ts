@@ -75,4 +75,127 @@ describe('AdminFeaturesService manual announcement history', () => {
       'range=1,2',
     ]);
   });
+
+  it('soft-removes only a published manual announcement', async () => {
+    const calls: string[] = [];
+    const builder = {
+      update: (values: Record<string, unknown>) => {
+        calls.push(`update=${JSON.stringify(values)}`);
+        return builder;
+      },
+      eq: (column: string, value: string) => {
+        calls.push(`${column}=${value}`);
+        return builder;
+      },
+      select: () => builder,
+      maybeSingle: () => builder,
+      overrideTypes: () => builder,
+      then: (
+        resolve: (value: unknown) => unknown,
+        reject?: (reason: unknown) => unknown,
+      ) =>
+        Promise.resolve({ data: { id: 8 }, error: null }).then(resolve, reject),
+    };
+    const service = new AdminFeaturesService(
+      { from: () => builder } as unknown as SupabaseClient,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.removeManualAnnouncement('8')).resolves.toEqual({
+      announcement_id: 8,
+      removed: true,
+    });
+    expect(calls).toEqual([
+      'update={"status":"rejected"}',
+      'id=8',
+      'source=admin_manual',
+      'status=published',
+    ]);
+  });
+
+  it('sends default weather-template guidance to all users', async () => {
+    const insertedAnnouncements: Record<string, unknown>[] = [];
+    const supabase = {
+      from: (table: string) => {
+        let rangeStart = 0;
+        const query = {
+          insert: (row: Record<string, unknown>) => {
+            if (table === 'announcements') insertedAnnouncements.push(row);
+            return query;
+          },
+          select: () => query,
+          single: () => query,
+          order: () => query,
+          range: (start: number) => {
+            rangeStart = start;
+            return query;
+          },
+          overrideTypes: () => query,
+          then: (
+            resolve: (value: unknown) => unknown,
+            reject?: (reason: unknown) => unknown,
+          ) => {
+            const result =
+              table === 'announcements'
+                ? { data: { id: 21 }, error: null }
+                : {
+                    data:
+                      rangeStart === 0
+                        ? [{ id: 'user-1' }, { id: 'user-2' }]
+                        : [],
+                    error: null,
+                  };
+            return Promise.resolve(result).then(resolve, reject);
+          },
+        };
+        return query;
+      },
+    };
+    const sentNotifications: Record<string, unknown>[] = [];
+    const sendUserNotification = async (
+      notification: Record<string, unknown>,
+    ) => {
+      sentNotifications.push(notification);
+      return { sent: true, duplicate: false };
+    };
+    const service = new AdminFeaturesService(
+      supabase as unknown as SupabaseClient,
+      {} as never,
+      { sendUserNotification } as never,
+      {} as never,
+    );
+
+    const result = await service.sendDefaultAnnouncementTemplateToAllUsers(
+      'extreme_heat',
+      'admin-1',
+    );
+
+    expect(result).toMatchObject({
+      sent: 2,
+      failed: 0,
+      no_token: 0,
+      audience_count: 2,
+    });
+    expect(insertedAnnouncements[0]).toMatchObject({
+      title: 'Extreme Heat Safety Guide',
+      ai_scope: 'weather',
+      ai_key_points: expect.arrayContaining([
+        expect.stringContaining('Do:'),
+        expect.stringContaining('Avoid:'),
+        expect.stringContaining('Prepare:'),
+      ]),
+    });
+    expect(sentNotifications).toHaveLength(2);
+    expect(sentNotifications[0]).toEqual(
+      expect.objectContaining({
+        title: 'Extreme Heat Safety Guide',
+        kind: 'weather',
+        announcementId: '21',
+        body: expect.stringContaining('What to prepare:'),
+        ignorePreferences: true,
+      }),
+    );
+  });
 });

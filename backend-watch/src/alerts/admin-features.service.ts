@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { AiService, SystemAnnouncementFormat } from '../ai/ai.service';
 import { SUPABASE_CLIENT } from '../supabase/supabase.provider';
 import { PushService } from '../notifications/push.service';
+import { getDefaultAnnouncementTemplate } from '../weather/default-announcement-templates';
 import { HazardFeedService } from './hazard-feed.service';
 
 type ManualSendInput = {
@@ -249,6 +250,27 @@ export class AdminFeaturesService {
       limit,
       has_more: rows.length > limit,
     };
+  }
+
+  async removeManualAnnouncement(id: string) {
+    const { data, error } = await this.supabase
+      .from('announcements')
+      .update({ status: 'rejected' })
+      .eq('id', id)
+      .eq('source', 'admin_manual')
+      .eq('status', 'published')
+      .select('id')
+      .maybeSingle()
+      .overrideTypes<{ id: number }, { merge: false }>();
+    if (error) {
+      throw new ServiceUnavailableException(
+        `Manual announcement could not be removed: ${error.message}`,
+      );
+    }
+    if (!data) {
+      throw new NotFoundException('Published manual announcement was not found.');
+    }
+    return { announcement_id: data.id, removed: true };
   }
 
   async getAutomatedAnnouncements(
@@ -577,6 +599,59 @@ export class AdminFeaturesService {
         })
         .eq('id', id);
     }
+    return { ...result, audience_count: recipients.length };
+  }
+
+  async sendDefaultAnnouncementTemplateToAllUsers(
+    key: string,
+    adminId: string,
+  ) {
+    const template = getDefaultAnnouncementTemplate(key);
+    if (!template) {
+      throw new BadRequestException(
+        'The requested default weather announcement template does not exist.',
+      );
+    }
+
+    const safetyKeyPoints = [
+      ...template.safety_tips.do_list.map((tip) => `Do: ${tip}`),
+      ...template.safety_tips.dont_list.map((tip) => `Avoid: ${tip}`),
+      ...template.safety_tips.prepare_list.map((tip) => `Prepare: ${tip}`),
+      template.safety_tips.emergency_note,
+    ];
+    const body = [
+      template.summary,
+      '',
+      'What to do:',
+      ...template.safety_tips.do_list.map((tip) => `- ${tip}`),
+      '',
+      'What to avoid:',
+      ...template.safety_tips.dont_list.map((tip) => `- ${tip}`),
+      '',
+      'What to prepare:',
+      ...template.safety_tips.prepare_list.map((tip) => `- ${tip}`),
+      '',
+      template.safety_tips.emergency_note,
+    ].join('\n');
+    const sourceName = 'W.A.T.C.H. Default Safety Guide';
+    const replayId = await this.createReplayAnnouncement({
+      title: template.title,
+      body,
+      sourceName,
+      sourceUrl: null,
+      category: template.category,
+      aiScope: 'weather',
+      keyPoints: safetyKeyPoints,
+    });
+    const recipients = await this.getRecipients('all', adminId);
+    const result = await this.sendToUsers(recipients, {
+      title: template.title,
+      body,
+      kind: 'weather',
+      announcementId: String(replayId),
+      sourceName,
+      sourceUrl: null,
+    });
     return { ...result, audience_count: recipients.length };
   }
 
@@ -1266,6 +1341,7 @@ export class AdminFeaturesService {
     category: string | null;
     aiScope: string | null;
     publishedAt?: string | null;
+    keyPoints?: string[];
   }) {
     const { data, error } = await this.supabase
       .from('announcements')
@@ -1278,6 +1354,7 @@ export class AdminFeaturesService {
         source_url: input.sourceUrl,
         category: input.category,
         ai_scope: input.aiScope,
+        ...(input.keyPoints ? { ai_key_points: input.keyPoints } : {}),
         status: 'published',
         published_at: input.publishedAt ?? new Date().toISOString(),
       })

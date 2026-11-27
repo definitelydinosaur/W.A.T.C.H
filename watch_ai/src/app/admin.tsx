@@ -38,7 +38,9 @@ type SystemDraft = {
 };
 type AutomatedAnnouncement = {
   id: string;
-  item_type: "announcement" | "hazard" | "pagasa" | "weather_event";
+  item_type:
+    "announcement" | "hazard" | "pagasa" | "weather_event" | "template";
+  template_key?: string;
   announcement_id: number | null;
   hazard_id: string | null;
   pagasa_id: number | null;
@@ -53,10 +55,22 @@ type AutomatedAnnouncement = {
   city: string | null;
   province: string | null;
   place_name: string;
+  safety_tips?: {
+    do_list: string[];
+    dont_list: string[];
+    prepare_list: string[];
+    emergency_note: string;
+  } | null;
   affected_areas: string[];
   requires_area_review: boolean;
   audience_count: number;
   notification_counts: Record<string, number>;
+};
+type AnnouncementFeedDiagnostics = {
+  template_count: number;
+  templates_with_safety_tips: number;
+  live_event_count: number;
+  live_feed_error: string | null;
 };
 type ManualAnnouncementHistoryItem = {
   id: number;
@@ -188,6 +202,10 @@ export default function AdminScreen() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingItems, setLoadingItems] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [automatedFeedStatus, setAutomatedFeedStatus] = useState<{
+    kind: "success" | "warning" | "error";
+    message: string;
+  } | null>(null);
   const [manualHistory, setManualHistory] = useState<
     ManualAnnouncementHistoryItem[]
   >([]);
@@ -267,14 +285,47 @@ export default function AdminScreen() {
         const response = await adminRequest<{
           items: AutomatedAnnouncement[];
           has_more: boolean;
+          diagnostics?: AnnouncementFeedDiagnostics;
         }>(`/admin/features/announcements?${params.toString()}`);
+        if (!Array.isArray(response.items)) {
+          throw new Error(
+            "The announcements endpoint returned an invalid response: expected an items array.",
+          );
+        }
+        const templates = response.items.filter(
+          (item) => item.item_type === "template",
+        );
+        const safetyTipTemplates = templates.filter(
+          (item) =>
+            item.safety_tips &&
+            Array.isArray(item.safety_tips.do_list) &&
+            Array.isArray(item.safety_tips.dont_list) &&
+            Array.isArray(item.safety_tips.prepare_list),
+        );
+        if (response.diagnostics) {
+          const feedError = response.diagnostics.live_feed_error;
+          setAutomatedFeedStatus({
+            kind: feedError ? "warning" : "success",
+            message: feedError
+              ? `Loaded ${response.diagnostics.template_count} default guides (${response.diagnostics.templates_with_safety_tips} with safety tips). Live announcements failed: ${feedError}`
+              : `Feed loaded: ${response.diagnostics.template_count} default guides (${response.diagnostics.templates_with_safety_tips} with safety tips), ${response.diagnostics.live_event_count} live announcements. This response came from the updated backend.`,
+          });
+        } else {
+          setAutomatedFeedStatus({
+            kind: "warning",
+            message: `Received ${templates.length} default guides (${safetyTipTemplates.length} with safety tips), but the backend returned no diagnostics. It may be running an older deployment.`,
+          });
+        }
         setAutomated((current) =>
           replace ? response.items : [...current, ...response.items],
         );
         setPage(nextPage);
         setHasMore(response.has_more);
       } catch (error) {
-        showAdminAlert("Unable to load announcements", prettyError(error));
+        setAutomatedFeedStatus({
+          kind: "error",
+          message: `Announcement feed request failed: ${prettyError(error)}`,
+        });
       } finally {
         setLoadingItems(false);
         setRefreshing(false);
@@ -351,6 +402,36 @@ export default function AdminScreen() {
             );
           } catch (error) {
             showAdminAlert("Unable to remove announcement", prettyError(error));
+          } finally {
+            setRemovingAnnouncementId(null);
+          }
+        })();
+      },
+      "destructive",
+    );
+  };
+
+  const removeManualAnnouncement = (item: ManualAnnouncementHistoryItem) => {
+    confirmAdminAction(
+      "Remove manual announcement?",
+      `"${item.title}" will be removed from manual announcement history.`,
+      "Remove",
+      () => {
+        void (async () => {
+          setRemovingAnnouncementId(item.id);
+          try {
+            await adminRequest(
+              `/admin/features/notifications/manual-history/${item.id}`,
+              { method: "DELETE" },
+            );
+            setManualHistory((current) =>
+              current.filter((announcement) => announcement.id !== item.id),
+            );
+          } catch (error) {
+            showAdminAlert(
+              "Unable to remove manual announcement",
+              prettyError(error),
+            );
           } finally {
             setRemovingAnnouncementId(null);
           }
@@ -545,20 +626,33 @@ export default function AdminScreen() {
   };
 
   const resendToAllUsers = (item: AutomatedAnnouncement) => {
+    if (item.item_type === "template" && !item.template_key) {
+      showAdminAlert(
+        "Unable to send guide",
+        "The default guide is missing its template key.",
+      );
+      return;
+    }
     const path =
-      item.item_type === "announcement"
-        ? `/admin/features/announcements/${item.announcement_id}/resend-all`
-        : item.item_type === "pagasa"
-          ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
-          : item.item_type === "weather_event"
-            ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-all`
-            : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
+      item.item_type === "template"
+        ? `/admin/features/announcement-templates/${encodeURIComponent(item.template_key ?? "")}/resend-all`
+        : item.item_type === "announcement"
+          ? `/admin/features/announcements/${item.announcement_id}/resend-all`
+          : item.item_type === "pagasa"
+            ? `/admin/features/pagasa/${item.pagasa_id}/resend-all`
+            : item.item_type === "weather_event"
+              ? `/admin/features/weather-events/${encodeURIComponent(item.id.replace("weather-event-", ""))}/resend-all`
+              : `/admin/features/hazards/${encodeURIComponent(item.hazard_id ?? "")}/resend-all`;
     confirmAdminAction(
-      "Re-send to all users?",
-      item.item_type === "weather_event"
-        ? `This sends the event only to users in ${item.place_name}.`
-        : `This creates a test copy and sends it to every registered user, regardless of their saved location. ${item.place_name} may not apply to everyone.`,
-      "Send to all",
+      item.item_type === "template"
+        ? "Send default guide to all users?"
+        : "Re-send to all users?",
+      item.item_type === "template"
+        ? "This sends general safety guidance to every registered user. It does not mean this condition is currently detected."
+        : item.item_type === "weather_event"
+          ? `This sends the event only to users in ${item.place_name}.`
+          : `This creates a test copy and sends it to every registered user, regardless of their saved location. ${item.place_name} may not apply to everyone.`,
+      item.item_type === "template" ? "Send guide" : "Send to all",
       () => {
         void (async () => {
           try {
@@ -838,9 +932,23 @@ export default function AdminScreen() {
                 <Text style={styles.badge}>
                   {item.category || item.ai_scope || "Manual"}
                 </Text>
-                <Text style={styles.date}>
-                  {new Date(item.published_at).toLocaleString()}
-                </Text>
+                <View style={styles.cardHeadingActions}>
+                  <Text style={styles.date}>
+                    {new Date(item.published_at).toLocaleString()}
+                  </Text>
+                  <Pressable
+                    onPress={() => removeManualAnnouncement(item)}
+                    disabled={removingAnnouncementId !== null}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${item.title}`}
+                    style={styles.removeAnnouncementButton}
+                  >
+                    <Text style={styles.removeAnnouncementIcon}>
+                      {removingAnnouncementId === item.id ? "…" : "×"}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.bodyText} numberOfLines={3}>
@@ -916,6 +1024,20 @@ export default function AdminScreen() {
               />
             ))}
           </ScrollView>
+          {automatedFeedStatus ? (
+            <Text
+              style={[
+                styles.feedStatus,
+                automatedFeedStatus.kind === "error"
+                  ? styles.feedStatusError
+                  : automatedFeedStatus.kind === "warning"
+                    ? styles.feedStatusWarning
+                    : styles.feedStatusSuccess,
+              ]}
+            >
+              {automatedFeedStatus.message}
+            </Text>
+          ) : null}
           {loadingItems && automated.length === 0 ? (
             <ActivityIndicator color="#C9A7FF" style={styles.loader} />
           ) : (
@@ -940,42 +1062,89 @@ export default function AdminScreen() {
                       <Text style={styles.badge}>{categoryFor(item)}</Text>
                     ) : null}
                     <Text style={styles.date}>
-                      {new Date(item.published_at).toLocaleString()}
+                      {item.item_type === "template"
+                        ? "Reusable default guide"
+                        : new Date(item.published_at).toLocaleString()}
                     </Text>
                   </View>
-                  <Pressable
-                    onPress={() => {
-                      const params = item.announcement_id
-                        ? { announcementId: String(item.announcement_id) }
-                        : item.hazard_id
-                          ? { hazardId: item.hazard_id }
-                          : { pagasaId: String(item.pagasa_id) };
-                      router.push({
-                        pathname: "/alert_page/announcement",
-                        params,
-                      });
-                    }}
-                  >
-                    <Text style={styles.cardTitle}>
-                      {item.title || "Announcement"}
-                    </Text>
-                    <Text style={styles.bodyText} numberOfLines={3}>
-                      {item.ai_summary ||
-                        item.content ||
-                        "No summary available."}
-                    </Text>
-                    <Text style={styles.helper}>
-                      {item.source_name || "W.A.T.C.H."}
-                      {" · "}
-                      {item.place_name}
-                      {" · Sent "}
-                      {item.notification_counts.Sent ?? 0}
-                      {" · Delivered "}
-                      {item.notification_counts.Delivered ?? 0}
-                      {" · Read "}
-                      {item.notification_counts.Read ?? 0}
-                    </Text>
-                  </Pressable>
+                  {item.item_type === "template" ? (
+                    <View>
+                      <Text style={styles.helper}>
+                        Built-in guide, not a live weather detection.
+                      </Text>
+                      <Text style={styles.cardTitle}>{item.title}</Text>
+                      <Text style={styles.bodyText}>
+                        {item.ai_summary || item.content}
+                      </Text>
+                      {item.safety_tips ? (
+                        <View style={styles.review}>
+                          <Text style={styles.sectionTitle}>What to do</Text>
+                          {item.safety_tips.do_list.map((tip, index) => (
+                            <Text key={`do-${index}`} style={styles.bodyText}>
+                              • {tip}
+                            </Text>
+                          ))}
+                          <Text style={styles.sectionTitle}>What to avoid</Text>
+                          {item.safety_tips.dont_list.map((tip, index) => (
+                            <Text
+                              key={`avoid-${index}`}
+                              style={styles.bodyText}
+                            >
+                              • {tip}
+                            </Text>
+                          ))}
+                          <Text style={styles.sectionTitle}>
+                            What to prepare
+                          </Text>
+                          {item.safety_tips.prepare_list.map((tip, index) => (
+                            <Text
+                              key={`prepare-${index}`}
+                              style={styles.bodyText}
+                            >
+                              • {tip}
+                            </Text>
+                          ))}
+                          <Text style={styles.warningNote}>
+                            {item.safety_tips.emergency_note}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={() => {
+                        const params = item.announcement_id
+                          ? { announcementId: String(item.announcement_id) }
+                          : item.hazard_id
+                            ? { hazardId: item.hazard_id }
+                            : { pagasaId: String(item.pagasa_id) };
+                        router.push({
+                          pathname: "/alert_page/announcement",
+                          params,
+                        });
+                      }}
+                    >
+                      <Text style={styles.cardTitle}>
+                        {item.title || "Announcement"}
+                      </Text>
+                      <Text style={styles.bodyText} numberOfLines={3}>
+                        {item.ai_summary ||
+                          item.content ||
+                          "No summary available."}
+                      </Text>
+                      <Text style={styles.helper}>
+                        {item.source_name || "W.A.T.C.H."}
+                        {" · "}
+                        {item.place_name}
+                        {" · Sent "}
+                        {item.notification_counts.Sent ?? 0}
+                        {" · Delivered "}
+                        {item.notification_counts.Delivered ?? 0}
+                        {" · Read "}
+                        {item.notification_counts.Read ?? 0}
+                      </Text>
+                    </Pressable>
+                  )}
                   {item.requires_area_review ? (
                     <View style={styles.review}>
                       <Text style={styles.warningNote}>
@@ -1010,7 +1179,9 @@ export default function AdminScreen() {
                     style={styles.secondaryButton}
                   >
                     <Text style={styles.secondaryButtonText}>
-                      Re-send to all users
+                      {item.item_type === "template"
+                        ? "Send default guide to all users"
+                        : "Re-send to all users"}
                     </Text>
                   </Pressable>
                 </GlassCard>
@@ -1391,6 +1562,10 @@ function createStyles(darkMode: boolean) {
     cardContent: { padding: 17, gap: 11 },
     cardTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
     helper: { color: colors.muted, fontSize: 12, lineHeight: 18 },
+    feedStatus: { fontSize: 12, lineHeight: 18, paddingHorizontal: 16 },
+    feedStatusError: { color: darkMode ? "#FF9A9A" : "#B42318" },
+    feedStatusWarning: { color: darkMode ? "#FFD18A" : "#9A6700" },
+    feedStatusSuccess: { color: darkMode ? "#A7E7C3" : "#26734D" },
     label: {
       color: colors.label,
       fontSize: 13,
@@ -1454,6 +1629,10 @@ function createStyles(darkMode: boolean) {
     cardHeadingRow: {
       flexDirection: "row",
       justifyContent: "space-between",
+      alignItems: "center",
+    },
+    cardHeadingActions: {
+      flexDirection: "row",
       alignItems: "center",
       gap: 8,
       flexWrap: "wrap",
