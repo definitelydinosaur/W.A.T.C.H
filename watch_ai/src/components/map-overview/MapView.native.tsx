@@ -1,73 +1,37 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Constants, { ExecutionEnvironment } from 'expo-constants';
-import type RNMapViewType from 'react-native-maps';
-import type { MapType, Region } from 'react-native-maps';
-import { zoomFromLongitudeDelta } from '../hazard-map/cluster';
+import WebView, { type WebViewMessageEvent } from 'react-native-webview';
+import { clusterHazards } from '../hazard-map/cluster';
+import { defaultRadiusM, hazardShape } from '../hazard-map/geometry';
+import { HAZARD_META } from '../hazard-map/types';
+import { LEAFLET_MAP_HTML } from './leafletHtml';
 import {
-  MapStyleKey,
   MapViewProps,
   SEVERITY_COLOR,
   SEVERITY_RADIUS_M,
 } from './types';
 
 const DEFAULT_SPAN = 0.02;
-
-const MAP_TYPE: Record<MapStyleKey, MapType> = {
-  streets: 'standard',
-  dark: 'standard',
-  satellite: 'satellite',
-  hybrid: 'hybrid',
+const INITIAL_ZOOM = Math.log2(360 / DEFAULT_SPAN) - 1;
+const WEBVIEW_SOURCE = {
+  html: LEAFLET_MAP_HTML,
+  baseUrl: 'https://watch.stratodevs.app/',
 };
 
-// Dark vector style JSON for Google Maps (Android); iOS uses userInterfaceStyle="dark"
-const DARK_MAP_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#1b2234' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#9aa7c2' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1b2234' }] },
-  {
-    featureType: 'road',
-    elementType: 'geometry',
-    stylers: [{ color: '#2c3752' }],
-  },
-  {
-    featureType: 'road.highway',
-    elementType: 'geometry',
-    stylers: [{ color: '#3b4a6b' }],
-  },
-  {
-    featureType: 'water',
-    elementType: 'geometry',
-    stylers: [{ color: '#0d1526' }],
-  },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-];
+type WebViewBridgeMessage =
+  | { type: 'ready' }
+  | { type: 'zoom'; zoom: number }
+  | { type: 'hazardPress'; id: string }
+  | { type: 'historySelect'; id: string | null }
+  | { type: 'error'; message: string };
 
-const isExpoGo =
-  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
-
-interface NativeMapModules {
-  maps: typeof import('react-native-maps');
-  HazardAreas: typeof import('../hazard-map/HazardAreas').default;
-  HazardMarkers: typeof import('../hazard-map/HazardMarkers').default;
+function serializeJsArg(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
-export default function MapView(props: MapViewProps) {
-  if (isExpoGo) {
-    return (
-      <View style={[styles.container, styles.unavailable]}>
-        <Text style={styles.unavailableText}>
-          Map Overview requires the W.A.T.C.H. development build. Install it
-          and reopen this screen to view the map.
-        </Text>
-      </View>
-    );
-  }
-
-  return <NativeMapView {...props} />;
-}
-
-function NativeMapView({
+export default function MapView({
   latitude,
   longitude,
   label,
@@ -82,197 +46,179 @@ function NativeMapView({
   selectedHistoryId = null,
   onHistorySelect,
 }: MapViewProps) {
-  const [nativeModules, setNativeModules] = useState<NativeMapModules | null>(
-    null,
-  );
-  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(zoomFromLongitudeDelta(DEFAULT_SPAN));
-  const ref = useRef<React.ElementRef<typeof RNMapViewType>>(null);
+  const webViewRef = useRef<WebView<object>>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(INITIAL_ZOOM);
+
+  const onHazardPressRef = useRef(onHazardPress);
+  const onHistorySelectRef = useRef(onHistorySelect);
+  const lastFocusTokenRef = useRef<number | null>(null);
+  const lastBoundsTokenRef = useRef<number | null>(null);
 
   useEffect(() => {
-    let active = true;
-    void Promise.all([
-      import('react-native-maps'),
-      import('../hazard-map/HazardAreas'),
-      import('../hazard-map/HazardMarkers'),
-    ])
-      .then(([maps, areasMod, markersMod]) => {
-        if (active) {
-          setNativeModules({
-            maps,
-            HazardAreas: areasMod.default,
-            HazardMarkers: markersMod.default,
-          });
-        }
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        console.error('[map] unable to load native map module:', error);
-        setMapLoadError(
-          error instanceof Error ? error.message : 'Unknown native map error.',
-        );
-      });
+    onHazardPressRef.current = onHazardPress;
+    onHistorySelectRef.current = onHistorySelect;
+  }, [onHazardPress, onHistorySelect]);
 
-    return () => {
-      active = false;
+  const payload = useMemo(() => {
+    const weatherHazards = showHazards
+      ? hazards.map((hazard) => ({
+          id: hazard.id,
+          latitude: hazard.latitude,
+          longitude: hazard.longitude,
+          color: SEVERITY_COLOR[hazard.severity],
+          radius: SEVERITY_RADIUS_M[hazard.severity],
+        }))
+      : [];
+
+    const areas = historyHazards.map((h) => {
+      const shape = hazardShape(h);
+      return {
+        id: h.id,
+        color: shape.color,
+        selected: h.id === selectedHistoryId,
+        latitude: h.latitude,
+        longitude: h.longitude,
+        rings: shape.rings.map((ring) =>
+          ring.map(([lon, lat]) => [lat, lon] as [number, number]),
+        ),
+        circleRadius:
+          shape.rings.length === 0 && h.type !== 'closure'
+            ? defaultRadiusM(h)
+            : null,
+        line: shape.line
+          ? shape.line.map(([lon, lat]) => [lat, lon] as [number, number])
+          : null,
+      };
+    });
+
+    const markers = clusterHazards(historyHazards, zoom).map((item) => {
+      if (item.kind === 'cluster') {
+        return {
+          kind: 'cluster' as const,
+          latitude: item.latitude,
+          longitude: item.longitude,
+          count: item.hazards.length,
+        };
+      }
+      const h = item.hazard;
+      const meta = HAZARD_META[h.type];
+      return {
+        kind: 'hazard' as const,
+        id: h.id,
+        latitude: h.latitude,
+        longitude: h.longitude,
+        color: meta.color,
+        glyph: meta.glyph,
+        selected: h.id === selectedHistoryId,
+      };
+    });
+
+    return {
+      mapStyle,
+      center: { latitude, longitude, label },
+      weatherHazards,
+      historyArchived,
+      areas,
+      markers,
     };
+  }, [
+    hazards,
+    historyArchived,
+    historyHazards,
+    label,
+    latitude,
+    longitude,
+    mapStyle,
+    selectedHistoryId,
+    showHazards,
+    zoom,
+  ]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    webViewRef.current?.injectJavaScript(
+      `window.__WATCH_UPDATE__(${serializeJsArg(payload)}); true;`,
+    );
+  }, [mapReady, payload]);
+
+  useEffect(() => {
+    if (!mapReady || !focus) return;
+    if (lastFocusTokenRef.current === focus.token) return;
+    lastFocusTokenRef.current = focus.token;
+    const span = focus.span ?? DEFAULT_SPAN;
+    const targetZoom = Math.max(3, Math.min(20, Math.log2(360 / span) - 1));
+    webViewRef.current?.injectJavaScript(
+      `window.__WATCH_FLY_TO__(${focus.latitude}, ${focus.longitude}, ${targetZoom}); true;`,
+    );
+  }, [focus, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady || !boundsFocus) return;
+    if (lastBoundsTokenRef.current === boundsFocus.token) return;
+    lastBoundsTokenRef.current = boundsFocus.token;
+    webViewRef.current?.injectJavaScript(
+      `window.__WATCH_FIT_BOUNDS__(${boundsFocus.minLat}, ${boundsFocus.minLon}, ${boundsFocus.maxLat}, ${boundsFocus.maxLon}); true;`,
+    );
+  }, [boundsFocus, mapReady]);
+
+  const handleMessage = useCallback((event: WebViewMessageEvent) => {
+    let msg: WebViewBridgeMessage;
+    try {
+      msg = JSON.parse(event.nativeEvent.data) as WebViewBridgeMessage;
+    } catch {
+      return;
+    }
+
+    if (msg.type === 'ready') {
+      setLoadError(null);
+      setMapReady(true);
+    } else if (msg.type === 'zoom' && Number.isFinite(msg.zoom)) {
+      setZoom(msg.zoom);
+    } else if (msg.type === 'hazardPress') {
+      onHazardPressRef.current?.(msg.id);
+    } else if (msg.type === 'historySelect') {
+      onHistorySelectRef.current?.(msg.id);
+    } else if (msg.type === 'error') {
+      setLoadError(msg.message);
+    }
   }, []);
 
-  useEffect(() => {
-    if (!focus || !nativeModules) return;
-    const span = focus.span ?? DEFAULT_SPAN;
-    const region: Region = {
-      latitude: focus.latitude,
-      longitude: focus.longitude,
-      latitudeDelta: span,
-      longitudeDelta: span,
-    };
-    ref.current?.animateToRegion(region, 650);
-  }, [focus, nativeModules]);
-
-  useEffect(() => {
-    if (!boundsFocus || !nativeModules) return;
-    ref.current?.fitToCoordinates(
-      [
-        { latitude: boundsFocus.minLat, longitude: boundsFocus.minLon },
-        { latitude: boundsFocus.maxLat, longitude: boundsFocus.maxLon },
-      ],
-      {
-        edgePadding: { top: 130, right: 48, bottom: 260, left: 48 },
-        animated: true,
-      },
-    );
-  }, [boundsFocus, nativeModules]);
-
-  if (mapLoadError) {
+  if (loadError) {
     return (
       <View style={[styles.container, styles.unavailable]}>
-        <Text style={styles.unavailableText}>
-          The native map module is unavailable. Install a fresh W.A.T.C.H.
-          development build, then restart the app.
-        </Text>
+        <Text style={styles.unavailableText}>{loadError}</Text>
       </View>
     );
   }
-
-  if (!nativeModules) {
-    return (
-      <View style={[styles.container, styles.unavailable]}>
-        <Text style={styles.unavailableText}>Loading map...</Text>
-      </View>
-    );
-  }
-
-  const {
-    maps: { default: RNMapView, Circle, Marker },
-    HazardAreas,
-    HazardMarkers,
-  } = nativeModules;
 
   return (
     <View style={styles.container}>
-      <RNMapView
-        ref={ref}
-        style={StyleSheet.absoluteFill}
-        initialRegion={{
-          latitude,
-          longitude,
-          latitudeDelta: DEFAULT_SPAN,
-          longitudeDelta: DEFAULT_SPAN,
-        }}
-        mapType={MAP_TYPE[mapStyle]}
-        userInterfaceStyle={mapStyle === 'dark' ? 'dark' : 'light'}
-        customMapStyle={mapStyle === 'dark' ? DARK_MAP_STYLE : undefined}
-        maxZoomLevel={20}
-        showsScale
-        showsCompass={false}
-        toolbarEnabled={false}
-        onRegionChangeComplete={(r: Region) =>
-          setZoom(zoomFromLongitudeDelta(r.longitudeDelta))
+      <WebView<object>
+        ref={webViewRef}
+        source={WEBVIEW_SOURCE}
+        originWhitelist={['*']}
+        javaScriptEnabled
+        domStorageEnabled
+        scrollEnabled={false}
+        bounces={false}
+        overScrollMode="never"
+        mixedContentMode="compatibility"
+        androidLayerType="hardware"
+        style={styles.webview}
+        onMessage={handleMessage}
+        onError={() =>
+          setLoadError('Unable to load the OpenStreetMap view. Check your connection.')
         }
-        onPress={() => onHistorySelect?.(null)}
-      >
-        {/* Selected Location Pin */}
-        <Marker
-          coordinate={{ latitude, longitude }}
-          title={label}
-          description={`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`}
-          pinColor="#7C3AED"
-        />
-
-        {/* Non-spatial general weather alerts (radius circles + pins) */}
-        {showHazards &&
-          hazards.map((hazard) => {
-            const color = SEVERITY_COLOR[hazard.severity];
-            const radius = SEVERITY_RADIUS_M[hazard.severity];
-            return (
-              <React.Fragment key={hazard.id}>
-                <Circle
-                  center={{
-                    latitude: hazard.latitude,
-                    longitude: hazard.longitude,
-                  }}
-                  radius={radius}
-                  fillColor={`${color}24`}
-                  strokeColor={color}
-                  strokeWidth={2}
-                />
-                <Circle
-                  center={{
-                    latitude: hazard.latitude,
-                    longitude: hazard.longitude,
-                  }}
-                  radius={Math.round(radius * 0.45)}
-                  fillColor={`${color}48`}
-                  strokeColor="transparent"
-                  strokeWidth={0}
-                />
-                <Marker
-                  coordinate={{
-                    latitude: hazard.latitude,
-                    longitude: hazard.longitude,
-                  }}
-                  pinColor={color}
-                  title={hazard.eventType.replace(/_/g, ' ')}
-                  description={`${hazard.severity}: ${hazard.description}`}
-                  onPress={() => onHazardPress?.(hazard.id)}
-                />
-              </React.Fragment>
-            );
-          })}
-
-        <HazardAreas
-          hazards={historyHazards}
-          archived={historyArchived}
-          selectedId={selectedHistoryId}
-          onSelect={(id) => onHistorySelect?.(id)}
-        />
-        <HazardMarkers
-          hazards={historyHazards}
-          archived={historyArchived}
-          selectedId={selectedHistoryId}
-          zoom={zoom}
-          onSelect={(id) => onHistorySelect?.(id)}
-          onClusterPress={(lat, lon) => {
-            const delta = 360 / Math.pow(2, Math.min(zoom + 2, 16));
-            ref.current?.animateToRegion(
-              {
-                latitude: lat,
-                longitude: lon,
-                latitudeDelta: delta,
-                longitudeDelta: delta,
-              },
-              500,
-            );
-          }}
-        />
-      </RNMapView>
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111827' },
+  webview: { flex: 1, backgroundColor: '#111827' },
   unavailable: { alignItems: 'center', justifyContent: 'center', padding: 24 },
   unavailableText: { color: '#fff', textAlign: 'center' },
 });
